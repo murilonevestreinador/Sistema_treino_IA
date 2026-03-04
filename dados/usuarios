@@ -1,0 +1,16 @@
+from core.banco import conectar
+
+
+def marcar_onboarding(usuario_id):
+
+    conn = conectar()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        UPDATE usuarios
+        SET onboarding_completo = 1
+        WHERE id = ?
+    """, (usuario_id,))
+
+    conn.commit()
+    conn.close()
