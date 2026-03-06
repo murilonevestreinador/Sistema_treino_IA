@@ -1,7 +1,30 @@
 import secrets
+import os
 
 from core.banco import conectar
 from core.usuarios import buscar_usuario_por_email, buscar_usuario_por_id
+
+DEFAULT_PUBLIC_APP_URL = "https://trilab-treinamento.onrender.com"
+
+
+def _resolver_url_base_publica():
+    candidatos = [
+        os.getenv("APP_BASE_URL", ""),
+        os.getenv("RENDER_EXTERNAL_URL", ""),
+        os.getenv("PUBLIC_APP_URL", ""),
+        DEFAULT_PUBLIC_APP_URL,
+    ]
+
+    for url in candidatos:
+        url_limpa = (url or "").strip().rstrip("/")
+        if url_limpa:
+            return url_limpa
+
+    hostname_render = (os.getenv("RENDER_EXTERNAL_HOSTNAME", "") or "").strip()
+    if hostname_render:
+        return f"https://{hostname_render.strip('/')}"
+
+    return DEFAULT_PUBLIC_APP_URL
 
 
 def gerar_link_convite(treinador_id, base_url=None):
@@ -18,7 +41,7 @@ def gerar_link_convite(treinador_id, base_url=None):
     conn.commit()
     conn.close()
 
-    url_base = (base_url or "http://localhost:8501").strip().rstrip("/")
+    url_base = (base_url or _resolver_url_base_publica()).strip().rstrip("/")
     return f"{url_base}?convite={token}"
 
 

@@ -1,4 +1,5 @@
 import base64
+import os
 
 import streamlit as st
 
@@ -8,6 +9,8 @@ from core.progresso import buscar_progresso_semana, calcular_progresso_semanal
 from core.treinador import gerar_link_convite, listar_atletas_do_treinador, listar_vinculos
 from core.treino import buscar_treino_gerado, obter_ou_gerar_treino_semana, salvar_treino_gerado
 from core.usuarios import buscar_usuario_por_id
+
+DEFAULT_PUBLIC_APP_URL = "https://trilab-treinamento.onrender.com"
 
 
 def _foto_perfil_bytes(foto_perfil):
@@ -33,12 +36,20 @@ def _render_linha_atleta(nome, email, foto_perfil=None):
 
 def _render_convite(treinador):
     st.subheader("Convidar atleta")
-    base_url = st.text_input(
-        "URL base do app",
-        value=st.session_state.get("convite_base_url", "http://localhost:8501"),
-        key="convite_base_url",
-        help="Use uma URL p\u00fablica que o atleta consiga abrir. Ex.: http://192.168.0.10:8501",
-    )
+    base_url = (
+        st.session_state.get("convite_base_url")
+        or os.getenv("APP_BASE_URL")
+        or os.getenv("RENDER_EXTERNAL_URL")
+        or os.getenv("PUBLIC_APP_URL")
+        or (
+            f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME').strip('/')}"
+            if os.getenv("RENDER_EXTERNAL_HOSTNAME")
+            else DEFAULT_PUBLIC_APP_URL
+        )
+    ).strip().rstrip("/")
+
+    st.caption(f"URL base do app: {base_url}")
+    st.session_state["convite_base_url"] = base_url
 
     if st.button("Convidar atleta", key="btn_gerar_link_convite"):
         st.session_state["link_convite_gerado"] = gerar_link_convite(treinador["id"], base_url)
