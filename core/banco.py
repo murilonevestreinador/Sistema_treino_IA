@@ -150,7 +150,7 @@ def _criar_tabela_treinos_gerados(cursor):
         "usuario_id": "INTEGER",
         "fase": "TEXT",
         "editado_por_treinador": "INTEGER DEFAULT 0",
-        "criado_em": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+        "criado_em": "TIMESTAMP",
         "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
     }
     for nome, definicao in colunas.items():
@@ -285,6 +285,73 @@ def _criar_tabela_assinaturas(cursor):
         """
     )
 
+    colunas = {
+        "usuario_id": "INTEGER NOT NULL",
+        "plano_id": "INTEGER NOT NULL",
+        "status": "TEXT NOT NULL",
+        "data_inicio": "TEXT NOT NULL",
+        "data_fim": "TEXT",
+        "renovacao_automatica": "INTEGER DEFAULT 1",
+        "gateway": "TEXT DEFAULT 'manual'",
+        "gateway_reference": "TEXT",
+        "criado_em": "TEXT",
+    }
+    for nome, definicao in colunas.items():
+        _adicionar_coluna_se_necessario(cursor, "assinaturas", nome, definicao)
+
+
+def _criar_indices_bi(cursor):
+    colunas_treinos_gerados = _colunas_tabela(cursor, "treinos_gerados")
+    colunas_assinaturas = _colunas_tabela(cursor, "assinaturas")
+
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_treinador_atleta_treinador_status
+        ON treinador_atleta (treinador_id, status, created_at)
+        """
+    )
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_treinos_realizados_atleta_data
+        ON treinos_realizados (atleta_id, usuario_id, feito_em, data_realizada)
+        """
+    )
+    if "criado_em" in colunas_treinos_gerados and "created_at" in colunas_treinos_gerados:
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_treinos_gerados_atleta_criado
+            ON treinos_gerados (atleta_id, usuario_id, criado_em, created_at)
+            """
+        )
+    elif "created_at" in colunas_treinos_gerados:
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_treinos_gerados_atleta_created_only
+            ON treinos_gerados (atleta_id, usuario_id, created_at)
+            """
+        )
+
+    if "criado_em" in colunas_assinaturas:
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_assinaturas_usuario_data
+            ON assinaturas (usuario_id, status, data_inicio, criado_em)
+            """
+        )
+    else:
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_assinaturas_usuario_data_no_criado
+            ON assinaturas (usuario_id, status, data_inicio)
+            """
+        )
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_usuarios_tipo_segmento
+        ON usuarios (tipo_usuario, sexo, objetivo)
+        """
+    )
+
 
 def garantir_colunas_e_tabelas():
     conn = conectar()
@@ -300,6 +367,7 @@ def garantir_colunas_e_tabelas():
     _criar_tabela_planos(cursor)
     _seed_planos(cursor)
     _criar_tabela_assinaturas(cursor)
+    _criar_indices_bi(cursor)
 
     conn.commit()
     conn.close()

@@ -79,3 +79,26 @@ streamlit run app.py
 - O arquivo `core/pagamentos_gateway.py` concentra a interface do gateway.
 - Hoje ele usa implementacao `manual`.
 - No futuro, a integracao com Asaas deve entrar nesse modulo via API e webhook, preservando o restante da camada financeira.
+
+## BI para treinador (backend)
+
+- Modulo: `core/bi.py`
+- Entrada principal:
+  - `construir_dashboard_bi_treinador(treinador_id, filtros=None, cache_ttl_seconds=120)`
+  - `TrainerBIService().get_dashboard_data(treinador_id, filtros)`
+- Filtros aceitos:
+  - `data_inicio` e `data_fim` (`YYYY-MM-DD`)
+  - `sexo` (`masculino`, `feminino`, `outro`)
+  - `objetivo` (`desempenho`, `perda_peso`, `hipertrofia`, `saude`)
+  - `granularidade_retencao` (`mensal` ou `trimestral`)
+  - `top_percentual_receita` (0 < valor <= 1)
+- Saidas:
+  - `retencao`: media global, segmentacao por sexo/objetivo e tendencia temporal
+  - `financeiro`: historico mensal, resumo anual com comparacao YoY, receita por segmento
+  - `kpis`: aquisicao, RMA, churn e motivos, frequencia por objetivo, concentracao, LTV, conclusao e picos
+- Export:
+  - `TrainerBIService.export_dashboard_json(...)`
+  - `TrainerBIService.export_rows_to_csv(...)`
+- Exemplo com dados de teste em memoria:
+  - `from core.bi import demo_bi_em_memoria`
+  - `resultado = demo_bi_em_memoria()`

@@ -319,6 +319,7 @@ def _render_overview_inicial():
 
 
 def _abrir_feedback_pendente(usuario_id, semana_numero, nome_treino, exercicios):
+    st.session_state.pop("exercicio_video_aberto", None)
     st.session_state["feedback_pendente"] = {
         "atleta_id": usuario_id,
         "semana_numero": semana_numero,
@@ -693,7 +694,8 @@ def _render_detalhe_treino(usuario, semana, nome_treino, exercicios, progresso_i
 
 
 def _render_area_treinos(usuario, semana, treino_semana, progresso):
-    _render_video_exercicio()
+    if not st.session_state.get("feedback_pendente"):
+        _render_video_exercicio()
     treino_aberto = _render_grade_treinos(semana, treino_semana, progresso)
     if not treino_aberto:
         return
