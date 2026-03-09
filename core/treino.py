@@ -59,8 +59,8 @@ def buscar_treino_gerado(atleta_id, semana_numero):
         SELECT *,
                COALESCE(atleta_id, usuario_id) AS atleta_ref
         FROM treinos_gerados
-        WHERE semana_numero = ?
-          AND COALESCE(atleta_id, usuario_id) = ?
+        WHERE semana_numero = %s
+          AND COALESCE(atleta_id, usuario_id) = %s
         LIMIT 1
         """,
         (semana_numero, atleta_id),
@@ -86,12 +86,12 @@ def salvar_treino_gerado(atleta_id, semana_numero, fase, treinos_json, editado_p
         cursor.execute(
             """
             UPDATE treinos_gerados
-            SET atleta_id = ?,
-                usuario_id = ?,
-                fase = ?,
-                json_treino = ?,
-                editado_por_treinador = ?
-            WHERE id = ?
+            SET atleta_id = %s,
+                usuario_id = %s,
+                fase = %s,
+                json_treino = %s,
+                editado_por_treinador = %s
+            WHERE id = %s
             """,
             (
                 atleta_id,
@@ -107,7 +107,7 @@ def salvar_treino_gerado(atleta_id, semana_numero, fase, treinos_json, editado_p
             """
             INSERT INTO treinos_gerados (
                 atleta_id, usuario_id, semana_numero, fase, json_treino, editado_por_treinador
-            ) VALUES (?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s)
             """,
             (
                 atleta_id,
@@ -141,14 +141,14 @@ def resetar_planejamento_atleta(atleta_id):
     cursor.execute(
         """
         DELETE FROM treinos_gerados
-        WHERE COALESCE(atleta_id, usuario_id) = ?
+        WHERE COALESCE(atleta_id, usuario_id) = %s
         """,
         (atleta_id,),
     )
     cursor.execute(
         """
         DELETE FROM treinos_realizados
-        WHERE COALESCE(atleta_id, usuario_id) = ?
+        WHERE COALESCE(atleta_id, usuario_id) = %s
         """,
         (atleta_id,),
     )
@@ -162,16 +162,16 @@ def resetar_treinos_futuros(atleta_id, semana_atual):
     cursor.execute(
         """
         DELETE FROM treinos_gerados
-        WHERE COALESCE(atleta_id, usuario_id) = ?
-          AND semana_numero > ?
+        WHERE COALESCE(atleta_id, usuario_id) = %s
+          AND semana_numero > %s
         """,
         (atleta_id, semana_atual),
     )
     cursor.execute(
         """
         DELETE FROM treinos_realizados
-        WHERE COALESCE(atleta_id, usuario_id) = ?
-          AND semana_numero > ?
+        WHERE COALESCE(atleta_id, usuario_id) = %s
+          AND semana_numero > %s
         """,
         (atleta_id, semana_atual),
     )

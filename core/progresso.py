@@ -14,9 +14,9 @@ def marcar_treino_feito(atleta_id, semana_numero, nome_treino, feito, observacao
         """
         SELECT id
         FROM treinos_realizados
-        WHERE semana_numero = ?
-          AND nome_treino = ?
-          AND COALESCE(atleta_id, usuario_id) = ?
+        WHERE semana_numero = %s
+          AND nome_treino = %s
+          AND COALESCE(atleta_id, usuario_id) = %s
         LIMIT 1
         """,
         (semana_numero, nome_treino, atleta_id),
@@ -27,15 +27,15 @@ def marcar_treino_feito(atleta_id, semana_numero, nome_treino, feito, observacao
         cursor.execute(
             """
             UPDATE treinos_realizados
-            SET atleta_id = ?,
-                usuario_id = ?,
-                feito = ?,
-                concluido = ?,
-                feito_em = ?,
-                data_realizada = ?,
-                observacao = ?,
-                observacoes = ?
-            WHERE id = ?
+            SET atleta_id = %s,
+                usuario_id = %s,
+                feito = %s,
+                concluido = %s,
+                feito_em = %s,
+                data_realizada = %s,
+                observacao = %s,
+                observacoes = %s
+            WHERE id = %s
             """,
             (
                 atleta_id,
@@ -55,7 +55,7 @@ def marcar_treino_feito(atleta_id, semana_numero, nome_treino, feito, observacao
             INSERT INTO treinos_realizados (
                 atleta_id, usuario_id, semana_numero, nome_treino, feito, concluido,
                 feito_em, data_realizada, observacao, observacoes
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 atleta_id,
@@ -89,13 +89,13 @@ def salvar_feedback_treino(
     cursor.execute(
         """
         UPDATE treinos_realizados
-        SET feedback_tipo = ?,
-            feedback_contexto_ruim = ?,
-            exercicio_substituir = ?,
-            motivo_exercicio_ruim = ?
-        WHERE semana_numero = ?
-          AND nome_treino = ?
-          AND COALESCE(atleta_id, usuario_id) = ?
+        SET feedback_tipo = %s,
+            feedback_contexto_ruim = %s,
+            exercicio_substituir = %s,
+            motivo_exercicio_ruim = %s
+        WHERE semana_numero = %s
+          AND nome_treino = %s
+          AND COALESCE(atleta_id, usuario_id) = %s
         """,
         (
             feedback_tipo,
@@ -118,7 +118,7 @@ def registrar_preferencia_substituicao(atleta_id, exercicio):
         """
         INSERT INTO preferencias_substituicao_exercicio (
             atleta_id, exercicio_nome, categoria, principal_musculo, motivo
-        ) VALUES (?, ?, ?, ?, ?)
+        ) VALUES (%s, %s, %s, %s, %s)
         ON CONFLICT(atleta_id, exercicio_nome)
         DO UPDATE SET
             categoria = excluded.categoria,
@@ -144,7 +144,7 @@ def listar_preferencias_substituicao(atleta_id):
         """
         SELECT atleta_id, exercicio_nome, categoria, principal_musculo, motivo
         FROM preferencias_substituicao_exercicio
-        WHERE atleta_id = ?
+        WHERE atleta_id = %s
         ORDER BY created_at DESC
         """,
         (atleta_id,),
@@ -168,8 +168,8 @@ def buscar_progresso_semana(atleta_id, semana_numero):
                exercicio_substituir,
                motivo_exercicio_ruim
         FROM treinos_realizados
-        WHERE semana_numero = ?
-          AND COALESCE(atleta_id, usuario_id) = ?
+        WHERE semana_numero = %s
+          AND COALESCE(atleta_id, usuario_id) = %s
         ORDER BY nome_treino
         """,
         (semana_numero, atleta_id),
@@ -191,7 +191,7 @@ def historico_progresso(atleta_id):
                COALESCE(observacao, observacoes) AS observacao,
                feedback_tipo
         FROM treinos_realizados
-        WHERE COALESCE(atleta_id, usuario_id) = ?
+        WHERE COALESCE(atleta_id, usuario_id) = %s
         ORDER BY semana_numero, nome_treino
         """,
         (atleta_id,),

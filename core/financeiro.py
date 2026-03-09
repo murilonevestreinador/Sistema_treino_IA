@@ -50,7 +50,7 @@ def listar_planos_ativos():
 def buscar_plano_por_codigo(codigo):
     conn = conectar()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM planos WHERE codigo = ?", (codigo,))
+    cursor.execute("SELECT * FROM planos WHERE codigo = %s", (codigo,))
     plano = _linha_para_dict(cursor.fetchone())
     conn.close()
     return plano
@@ -59,7 +59,7 @@ def buscar_plano_por_codigo(codigo):
 def buscar_plano_por_id(plano_id):
     conn = conectar()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM planos WHERE id = ?", (plano_id,))
+    cursor.execute("SELECT * FROM planos WHERE id = %s", (plano_id,))
     plano = _linha_para_dict(cursor.fetchone())
     conn.close()
     return plano
@@ -72,7 +72,7 @@ def buscar_plano_padrao_por_tipo(tipo_usuario):
         """
         SELECT *
         FROM planos
-        WHERE tipo = ?
+        WHERE tipo = %s
           AND ativo = 1
         ORDER BY preco_mensal ASC
         LIMIT 1
@@ -94,8 +94,8 @@ def _encerrar_assinaturas_abertas(cursor, usuario_id):
                 WHEN status = 'ativa' THEN 'cancelada'
                 ELSE status
             END,
-            data_fim = COALESCE(data_fim, ?)
-        WHERE usuario_id = ?
+            data_fim = COALESCE(data_fim, %s)
+        WHERE usuario_id = %s
           AND status IN ('trial', 'ativa')
         """,
         (agora, usuario_id),
@@ -119,7 +119,8 @@ def criar_trial_assinatura(usuario_id, tipo_usuario):
         INSERT INTO assinaturas (
             usuario_id, plano_id, status, data_inicio, data_fim,
             renovacao_automatica, gateway, gateway_reference, criado_em
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        RETURNING id
         """,
         (
             usuario_id,
@@ -133,7 +134,7 @@ def criar_trial_assinatura(usuario_id, tipo_usuario):
             _agora_iso(),
         ),
     )
-    assinatura_id = cursor.lastrowid
+    assinatura_id = cursor.fetchone()["id"]
     conn.commit()
     conn.close()
     return buscar_assinatura_por_id(assinatura_id)
@@ -148,7 +149,7 @@ def buscar_assinatura_por_id(assinatura_id):
                p.preco_mensal, p.limite_atletas
         FROM assinaturas a
         INNER JOIN planos p ON p.id = a.plano_id
-        WHERE a.id = ?
+        WHERE a.id = %s
         """,
         (assinatura_id,),
     )
@@ -166,7 +167,7 @@ def listar_assinaturas_usuario(usuario_id):
                p.preco_mensal, p.limite_atletas
         FROM assinaturas a
         INNER JOIN planos p ON p.id = a.plano_id
-        WHERE a.usuario_id = ?
+        WHERE a.usuario_id = %s
         ORDER BY a.criado_em DESC, a.id DESC
         """,
         (usuario_id,),
@@ -195,8 +196,8 @@ def _normalizar_assinatura(cursor, assinatura):
     cursor.execute(
         """
         UPDATE assinaturas
-        SET status = ?, data_fim = COALESCE(data_fim, ?)
-        WHERE id = ?
+        SET status = %s, data_fim = COALESCE(data_fim, %s)
+        WHERE id = %s
         """,
         (novo_status, _agora_iso(), assinatura["id"]),
     )
@@ -213,7 +214,7 @@ def buscar_assinatura_atual(usuario_id):
                p.preco_mensal, p.limite_atletas
         FROM assinaturas a
         INNER JOIN planos p ON p.id = a.plano_id
-        WHERE a.usuario_id = ?
+        WHERE a.usuario_id = %s
         ORDER BY CASE a.status
             WHEN 'ativa' THEN 0
             WHEN 'trial' THEN 1
@@ -262,7 +263,8 @@ def criar_assinatura_manual(usuario, plano):
         INSERT INTO assinaturas (
             usuario_id, plano_id, status, data_inicio, data_fim,
             renovacao_automatica, gateway, gateway_reference, criado_em
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        RETURNING id
         """,
         (
             usuario["id"],
@@ -276,7 +278,7 @@ def criar_assinatura_manual(usuario, plano):
             _agora_iso(),
         ),
     )
-    assinatura_id = cursor.lastrowid
+    assinatura_id = cursor.fetchone()["id"]
     conn.commit()
     conn.close()
     return buscar_assinatura_por_id(assinatura_id)
@@ -308,7 +310,7 @@ def cancelar_renovacao_automatica(usuario_id):
         """
         UPDATE assinaturas
         SET renovacao_automatica = 0
-        WHERE id = ?
+        WHERE id = %s
         """,
         (assinatura["id"],),
     )
@@ -330,8 +332,8 @@ def expirar_assinatura_atual_para_teste(usuario_id):
     cursor.execute(
         """
         UPDATE assinaturas
-        SET status = ?, data_fim = ?
-        WHERE id = ?
+        SET status = %s, data_fim = %s
+        WHERE id = %s
         """,
         (novo_status, agora, assinatura["id"]),
     )

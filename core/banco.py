@@ -1,19 +1,28 @@
-import sqlite3
-from pathlib import Path
+import os
 
-
-DB_PATH = Path("dados") / "usuarios.db"
+import psycopg2
+from psycopg2 import errors
+from psycopg2.extras import RealDictCursor
 
 
 def conectar():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+    database_url = (os.getenv("DATABASE_URL") or "").strip()
+    if not database_url:
+        raise RuntimeError("DATABASE_URL nao configurada.")
+    return psycopg2.connect(database_url, cursor_factory=RealDictCursor)
 
 
 def _colunas_tabela(cursor, tabela):
-    cursor.execute(f"PRAGMA table_info({tabela})")
-    return {linha["name"] for linha in cursor.fetchall()}
+    cursor.execute(
+        """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = %s
+        """,
+        (tabela,),
+    )
+    return {linha["column_name"] for linha in cursor.fetchall()}
 
 
 def _adicionar_coluna_se_necessario(cursor, tabela, nome_coluna, definicao):
@@ -23,7 +32,7 @@ def _adicionar_coluna_se_necessario(cursor, tabela, nome_coluna, definicao):
 
     try:
         cursor.execute(f"ALTER TABLE {tabela} ADD COLUMN {nome_coluna} {definicao}")
-    except sqlite3.OperationalError:
+    except (errors.DuplicateColumn, psycopg2.Error):
         # Em bancos antigos, alguns ALTERs podem falhar; seguimos com o que for possivel.
         pass
 
@@ -32,7 +41,7 @@ def _criar_tabela_usuarios(cursor):
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS usuarios (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             nome TEXT,
             apelido TEXT,
             foto_perfil TEXT,
@@ -98,7 +107,7 @@ def _criar_tabela_treinador_atleta(cursor):
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS treinador_atleta (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             treinador_id INTEGER NOT NULL,
             atleta_id INTEGER NOT NULL,
             status TEXT DEFAULT 'pendente',
@@ -115,7 +124,7 @@ def _criar_tabela_convites_treinador_link(cursor):
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS convites_treinador_link (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             treinador_id INTEGER NOT NULL,
             token TEXT NOT NULL UNIQUE,
             ativo INTEGER DEFAULT 1,
@@ -130,7 +139,7 @@ def _criar_tabela_treinos_gerados(cursor):
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS treinos_gerados (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             atleta_id INTEGER,
             usuario_id INTEGER,
             semana_numero INTEGER NOT NULL,
@@ -161,7 +170,7 @@ def _criar_tabela_treinos_realizados(cursor):
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS treinos_realizados (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             atleta_id INTEGER,
             usuario_id INTEGER,
             semana_numero INTEGER NOT NULL,
@@ -204,7 +213,7 @@ def _criar_tabela_recuperacao_senha(cursor):
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS recuperacao_senha (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             usuario_id INTEGER NOT NULL,
             codigo_hash TEXT NOT NULL,
             expira_em TEXT NOT NULL,
@@ -220,7 +229,7 @@ def _criar_tabela_preferencias_substituicao(cursor):
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS preferencias_substituicao_exercicio (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             atleta_id INTEGER NOT NULL,
             exercicio_nome TEXT NOT NULL,
             categoria TEXT,
@@ -238,7 +247,7 @@ def _criar_tabela_planos(cursor):
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS planos (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             codigo TEXT NOT NULL UNIQUE,
             nome TEXT NOT NULL,
             tipo TEXT NOT NULL,
@@ -258,8 +267,9 @@ def _seed_planos(cursor):
     for plano in planos:
         cursor.execute(
             """
-            INSERT OR IGNORE INTO planos (codigo, nome, tipo, preco_mensal, limite_atletas, ativo)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO planos (codigo, nome, tipo, preco_mensal, limite_atletas, ativo)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (codigo) DO NOTHING
             """,
             plano,
         )
@@ -269,7 +279,7 @@ def _criar_tabela_assinaturas(cursor):
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS assinaturas (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             usuario_id INTEGER NOT NULL,
             plano_id INTEGER NOT NULL,
             status TEXT NOT NULL,

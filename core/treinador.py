@@ -34,7 +34,7 @@ def gerar_link_convite(treinador_id, base_url=None):
     cursor.execute(
         """
         INSERT INTO convites_treinador_link (treinador_id, token, ativo)
-        VALUES (?, ?, 1)
+        VALUES (%s, %s, 1)
         """,
         (treinador_id, token),
     )
@@ -63,7 +63,7 @@ def buscar_convite_por_token(token):
                u.email AS treinador_email
         FROM convites_treinador_link ctl
         JOIN usuarios u ON u.id = ctl.treinador_id
-        WHERE ctl.token = ?
+        WHERE ctl.token = %s
           AND ctl.ativo = 1
         LIMIT 1
         """,
@@ -81,7 +81,7 @@ def buscar_status_vinculo(treinador_id, atleta_id):
         """
         SELECT id, status
         FROM treinador_atleta
-        WHERE treinador_id = ? AND atleta_id = ?
+        WHERE treinador_id = %s AND atleta_id = %s
         LIMIT 1
         """,
         (treinador_id, atleta_id),
@@ -100,8 +100,8 @@ def definir_vinculo_treinador_atleta(treinador_id, atleta_id, status="ativo"):
         cursor.execute(
             """
             UPDATE treinador_atleta
-            SET status = ?
-            WHERE id = ?
+            SET status = %s
+            WHERE id = %s
             """,
             (status, vinculo["id"]),
         )
@@ -109,7 +109,7 @@ def definir_vinculo_treinador_atleta(treinador_id, atleta_id, status="ativo"):
         cursor.execute(
             """
             INSERT INTO treinador_atleta (treinador_id, atleta_id, status)
-            VALUES (?, ?, ?)
+            VALUES (%s, %s, %s)
             """,
             (treinador_id, atleta_id, status),
         )
@@ -161,7 +161,7 @@ def listar_vinculos(treinador_id):
                u.email AS atleta_email
         FROM treinador_atleta ta
         JOIN usuarios u ON u.id = ta.atleta_id
-        WHERE ta.treinador_id = ?
+        WHERE ta.treinador_id = %s
         ORDER BY ta.status, u.nome
         """,
         (treinador_id,),
@@ -190,7 +190,7 @@ def listar_treinadores_do_atleta(atleta_id):
                u.email AS treinador_email
         FROM treinador_atleta ta
         JOIN usuarios u ON u.id = ta.treinador_id
-        WHERE ta.atleta_id = ?
+        WHERE ta.atleta_id = %s
         ORDER BY
             CASE ta.status
                 WHEN 'ativo' THEN 0
@@ -219,9 +219,9 @@ def vincular_atleta_ao_treinador(atleta_id, treinador_id):
         """
         UPDATE treinador_atleta
         SET status = 'encerrado'
-        WHERE atleta_id = ?
+        WHERE atleta_id = %s
           AND status = 'ativo'
-          AND treinador_id <> ?
+          AND treinador_id <> %s
         """,
         (atleta_id, treinador_id),
     )
@@ -253,7 +253,7 @@ def listar_convites_pendentes_do_atleta(atleta_id):
                u.email AS treinador_email
         FROM treinador_atleta ta
         JOIN usuarios u ON u.id = ta.treinador_id
-        WHERE ta.atleta_id = ?
+        WHERE ta.atleta_id = %s
           AND ta.status = 'pendente'
         ORDER BY ta.created_at DESC
         """,

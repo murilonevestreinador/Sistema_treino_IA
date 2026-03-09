@@ -97,7 +97,6 @@ def renderizar_sidebar(usuario=None, assinatura=None):
         st.markdown("### Publico")
         st.markdown(
             """
-            - [Home](/home)
             - [Planos e Precos](/planos)
             - [FAQ](/faq)
             - [Contato](/contato)

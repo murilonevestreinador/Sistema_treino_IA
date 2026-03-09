@@ -41,7 +41,7 @@ def _usuario_sem_senha(usuario):
 def _buscar_usuario_por_coluna(coluna, valor, incluir_senha=False):
     conn = conectar()
     cursor = conn.cursor()
-    cursor.execute(f"SELECT * FROM usuarios WHERE {coluna} = ?", (valor,))
+    cursor.execute(f"SELECT * FROM usuarios WHERE {coluna} = %s", (valor,))
     usuario = _linha_para_dict(cursor.fetchone())
     conn.close()
     if incluir_senha:
@@ -83,7 +83,8 @@ def criar_usuario(dados):
             treinos_corrida_semana, tem_prova, data_prova, distancia_prova,
             treinos_musculacao_semana, local_treino, experiencia_musculacao,
             historico_lesao, dor_atual, aceitou_termos, aceitou_privacidade, data_consentimento
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        RETURNING id
         """,
         (
             (dados.get("nome") or "").strip(),
@@ -115,8 +116,8 @@ def criar_usuario(dados):
             data_consentimento,
         ),
     )
+    usuario_id = cursor.fetchone()["id"]
     conn.commit()
-    usuario_id = cursor.lastrowid
     conn.close()
     return usuario_id
 
@@ -141,8 +142,8 @@ def atualizar_senha_por_email(email, nova_senha):
     cursor.execute(
         """
         UPDATE usuarios
-        SET senha = ?
-        WHERE email = ?
+        SET senha = %s
+        WHERE email = %s
         """,
         (hash_senha(nova_senha or ""), email_normalizado),
     )
@@ -168,15 +169,15 @@ def solicitar_codigo_recuperacao(email, minutos_validade=15):
     cursor.execute(
         """
         UPDATE recuperacao_senha
-        SET usado_em = ?
-        WHERE usuario_id = ? AND usado_em IS NULL
+        SET usado_em = %s
+        WHERE usuario_id = %s AND usado_em IS NULL
         """,
         (datetime.now().isoformat(timespec="seconds"), usuario["id"]),
     )
     cursor.execute(
         """
         INSERT INTO recuperacao_senha (usuario_id, codigo_hash, expira_em)
-        VALUES (?, ?, ?)
+        VALUES (%s, %s, %s)
         """,
         (usuario["id"], _hash_codigo_recuperacao(codigo), expira_em),
     )
@@ -201,7 +202,7 @@ def redefinir_senha_com_codigo(email, codigo, nova_senha):
         """
         SELECT id, codigo_hash, expira_em
         FROM recuperacao_senha
-        WHERE usuario_id = ?
+        WHERE usuario_id = %s
           AND usado_em IS NULL
         ORDER BY created_at DESC
         LIMIT 1
@@ -216,7 +217,7 @@ def redefinir_senha_com_codigo(email, codigo, nova_senha):
 
     if datetime.fromisoformat(token["expira_em"]) < datetime.now():
         cursor.execute(
-            "UPDATE recuperacao_senha SET usado_em = ? WHERE id = ?",
+            "UPDATE recuperacao_senha SET usado_em = %s WHERE id = %s",
             (datetime.now().isoformat(timespec="seconds"), token["id"]),
         )
         conn.commit()
@@ -230,13 +231,13 @@ def redefinir_senha_com_codigo(email, codigo, nova_senha):
     cursor.execute(
         """
         UPDATE usuarios
-        SET senha = ?
-        WHERE id = ?
+        SET senha = %s
+        WHERE id = %s
         """,
         (hash_senha(nova_senha or ""), usuario["id"]),
     )
     cursor.execute(
-        "UPDATE recuperacao_senha SET usado_em = ? WHERE id = ?",
+        "UPDATE recuperacao_senha SET usado_em = %s WHERE id = %s",
         (datetime.now().isoformat(timespec="seconds"), token["id"]),
     )
     conn.commit()
@@ -250,20 +251,20 @@ def atualizar_usuario_onboarding(usuario_id, dados_onboarding):
     cursor.execute(
         """
         UPDATE usuarios
-        SET objetivo = ?,
-            distancia_principal = ?,
-            tempo_pratica = ?,
-            treinos_corrida_semana = ?,
-            tem_prova = ?,
-            data_prova = ?,
-            distancia_prova = ?,
-            treinos_musculacao_semana = ?,
-            local_treino = ?,
-            experiencia_musculacao = ?,
-            historico_lesao = ?,
-            dor_atual = ?,
+        SET objetivo = %s,
+            distancia_principal = %s,
+            tempo_pratica = %s,
+            treinos_corrida_semana = %s,
+            tem_prova = %s,
+            data_prova = %s,
+            distancia_prova = %s,
+            treinos_musculacao_semana = %s,
+            local_treino = %s,
+            experiencia_musculacao = %s,
+            historico_lesao = %s,
+            dor_atual = %s,
             onboarding_completo = 1
-        WHERE id = ?
+        WHERE id = %s
         """,
         (
             dados_onboarding.get("objetivo", "performance"),
@@ -289,7 +290,7 @@ def atualizar_usuario_onboarding(usuario_id, dados_onboarding):
 def marcar_onboarding(usuario_id):
     conn = conectar()
     cursor = conn.cursor()
-    cursor.execute("UPDATE usuarios SET onboarding_completo = 1 WHERE id = ?", (usuario_id,))
+    cursor.execute("UPDATE usuarios SET onboarding_completo = 1 WHERE id = %s", (usuario_id,))
     conn.commit()
     conn.close()
     return buscar_usuario_por_id(usuario_id)
@@ -301,13 +302,13 @@ def redefinir_objetivo_atleta(usuario_id, dados_objetivo):
     cursor.execute(
         """
         UPDATE usuarios
-        SET objetivo = ?,
-            tem_prova = ?,
-            data_prova = ?,
-            distancia_prova = ?,
-            distancia_principal = ?,
-            treinos_musculacao_semana = ?
-        WHERE id = ?
+        SET objetivo = %s,
+            tem_prova = %s,
+            data_prova = %s,
+            distancia_prova = %s,
+            distancia_principal = %s,
+            treinos_musculacao_semana = %s
+        WHERE id = %s
         """,
         (
             dados_objetivo.get("objetivo", "performance"),
@@ -330,10 +331,10 @@ def atualizar_perfil_usuario(usuario_id, dados_perfil):
     cursor.execute(
         """
         UPDATE usuarios
-        SET nome = ?,
-            apelido = ?,
-            foto_perfil = ?
-        WHERE id = ?
+        SET nome = %s,
+            apelido = %s,
+            foto_perfil = %s
+        WHERE id = %s
         """,
         (
             (dados_perfil.get("nome") or "").strip(),
@@ -351,25 +352,25 @@ def excluir_usuario(usuario_id):
     conn = conectar()
     cursor = conn.cursor()
 
-    cursor.execute("DELETE FROM recuperacao_senha WHERE usuario_id = ?", (usuario_id,))
-    cursor.execute("DELETE FROM preferencias_substituicao_exercicio WHERE atleta_id = ?", (usuario_id,))
+    cursor.execute("DELETE FROM recuperacao_senha WHERE usuario_id = %s", (usuario_id,))
+    cursor.execute("DELETE FROM preferencias_substituicao_exercicio WHERE atleta_id = %s", (usuario_id,))
     cursor.execute(
-        "DELETE FROM treinos_realizados WHERE COALESCE(atleta_id, usuario_id) = ?",
+        "DELETE FROM treinos_realizados WHERE COALESCE(atleta_id, usuario_id) = %s",
         (usuario_id,),
     )
     cursor.execute(
-        "DELETE FROM treinos_gerados WHERE COALESCE(atleta_id, usuario_id) = ?",
+        "DELETE FROM treinos_gerados WHERE COALESCE(atleta_id, usuario_id) = %s",
         (usuario_id,),
     )
-    cursor.execute("DELETE FROM convites_treinador_link WHERE treinador_id = ?", (usuario_id,))
+    cursor.execute("DELETE FROM convites_treinador_link WHERE treinador_id = %s", (usuario_id,))
     cursor.execute(
         """
         DELETE FROM treinador_atleta
-        WHERE treinador_id = ? OR atleta_id = ?
+        WHERE treinador_id = %s OR atleta_id = %s
         """,
         (usuario_id, usuario_id),
     )
-    cursor.execute("DELETE FROM usuarios WHERE id = ?", (usuario_id,))
+    cursor.execute("DELETE FROM usuarios WHERE id = %s", (usuario_id,))
 
     conn.commit()
     conn.close()
