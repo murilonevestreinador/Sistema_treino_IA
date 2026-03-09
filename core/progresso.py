@@ -7,7 +7,7 @@ def marcar_treino_feito(atleta_id, semana_numero, nome_treino, feito, observacao
     conn = conectar()
     cursor = conn.cursor()
     feito_flag = int(bool(feito))
-    feito_em = datetime.now().isoformat(timespec="seconds") if feito_flag else None
+    feito_em = datetime.now().replace(microsecond=0) if feito_flag else None
     observacao_final = observacao or None
 
     cursor.execute(
@@ -161,7 +161,7 @@ def buscar_progresso_semana(atleta_id, semana_numero):
         """
         SELECT nome_treino,
                COALESCE(feito, concluido, 0) AS feito,
-               COALESCE(feito_em, data_realizada) AS feito_em,
+               COALESCE(CAST(feito_em AS text), CAST(data_realizada AS text)) AS feito_em,
                COALESCE(observacao, observacoes) AS observacao,
                feedback_tipo,
                feedback_contexto_ruim,
@@ -187,7 +187,7 @@ def historico_progresso(atleta_id):
         SELECT semana_numero,
                nome_treino,
                COALESCE(feito, concluido, 0) AS feito,
-               COALESCE(feito_em, data_realizada) AS feito_em,
+               COALESCE(CAST(feito_em AS text), CAST(data_realizada AS text)) AS feito_em,
                COALESCE(observacao, observacoes) AS observacao,
                feedback_tipo
         FROM treinos_realizados

@@ -25,6 +25,24 @@ def _colunas_tabela(cursor, tabela):
     return {linha["column_name"] for linha in cursor.fetchall()}
 
 
+def _tipo_coluna(cursor, tabela, coluna):
+    cursor.execute(
+        """
+        SELECT data_type
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = %s
+          AND column_name = %s
+        LIMIT 1
+        """,
+        (tabela, coluna),
+    )
+    linha = cursor.fetchone()
+    if not linha:
+        return None
+    return linha["data_type"]
+
+
 def _adicionar_coluna_se_necessario(cursor, tabela, nome_coluna, definicao):
     colunas = _colunas_tabela(cursor, tabela)
     if nome_coluna in colunas:
@@ -178,7 +196,7 @@ def _criar_tabela_treinos_realizados(cursor):
             feito INTEGER DEFAULT 0,
             concluido INTEGER DEFAULT 0,
             feito_em TIMESTAMP NULL,
-            data_realizada TEXT NULL,
+            data_realizada TIMESTAMP NULL,
             feedback_tipo TEXT NULL,
             feedback_contexto_ruim TEXT NULL,
             exercicio_substituir TEXT NULL,
@@ -197,7 +215,7 @@ def _criar_tabela_treinos_realizados(cursor):
         "feito": "INTEGER DEFAULT 0",
         "concluido": "INTEGER DEFAULT 0",
         "feito_em": "TIMESTAMP NULL",
-        "data_realizada": "TEXT NULL",
+        "data_realizada": "TIMESTAMP NULL",
         "feedback_tipo": "TEXT NULL",
         "feedback_contexto_ruim": "TEXT NULL",
         "exercicio_substituir": "TEXT NULL",
@@ -207,6 +225,84 @@ def _criar_tabela_treinos_realizados(cursor):
     }
     for nome, definicao in colunas.items():
         _adicionar_coluna_se_necessario(cursor, "treinos_realizados", nome, definicao)
+
+
+def _migrar_data_realizada_para_timestamp(cursor):
+    tipo = _tipo_coluna(cursor, "treinos_realizados", "data_realizada")
+    if tipo is None or tipo.startswith("timestamp"):
+        return
+
+    if tipo not in {"text", "character varying", "character"}:
+        return
+
+    cursor.execute("DROP INDEX IF EXISTS idx_treinos_realizados_atleta_data")
+    cursor.execute(
+        """
+        ALTER TABLE treinos_realizados
+        ADD COLUMN IF NOT EXISTS data_realizada_ts TIMESTAMP NULL
+        """
+    )
+    cursor.execute(
+        """
+        UPDATE treinos_realizados
+           SET data_realizada_ts = COALESCE(
+               data_realizada_ts,
+               feito_em,
+               CASE
+                   WHEN data_realizada IS NULL OR btrim(data_realizada) = '' THEN NULL
+                   WHEN btrim(data_realizada) ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}([ T][0-9]{2}:[0-9]{2}(:[0-9]{2}(\\.[0-9]+)?)?)?([+-][0-9]{2}:?[0-9]{2}|Z)?$'
+                        THEN REPLACE(btrim(data_realizada), 'T', ' ')::timestamp
+                   ELSE NULL
+               END
+           )
+         WHERE data_realizada_ts IS NULL
+        """
+    )
+    cursor.execute("ALTER TABLE treinos_realizados DROP COLUMN data_realizada")
+    cursor.execute(
+        """
+        ALTER TABLE treinos_realizados
+        RENAME COLUMN data_realizada_ts TO data_realizada
+        """
+    )
+
+
+def _migrar_feito_em_para_timestamp(cursor):
+    tipo = _tipo_coluna(cursor, "treinos_realizados", "feito_em")
+    if tipo is None or tipo.startswith("timestamp"):
+        return
+
+    if tipo not in {"text", "character varying", "character"}:
+        return
+
+    cursor.execute(
+        """
+        ALTER TABLE treinos_realizados
+        ADD COLUMN IF NOT EXISTS feito_em_ts TIMESTAMP NULL
+        """
+    )
+    cursor.execute(
+        """
+        UPDATE treinos_realizados
+           SET feito_em_ts = COALESCE(
+               feito_em_ts,
+               CASE
+                   WHEN feito_em IS NULL OR btrim(feito_em) = '' THEN NULL
+                   WHEN btrim(feito_em) ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}([ T][0-9]{2}:[0-9]{2}(:[0-9]{2}(\\.[0-9]+)?)?)?([+-][0-9]{2}:?[0-9]{2}|Z)?$'
+                        THEN REPLACE(btrim(feito_em), 'T', ' ')::timestamp
+                   ELSE NULL
+               END
+           )
+         WHERE feito_em_ts IS NULL
+        """
+    )
+    cursor.execute("ALTER TABLE treinos_realizados DROP COLUMN feito_em")
+    cursor.execute(
+        """
+        ALTER TABLE treinos_realizados
+        RENAME COLUMN feito_em_ts TO feito_em
+        """
+    )
 
 
 def _criar_tabela_recuperacao_senha(cursor):
@@ -372,6 +468,8 @@ def garantir_colunas_e_tabelas():
     _criar_tabela_convites_treinador_link(cursor)
     _criar_tabela_treinos_gerados(cursor)
     _criar_tabela_treinos_realizados(cursor)
+    _migrar_feito_em_para_timestamp(cursor)
+    _migrar_data_realizada_para_timestamp(cursor)
     _criar_tabela_recuperacao_senha(cursor)
     _criar_tabela_preferencias_substituicao(cursor)
     _criar_tabela_planos(cursor)

@@ -355,7 +355,7 @@ class TrainerBIService:
                    semana_numero,
                    nome_treino,
                    COALESCE(feito, concluido, 0) AS feito,
-                   COALESCE(feito_em, data_realizada) AS realizado_em,
+                   COALESCE(feito_em::text, data_realizada::text) AS realizado_em,
                    feedback_tipo,
                    feedback_contexto_ruim,
                    exercicio_substituir,
