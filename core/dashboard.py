@@ -45,6 +45,117 @@ def _registrar_dialog_video():
 _RENDER_DIALOG_VIDEO = _registrar_dialog_video()
 
 
+def _submeter_feedback_pendente(feedback, feedback_tipo, feedback_contexto_ruim, exercicio_escolhido, motivo_exercicio_ruim):
+    salvar_feedback_treino(
+        feedback["atleta_id"],
+        feedback["semana_numero"],
+        feedback["nome_treino"],
+        feedback_tipo,
+        feedback_contexto_ruim=feedback_contexto_ruim,
+        exercicio_substituir=exercicio_escolhido,
+        motivo_exercicio_ruim=motivo_exercicio_ruim,
+    )
+
+    if feedback_tipo == "muito ruim" and exercicio_escolhido:
+        exercicio_atual = next(
+            (item for item in feedback["exercicios"] if item["nome"] == exercicio_escolhido),
+            None,
+        )
+        if exercicio_atual:
+            registrar_preferencia_substituicao(
+                feedback["atleta_id"],
+                {
+                    "nome": exercicio_atual["nome"],
+                    "categoria": exercicio_atual.get("categoria"),
+                    "principal_musculo": exercicio_atual.get("principal_musculo"),
+                    "motivo": motivo_exercicio_ruim,
+                },
+            )
+            resetar_treinos_futuros(feedback["atleta_id"], feedback["semana_numero"])
+            st.session_state["mensagem_feedback_treino"] = (
+                "Obrigado pelo feedback. Vamos substituir esse exercicio nos proximos treinos."
+            )
+        else:
+            st.session_state["mensagem_feedback_treino"] = "Obrigado pelo feedback."
+    else:
+        st.session_state["mensagem_feedback_treino"] = "Obrigado e ate o proximo treino."
+
+    st.session_state.pop("feedback_pendente", None)
+    st.rerun()
+
+
+def _render_formulario_feedback(feedback):
+    st.markdown(f"**Treino {feedback['nome_treino']}**")
+    feedback_tipo = st.radio(
+        "Como foi esse treino?",
+        ["muito bom", "neutro", "muito ruim"],
+        horizontal=True,
+        key=f"feedback_tipo_{feedback['atleta_id']}_{feedback['semana_numero']}_{feedback['nome_treino']}",
+    )
+    feedback_contexto_ruim = None
+    exercicio_escolhido = None
+    motivo_exercicio_ruim = None
+
+    if feedback_tipo == "muito ruim":
+        feedback_contexto_ruim = "muito_ruim"
+        motivo_exercicio_ruim = st.selectbox(
+            "Por que foi muito ruim?",
+            [
+                "dor em um exercicio",
+                "nao gostou do exercicio",
+                "exercicio ficou desconfortavel",
+                "nao tem o equipamento na academia",
+            ],
+            key=f"motivo_ruim_{feedback['atleta_id']}_{feedback['semana_numero']}_{feedback['nome_treino']}",
+        )
+        nomes_exercicios = [item["nome"] for item in feedback["exercicios"]]
+        exercicio_escolhido = st.selectbox(
+            "Qual exercicio do treino gerou esse desconforto?",
+            nomes_exercicios,
+            key=f"exercicio_ruim_{feedback['atleta_id']}_{feedback['semana_numero']}_{feedback['nome_treino']}",
+        )
+
+    col_enviar, col_fechar = st.columns(2)
+    with col_enviar:
+        if st.button(
+            "Enviar feedback",
+            key=f"enviar_feedback_{feedback['atleta_id']}_{feedback['semana_numero']}_{feedback['nome_treino']}",
+            use_container_width=True,
+        ):
+            _submeter_feedback_pendente(
+                feedback,
+                feedback_tipo,
+                feedback_contexto_ruim,
+                exercicio_escolhido,
+                motivo_exercicio_ruim,
+            )
+    with col_fechar:
+        if st.button(
+            "Fechar janela",
+            key=f"fechar_feedback_{feedback['atleta_id']}_{feedback['semana_numero']}_{feedback['nome_treino']}",
+            use_container_width=True,
+        ):
+            st.session_state.pop("feedback_pendente", None)
+            st.rerun()
+
+
+def _registrar_dialog_feedback():
+    if not hasattr(st, "dialog"):
+        return None
+
+    @st.dialog("Feedback do treino")
+    def _render_dialog_feedback():
+        feedback = st.session_state.get("feedback_pendente")
+        if not feedback:
+            return
+        _render_formulario_feedback(feedback)
+
+    return _render_dialog_feedback
+
+
+_RENDER_DIALOG_FEEDBACK = _registrar_dialog_feedback()
+
+
 def _foto_perfil_bytes(usuario):
     foto_perfil = usuario.get("foto_perfil")
     if not foto_perfil:
@@ -335,80 +446,14 @@ def _render_feedback_pendente(nome_treino_esperado=None):
     if nome_treino_esperado and feedback.get("nome_treino") != nome_treino_esperado:
         return
 
+    if _RENDER_DIALOG_FEEDBACK:
+        _RENDER_DIALOG_FEEDBACK()
+        return
+
     st.markdown("---")
     with st.container():
         st.subheader(f"Feedback do treino {feedback['nome_treino']}")
-        feedback_tipo = st.radio(
-            "Como foi esse treino?",
-            ["muito bom", "neutro", "muito ruim"],
-            horizontal=True,
-            key=f"feedback_tipo_{feedback['atleta_id']}_{feedback['semana_numero']}_{feedback['nome_treino']}",
-        )
-        feedback_contexto_ruim = None
-        exercicio_escolhido = None
-        motivo_exercicio_ruim = None
-
-        if feedback_tipo == "muito ruim":
-            feedback_contexto_ruim = "muito_ruim"
-            motivo_exercicio_ruim = st.selectbox(
-                "Por que foi muito ruim?",
-                [
-                    "dor em um exerc\u00edcio",
-                    "n\u00e3o gostou do exerc\u00edcio",
-                    "exerc\u00edcio ficou desconfort\u00e1vel",
-                    "n\u00e3o tem o equipamento na academia",
-                ],
-                key=f"motivo_ruim_{feedback['atleta_id']}_{feedback['semana_numero']}_{feedback['nome_treino']}",
-            )
-            nomes_exercicios = [item["nome"] for item in feedback["exercicios"]]
-            exercicio_escolhido = st.selectbox(
-                "Qual exerc\u00edcio do treino gerou esse desconforto?",
-                nomes_exercicios,
-                key=f"exercicio_ruim_{feedback['atleta_id']}_{feedback['semana_numero']}_{feedback['nome_treino']}",
-            )
-
-        if not st.button(
-            "Enviar feedback",
-            key=f"enviar_feedback_{feedback['atleta_id']}_{feedback['semana_numero']}_{feedback['nome_treino']}",
-        ):
-            return
-
-        salvar_feedback_treino(
-            feedback["atleta_id"],
-            feedback["semana_numero"],
-            feedback["nome_treino"],
-            feedback_tipo,
-            feedback_contexto_ruim=feedback_contexto_ruim,
-            exercicio_substituir=exercicio_escolhido,
-            motivo_exercicio_ruim=motivo_exercicio_ruim,
-        )
-
-        if feedback_tipo == "muito ruim" and exercicio_escolhido:
-            exercicio_atual = next(
-                (item for item in feedback["exercicios"] if item["nome"] == exercicio_escolhido),
-                None,
-            )
-            if exercicio_atual:
-                registrar_preferencia_substituicao(
-                    feedback["atleta_id"],
-                    {
-                        "nome": exercicio_atual["nome"],
-                        "categoria": exercicio_atual.get("categoria"),
-                        "principal_musculo": exercicio_atual.get("principal_musculo"),
-                        "motivo": motivo_exercicio_ruim,
-                    },
-                )
-                resetar_treinos_futuros(feedback["atleta_id"], feedback["semana_numero"])
-                st.session_state["mensagem_feedback_treino"] = (
-                    "Obrigado pelo feedback. Vamos substituir esse exerc\u00edcio nos pr\u00f3ximos treinos."
-                )
-            else:
-                st.session_state["mensagem_feedback_treino"] = "Obrigado pelo feedback."
-        else:
-            st.session_state["mensagem_feedback_treino"] = "Obrigado e at\u00e9 o pr\u00f3ximo treino."
-
-        st.session_state.pop("feedback_pendente", None)
-        st.rerun()
+        _render_formulario_feedback(feedback)
 
 
 def _render_card_exercicios(exercicios):
