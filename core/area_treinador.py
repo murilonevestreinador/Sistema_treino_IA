@@ -82,27 +82,46 @@ def _assinatura_editor_treino(treino):
     )
 
 
-def _chave_ordem_editor(atleta_id, semana_numero):
-    return f"ordem_editor_treino_{atleta_id}_{semana_numero}"
+def _chave_editor_treino(atleta_id, semana_numero):
+    return f"editor_treino_{atleta_id}_{semana_numero}"
 
 
-def _gerar_ordem_padrao(treino):
+def _construir_estado_editor_treino(treino):
     return {
-        nome_treino: [f"{nome_treino}::{indice}" for indice, _ in enumerate(exercicios)]
+        nome_treino: [
+            {
+                "uid": uuid.uuid4().hex,
+                "dados": {
+                    **dict(exercicio),
+                    "nome": exercicio.get("nome", ""),
+                    "series": int(exercicio.get("series") or 3),
+                    "reps": int(exercicio.get("reps") or 10),
+                    "descanso": str(exercicio.get("descanso") or ""),
+                },
+            }
+            for exercicio in exercicios
+        ]
         for nome_treino, exercicios in treino.items()
     }
 
 
-def _garantir_ordem_editor(atleta_id, semana_numero, treino):
-    chave = _chave_ordem_editor(atleta_id, semana_numero)
+def _garantir_editor_treino(atleta_id, semana_numero, treino):
+    chave = _chave_editor_treino(atleta_id, semana_numero)
     assinatura = _assinatura_editor_treino(treino)
     estado = st.session_state.get(chave)
-    if not estado or estado.get("assinatura") != assinatura:
+    if not estado or estado.get("assinatura_origem") != assinatura:
         st.session_state[chave] = {
-            "assinatura": assinatura,
-            "ordem": _gerar_ordem_padrao(treino),
+            "assinatura_origem": assinatura,
+            "treinos": _construir_estado_editor_treino(treino),
         }
-    return st.session_state[chave]["ordem"]
+    return st.session_state[chave]["treinos"]
+
+
+def _garantir_ordem_editor(atleta_id, semana_numero, treino):
+    return {
+        nome_treino: [f"{nome_treino}::{indice}" for indice, _ in enumerate(exercicios)]
+        for nome_treino, exercicios in treino.items()
+    }
 
 
 def _exercicios_ordenados(treino, ordem_salva):
@@ -114,17 +133,19 @@ def _exercicios_ordenados(treino, ordem_salva):
         }
         ordem_atual = [item_id for item_id in ordem_salva.get(nome_treino, []) if item_id in mapa_exercicios]
         faltantes = [item_id for item_id in mapa_exercicios if item_id not in ordem_atual]
-        ids_ordenados = ordem_atual + faltantes
-        treino_ordenado[nome_treino] = [mapa_exercicios[item_id] for item_id in ids_ordenados]
-        ordem_salva[nome_treino] = ids_ordenados
+        treino_ordenado[nome_treino] = [mapa_exercicios[item_id] for item_id in ordem_atual + faltantes]
     return treino_ordenado
+
+
+def _widget_key_editor(campo, atleta_id, semana_numero, nome_treino, exercicio_uid):
+    return f"editor_{campo}_{atleta_id}_{semana_numero}_{nome_treino}_{exercicio_uid}"
 
 
 def _rotulo_bloco_exercicio(exercicio, indice_base):
     return (
-        f"{indice_base + 1:02d} | {exercicio.get('nome', 'Exercicio')} | "
+        f":: {indice_base + 1:02d} | {exercicio.get('nome') or 'Novo exercicio'} | "
         f"{exercicio.get('series', '-')}x{exercicio.get('reps', '-')} | "
-        f"descanso {exercicio.get('descanso', '-')}"
+        f"descanso {exercicio.get('descanso') or '-'}"
     )
 
 
@@ -203,6 +224,199 @@ def _render_ordenacao_exercicios(atleta_id, semana_numero, treino):
                             st.rerun()
 
     return _exercicios_ordenados(treino, ordem_salva)
+
+
+def _sincronizar_widgets_editor(atleta_id, semana_numero, nome_treino, exercicios, nome_por_label):
+    for item in exercicios:
+        dados = item["dados"]
+        uid = item["uid"]
+        chave_nome = _widget_key_editor("nome", atleta_id, semana_numero, nome_treino, uid)
+        chave_series = _widget_key_editor("series", atleta_id, semana_numero, nome_treino, uid)
+        chave_reps = _widget_key_editor("reps", atleta_id, semana_numero, nome_treino, uid)
+        chave_descanso = _widget_key_editor("descanso", atleta_id, semana_numero, nome_treino, uid)
+
+        if chave_nome in st.session_state:
+            dados["nome"] = nome_por_label.get(st.session_state[chave_nome], "")
+        if chave_series in st.session_state:
+            dados["series"] = int(st.session_state[chave_series] or 0)
+        if chave_reps in st.session_state:
+            dados["reps"] = int(st.session_state[chave_reps] or 0)
+        if chave_descanso in st.session_state:
+            dados["descanso"] = str(st.session_state[chave_descanso] or "")
+
+
+def _reordenar_exercicios_editor(atleta_id, semana_numero, nome_treino, exercicios):
+    if not exercicios:
+        return
+
+    rotulo_por_uid = {
+        item["uid"]: _rotulo_bloco_exercicio(item["dados"], indice)
+        for indice, item in enumerate(exercicios)
+    }
+    ordem_atual = [item["uid"] for item in exercicios]
+    st.caption("Arraste para reorganizar a ordem real dos exercicios deste treino.")
+
+    if sort_items:
+        custom_style = """
+        .sortable-component {
+            border: 1px dashed rgba(15, 23, 42, 0.12);
+            border-radius: 16px;
+            padding: 0.35rem;
+            margin-bottom: 0.8rem;
+            background: rgba(248, 250, 252, 0.88);
+        }
+        .sortable-container {
+            background: transparent;
+        }
+        .sortable-item, .sortable-item:hover {
+            background: #ffffff;
+            border: 1px solid rgba(15, 23, 42, 0.08);
+            border-radius: 12px;
+            color: #102f2b;
+            font-weight: 600;
+            padding: 0.8rem 0.9rem;
+            margin-bottom: 0.45rem;
+            box-shadow: 0 8px 18px rgba(15, 23, 42, 0.06);
+        }
+        """
+        itens_ordenados = sort_items(
+            [rotulo_por_uid[uid] for uid in ordem_atual],
+            direction="vertical",
+            key=f"sort_editor_unificado_{atleta_id}_{semana_numero}_{nome_treino}",
+            custom_style=custom_style,
+        )
+        uid_por_rotulo = {rotulo: uid for uid, rotulo in rotulo_por_uid.items()}
+        mapa_exercicios = {item["uid"]: item for item in exercicios}
+        exercicios[:] = [mapa_exercicios[uid_por_rotulo[rotulo]] for rotulo in itens_ordenados if rotulo in uid_por_rotulo]
+        return
+
+    st.info("Drag and drop nao esta disponivel. Use mover para cima ou para baixo neste ambiente.")
+    for posicao, item in enumerate(list(exercicios)):
+        col_rotulo, col_cima, col_baixo = st.columns([8, 1, 1])
+        with col_rotulo:
+            st.markdown(
+                f"""
+                <div style="padding:0.7rem 0.85rem; border:1px solid rgba(15, 23, 42, 0.08); border-radius:12px; background:#ffffff; margin-bottom:0.45rem;">
+                    {_rotulo_bloco_exercicio(item['dados'], posicao)}
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        with col_cima:
+            if st.button("Subir", key=f"subir_{atleta_id}_{semana_numero}_{nome_treino}_{item['uid']}", use_container_width=True):
+                if posicao > 0:
+                    exercicios[posicao - 1], exercicios[posicao] = exercicios[posicao], exercicios[posicao - 1]
+                    st.rerun()
+        with col_baixo:
+            if st.button("Descer", key=f"descer_{atleta_id}_{semana_numero}_{nome_treino}_{item['uid']}", use_container_width=True):
+                if posicao < len(exercicios) - 1:
+                    exercicios[posicao + 1], exercicios[posicao] = exercicios[posicao], exercicios[posicao + 1]
+                    st.rerun()
+
+
+def _adicionar_exercicio_editor(exercicios, exercicio_padrao=None):
+    dados_padrao = dict(exercicio_padrao or {})
+    exercicios.append(
+        {
+            "uid": uuid.uuid4().hex,
+            "dados": {
+                **dados_padrao,
+                "nome": dados_padrao.get("nome", ""),
+                "series": int(dados_padrao.get("series") or 3),
+                "reps": int(dados_padrao.get("reps") or 10),
+                "descanso": str(dados_padrao.get("descanso") or ""),
+            },
+        }
+    )
+
+
+def _duplicar_exercicio_editor(exercicios, indice):
+    exercicios.insert(
+        indice + 1,
+        {
+            "uid": uuid.uuid4().hex,
+            "dados": dict(exercicios[indice]["dados"]),
+        },
+    )
+
+
+def _coletar_treino_editado(
+    atleta_id,
+    semana_numero,
+    treinos_editor,
+    nome_por_label,
+    categoria_por_nome,
+    musculo_por_nome,
+):
+    treino_editado = {}
+    erros = []
+
+    for nome_treino, exercicios in treinos_editor.items():
+        _sincronizar_widgets_editor(atleta_id, semana_numero, nome_treino, exercicios, nome_por_label)
+        treino_editado[nome_treino] = []
+
+        for indice, item in enumerate(exercicios):
+            dados = dict(item["dados"])
+            nome_exercicio = (dados.get("nome") or "").strip()
+            if not nome_exercicio:
+                erros.append(f"{nome_treino}: selecione um exercicio no bloco {indice + 1}.")
+                continue
+
+            treino_editado[nome_treino].append(
+                {
+                    **dados,
+                    "nome": nome_exercicio,
+                    "categoria": categoria_por_nome.get(nome_exercicio, dados.get("categoria", "")),
+                    "principal_musculo": musculo_por_nome.get(
+                        nome_exercicio,
+                        dados.get("principal_musculo", ""),
+                    ),
+                    "series": int(dados.get("series") or 0),
+                    "reps": int(dados.get("reps") or 0),
+                    "descanso": str(dados.get("descanso") or ""),
+                }
+            )
+
+        if not treino_editado[nome_treino]:
+            erros.append(f"{nome_treino}: adicione pelo menos um exercicio antes de salvar.")
+
+    return treino_editado, erros
+
+
+def _aplicar_estilo_editor_treino():
+    st.markdown(
+        """
+        <style>
+        .trainer-editor-shell {
+            border: 1px solid rgba(15, 23, 42, 0.08);
+            border-radius: 20px;
+            padding: 1rem;
+            background: rgba(255, 255, 255, 0.86);
+            box-shadow: 0 14px 32px rgba(15, 23, 42, 0.05);
+            margin-bottom: 1rem;
+        }
+        .trainer-editor-card {
+            border: 1px solid rgba(15, 23, 42, 0.08);
+            border-radius: 16px;
+            padding: 0.9rem 0.95rem;
+            background: #ffffff;
+            box-shadow: 0 10px 22px rgba(15, 23, 42, 0.04);
+            margin-bottom: 0.75rem;
+        }
+        .trainer-editor-card h4 {
+            margin: 0;
+            color: #102f2b;
+            font-size: 1rem;
+        }
+        .trainer-editor-card p {
+            margin: 0.2rem 0 0;
+            color: #58706b;
+            font-size: 0.88rem;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def _render_linha_atleta(nome, email, foto_perfil=None):
@@ -477,6 +691,7 @@ def _render_visualizacao_atleta(treinador):
         return
 
     st.subheader("Editar treino da semana")
+    _aplicar_estilo_editor_treino()
     opcoes_exercicios = sorted(
         [
             {
@@ -498,68 +713,128 @@ def _render_visualizacao_atleta(treinador):
         )
         for item in opcoes_exercicios
     }
-    treino_para_edicao = _render_ordenacao_exercicios(atleta["id"], semana_escolhida["semana"], treino)
+    label_vazio = "Selecione um exercicio"
+    opcoes_dropdown = [label_vazio] + labels_exercicios
+    nome_por_label = {item["label"]: item["nome"] for item in opcoes_exercicios}
+    treinos_editor = _garantir_editor_treino(atleta["id"], semana_escolhida["semana"], treino)
 
-    with st.form(f"editar_treino_{atleta_id}_{semana_escolhida['semana']}"):
-        treino_editado = {}
+    for nome_treino, exercicios in treinos_editor.items():
+        _sincronizar_widgets_editor(
+            atleta["id"],
+            semana_escolhida["semana"],
+            nome_treino,
+            exercicios,
+            nome_por_label,
+        )
 
-        for nome_treino, exercicios in treino_para_edicao.items():
-            st.markdown(f"**Treino {nome_treino}**")
-            treino_editado[nome_treino] = []
+        with st.container(border=True):
+            st.markdown(f"#### Treino {nome_treino}")
+            st.caption("Reordene e edite os blocos no mesmo fluxo. Duplicar, excluir e adicionar so afetam este treino.")
+        _reordenar_exercicios_editor(atleta["id"], semana_escolhida["semana"], nome_treino, exercicios)
 
-            for indice, exercicio in enumerate(exercicios):
-                label_atual = label_por_nome.get(
-                    exercicio["nome"],
-                    f"{exercicio['nome']} ({exercicio.get('categoria', '').replace('_', ' ')})",
+        for indice, item_editor in enumerate(list(exercicios)):
+            dados = item_editor["dados"]
+            uid = item_editor["uid"]
+            label_atual = label_por_nome.get(
+                dados.get("nome"),
+                label_vazio if not dados.get("nome") else f"{dados.get('nome')} ({dados.get('categoria', '').replace('_', ' ')})",
+            )
+            opcoes_item = opcoes_dropdown if label_atual in opcoes_dropdown else opcoes_dropdown + [label_atual]
+
+            chave_nome = _widget_key_editor("nome", atleta["id"], semana_escolhida["semana"], nome_treino, uid)
+            chave_series = _widget_key_editor("series", atleta["id"], semana_escolhida["semana"], nome_treino, uid)
+            chave_reps = _widget_key_editor("reps", atleta["id"], semana_escolhida["semana"], nome_treino, uid)
+            chave_descanso = _widget_key_editor("descanso", atleta["id"], semana_escolhida["semana"], nome_treino, uid)
+
+            with st.container(border=True):
+                col_titulo, col_dup, col_exc = st.columns([6, 1.5, 1.5])
+                with col_titulo:
+                    st.markdown(f"#### Exercicio {indice + 1}")
+                    st.caption(dados.get("nome") or "Selecione um exercicio para este bloco.")
+                with col_dup:
+                    if st.button("Duplicar", key=f"duplicar_{nome_treino}_{uid}", use_container_width=True):
+                        _sincronizar_widgets_editor(
+                            atleta["id"],
+                            semana_escolhida["semana"],
+                            nome_treino,
+                            exercicios,
+                            nome_por_label,
+                        )
+                        _duplicar_exercicio_editor(exercicios, indice)
+                        st.rerun()
+                with col_exc:
+                    if st.button("Excluir", key=f"excluir_{nome_treino}_{uid}", use_container_width=True):
+                        _sincronizar_widgets_editor(
+                            atleta["id"],
+                            semana_escolhida["semana"],
+                            nome_treino,
+                            exercicios,
+                            nome_por_label,
+                        )
+                        exercicios.pop(indice)
+                        st.rerun()
+
+                st.selectbox(
+                    f"Exercicio {indice + 1}",
+                    options=opcoes_item,
+                    index=opcoes_item.index(label_atual),
+                    key=chave_nome,
+                    label_visibility="collapsed",
                 )
-                opcoes = labels_exercicios if labels_exercicios else [label_atual]
-                indice_padrao = opcoes.index(label_atual) if label_atual in opcoes else 0
 
-                label_escolhido = st.selectbox(
-                    f"{nome_treino} | Exercicio {indice + 1}",
-                    options=opcoes,
-                    index=indice_padrao,
-                    key=f"edit_nome_{atleta_id}_{semana_escolhida['semana']}_{nome_treino}_{indice}",
-                )
-                nome_escolhido = next(
-                    (item["nome"] for item in opcoes_exercicios if item["label"] == label_escolhido),
-                    exercicio["nome"],
-                )
-                col_series, col_reps = st.columns(2)
+                col_series, col_reps, col_descanso = st.columns([1, 1, 1.4])
                 with col_series:
-                    series = st.number_input(
+                    st.number_input(
                         "Series",
                         min_value=1,
-                        max_value=8,
-                        value=int(exercicio["series"]),
-                        key=f"edit_series_{atleta_id}_{semana_escolhida['semana']}_{nome_treino}_{indice}",
+                        max_value=12,
+                        value=int(dados.get("series") or 3),
+                        key=chave_series,
                     )
                 with col_reps:
-                    reps = st.number_input(
+                    st.number_input(
                         "Reps",
                         min_value=1,
-                        max_value=30,
-                        value=int(exercicio["reps"]),
-                        key=f"edit_reps_{atleta_id}_{semana_escolhida['semana']}_{nome_treino}_{indice}",
+                        max_value=50,
+                        value=int(dados.get("reps") or 10),
+                        key=chave_reps,
+                    )
+                with col_descanso:
+                    st.text_input(
+                        "Descanso",
+                        value=str(dados.get("descanso") or ""),
+                        key=chave_descanso,
+                        placeholder="ex: 60s",
                     )
 
-                treino_editado[nome_treino].append(
-                    {
-                        **exercicio,
-                        "nome": nome_escolhido,
-                        "categoria": categoria_por_nome.get(nome_escolhido, exercicio.get("categoria", "")),
-                        "principal_musculo": musculo_por_nome.get(
-                            nome_escolhido,
-                            exercicio.get("principal_musculo", ""),
-                        ),
-                        "series": int(series),
-                        "reps": int(reps),
-                    }
-                )
+        if st.button(
+            "Adicionar exercicio",
+            key=f"adicionar_exercicio_{atleta['id']}_{semana_escolhida['semana']}_{nome_treino}",
+            use_container_width=True,
+        ):
+            _sincronizar_widgets_editor(
+                atleta["id"],
+                semana_escolhida["semana"],
+                nome_treino,
+                exercicios,
+                nome_por_label,
+            )
+            _adicionar_exercicio_editor(exercicios)
+            st.rerun()
 
-        salvar = st.form_submit_button("Salvar edicao")
-
-    if salvar:
+    if st.button("Salvar edicao", key=f"salvar_treino_unificado_{atleta_id}_{semana_escolhida['semana']}", use_container_width=True):
+        treino_editado, erros = _coletar_treino_editado(
+            atleta["id"],
+            semana_escolhida["semana"],
+            treinos_editor,
+            nome_por_label,
+            categoria_por_nome,
+            musculo_por_nome,
+        )
+        if erros:
+            for erro in erros:
+                st.error(erro)
+            return
         salvar_treino_gerado(
             atleta["id"],
             semana_escolhida["semana"],
