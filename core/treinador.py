@@ -1,10 +1,16 @@
 import secrets
 import os
+from pathlib import Path
 
 from core.banco import conectar
 from core.usuarios import buscar_usuario_por_email, buscar_usuario_por_id
 
 DEFAULT_PUBLIC_APP_URL = "https://trilab-treinamento.onrender.com"
+DEFAULT_TEMA_TREINADOR = {
+    "cor_primaria": "#1b6f5c",
+    "cor_secundaria": "#2f8f7a",
+    "logo_url": None,
+}
 
 
 def _resolver_url_base_publica():
@@ -43,6 +49,108 @@ def gerar_link_convite(treinador_id, base_url=None):
 
     url_base = (base_url or _resolver_url_base_publica()).strip().rstrip("/")
     return f"{url_base}?convite={token}"
+
+
+def _normalizar_cor(valor, fallback):
+    cor = (valor or "").strip()
+    if cor.startswith("#") and len(cor) in {4, 7}:
+        return cor
+    return fallback
+
+
+def tema_padrao_treinador():
+    return dict(DEFAULT_TEMA_TREINADOR)
+
+
+def salvar_tema_treinador(treinador_id, cor_primaria, cor_secundaria, logo_url):
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT INTO treinador_tema (treinador_id, cor_primaria, cor_secundaria, logo_url)
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT (treinador_id)
+        DO UPDATE SET
+            cor_primaria = EXCLUDED.cor_primaria,
+            cor_secundaria = EXCLUDED.cor_secundaria,
+            logo_url = EXCLUDED.logo_url
+        """,
+        (
+            treinador_id,
+            _normalizar_cor(cor_primaria, DEFAULT_TEMA_TREINADOR["cor_primaria"]),
+            _normalizar_cor(cor_secundaria, DEFAULT_TEMA_TREINADOR["cor_secundaria"]),
+            (logo_url or "").strip() or None,
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
+def buscar_tema_treinador(treinador_id):
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT id, treinador_id, cor_primaria, cor_secundaria, logo_url, created_at
+        FROM treinador_tema
+        WHERE treinador_id = %s
+        LIMIT 1
+        """,
+        (treinador_id,),
+    )
+    tema = cursor.fetchone()
+    conn.close()
+
+    if not tema:
+        return tema_padrao_treinador()
+
+    return {
+        "id": tema["id"],
+        "treinador_id": tema["treinador_id"],
+        "cor_primaria": _normalizar_cor(tema.get("cor_primaria"), DEFAULT_TEMA_TREINADOR["cor_primaria"]),
+        "cor_secundaria": _normalizar_cor(tema.get("cor_secundaria"), DEFAULT_TEMA_TREINADOR["cor_secundaria"]),
+        "logo_url": tema.get("logo_url"),
+        "created_at": tema.get("created_at"),
+    }
+
+
+def buscar_tema_por_atleta(atleta_id):
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT treinador_id
+        FROM treinador_atleta
+        WHERE atleta_id = %s
+          AND status = 'ativo'
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1
+        """,
+        (atleta_id,),
+    )
+    vinculo = cursor.fetchone()
+    conn.close()
+
+    if not vinculo:
+        return tema_padrao_treinador()
+
+    tema = buscar_tema_treinador(vinculo["treinador_id"])
+    tema["treinador_id"] = vinculo["treinador_id"]
+    return tema
+
+
+def resolver_logo_treinador(logo_url):
+    caminho = (logo_url or "").strip()
+    if not caminho:
+        return None
+    if caminho.startswith(("http://", "https://", "data:")):
+        return caminho
+    if caminho.startswith("/"):
+        caminho = caminho.lstrip("/").replace("/", os.sep)
+    arquivo = Path(caminho)
+    if not arquivo.is_absolute():
+        arquivo = Path.cwd() / arquivo
+    return str(arquivo) if arquivo.exists() else None
 
 
 def buscar_convite_por_token(token):

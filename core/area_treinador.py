@@ -1,6 +1,8 @@
 import base64
 import os
+import uuid
 from datetime import date, timedelta
+from pathlib import Path
 
 import streamlit as st
 
@@ -8,7 +10,14 @@ from core.bi import BIValidationError, TrainerBIService
 from core.cronograma import buscar_semana_por_numero, gerar_cronograma, obter_semana_atual
 from core.exercicios import carregar_exercicios
 from core.progresso import buscar_progresso_semana, calcular_progresso_semanal
-from core.treinador import gerar_link_convite, listar_atletas_do_treinador, listar_vinculos
+from core.treinador import (
+    buscar_tema_treinador,
+    gerar_link_convite,
+    listar_atletas_do_treinador,
+    listar_vinculos,
+    resolver_logo_treinador,
+    salvar_tema_treinador,
+)
 from core.treino import buscar_treino_gerado, obter_ou_gerar_treino_semana, salvar_treino_gerado
 from core.usuarios import buscar_usuario_por_id
 
@@ -211,7 +220,7 @@ def _render_linha_atleta(nome, email, foto_perfil=None):
 def _render_menu_local_treinador():
     secao = st.session_state.get("secao_treinador", "visao_geral")
     st.caption("Use o menu abaixo para alternar entre gestão dos atletas e BI.")
-    col_geral, col_atletas, col_bi = st.columns(3)
+    col_geral, col_personalizacao, col_atletas, col_bi = st.columns(4)
     with col_geral:
         if st.button(
             "Visao geral",
@@ -220,6 +229,15 @@ def _render_menu_local_treinador():
             use_container_width=True,
         ):
             st.session_state["secao_treinador"] = "visao_geral"
+            st.rerun()
+    with col_personalizacao:
+        if st.button(
+            "Personalizacao",
+            key="btn_secao_treinador_personalizacao",
+            type="primary" if secao == "personalizacao" else "secondary",
+            use_container_width=True,
+        ):
+            st.session_state["secao_treinador"] = "personalizacao"
             st.rerun()
     with col_atletas:
         if st.button(
@@ -239,6 +257,69 @@ def _render_menu_local_treinador():
         ):
             st.session_state["secao_treinador"] = "bi"
             st.rerun()
+
+
+def _salvar_logo_treinador(arquivo_upload):
+    if arquivo_upload is None:
+        return None
+
+    extensao = Path(arquivo_upload.name or "").suffix.lower()
+    if extensao not in {".png", ".jpg", ".jpeg", ".webp"}:
+        extensao = ".png"
+
+    diretorio = Path.cwd() / "uploads" / "logos"
+    diretorio.mkdir(parents=True, exist_ok=True)
+
+    nome_arquivo = f"treinador_logo_{uuid.uuid4().hex}{extensao}"
+    destino = diretorio / nome_arquivo
+    with open(destino, "wb") as arquivo_destino:
+        arquivo_destino.write(arquivo_upload.getbuffer())
+
+    return f"/uploads/logos/{nome_arquivo}"
+
+
+def _render_personalizacao_app(treinador):
+    st.subheader("Personalizacao do aplicativo")
+    st.caption("As cores e a logo definidas aqui tambem serao exibidas para os atletas vinculados.")
+
+    tema_atual = buscar_tema_treinador(treinador["id"])
+    logo_atual = resolver_logo_treinador(tema_atual.get("logo_url"))
+
+    if logo_atual:
+        st.image(logo_atual, width=120)
+
+    with st.form(f"form_tema_treinador_{treinador['id']}"):
+        cor_primaria = st.color_picker("Cor primaria", value=tema_atual.get("cor_primaria", "#1b6f5c"))
+        cor_secundaria = st.color_picker("Cor secundaria", value=tema_atual.get("cor_secundaria", "#2f8f7a"))
+        logo_upload = st.file_uploader(
+            "Logo ou foto do treinador",
+            type=["png", "jpg", "jpeg", "webp"],
+            key=f"logo_treinador_{treinador['id']}",
+        )
+        remover_logo = st.checkbox(
+            "Remover logo atual",
+            value=False,
+            disabled=not bool(tema_atual.get("logo_url")),
+        )
+        salvar = st.form_submit_button("Salvar personalizacao", use_container_width=True)
+
+    if not salvar:
+        return
+
+    logo_url = tema_atual.get("logo_url")
+    if remover_logo:
+        logo_url = None
+    elif logo_upload is not None:
+        logo_url = _salvar_logo_treinador(logo_upload)
+
+    salvar_tema_treinador(
+        treinador["id"],
+        cor_primaria,
+        cor_secundaria,
+        logo_url,
+    )
+    st.session_state["mensagem_tema_treinador"] = "Personalizacao atualizada com sucesso."
+    st.rerun()
 
 
 def _render_convite(treinador):
@@ -699,9 +780,15 @@ def tela_area_treinador(treinador):
         st.session_state["secao_treinador"] = "visao_geral"
 
     st.title("Area do treinador")
+    mensagem = st.session_state.pop("mensagem_tema_treinador", None)
+    if mensagem:
+        st.success(mensagem)
     _render_menu_local_treinador()
 
     secao = st.session_state.get("secao_treinador", "visao_geral")
+    if secao == "personalizacao":
+        _render_personalizacao_app(treinador)
+        return
     if secao == "atletas":
         _render_visualizacao_atleta(treinador)
         return

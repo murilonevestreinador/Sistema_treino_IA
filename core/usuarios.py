@@ -363,6 +363,7 @@ def excluir_usuario(usuario_id):
         (usuario_id,),
     )
     cursor.execute("DELETE FROM convites_treinador_link WHERE treinador_id = %s", (usuario_id,))
+    cursor.execute("DELETE FROM treinador_tema WHERE treinador_id = %s", (usuario_id,))
     cursor.execute(
         """
         DELETE FROM treinador_atleta

@@ -14,7 +14,7 @@ from core.progresso import (
     registrar_preferencia_substituicao,
     salvar_feedback_treino,
 )
-from core.treinador import listar_convites_pendentes_do_atleta, responder_convite
+from core.treinador import listar_convites_pendentes_do_atleta, resolver_logo_treinador, responder_convite
 from core.treino import buscar_treino_gerado, obter_ou_gerar_treino_semana, resetar_treinos_futuros
 
 
@@ -213,7 +213,7 @@ def _aplicar_estilo_dashboard():
         .athlete-banner {
             padding: 1.1rem 1.3rem;
             border-radius: 18px;
-            background: linear-gradient(135deg, #102f2b 0%, #1f5c53 58%, #2f7d71 100%);
+            background: linear-gradient(135deg, #102f2b 0%, var(--tri-primary, #1f5c53) 58%, var(--tri-secondary, #2f7d71) 100%);
             color: #f5fbf8;
             box-shadow: 0 18px 42px rgba(16, 47, 43, 0.14);
             margin-bottom: 1rem;
@@ -278,7 +278,7 @@ def _aplicar_estilo_dashboard():
             font-size: 0.72rem;
             letter-spacing: 0.08em;
             text-transform: uppercase;
-            color: #2f7d71;
+            color: var(--tri-secondary, #2f7d71);
             font-weight: 700;
             margin-bottom: 0.5rem;
         }
@@ -345,12 +345,12 @@ def _aplicar_estilo_dashboard():
         .stButton > button, .stFormSubmitButton > button {
             border-radius: 999px;
             border: none;
-            background: linear-gradient(135deg, #1f5c53 0%, #2f7d71 100%);
+            background: linear-gradient(135deg, var(--tri-primary, #1f5c53) 0%, var(--tri-secondary, #2f7d71) 100%);
             color: white;
             font-weight: 700;
         }
         .stButton > button:hover, .stFormSubmitButton > button:hover {
-            background: linear-gradient(135deg, #184942 0%, #276a60 100%);
+            background: linear-gradient(135deg, var(--tri-primary, #184942) 0%, var(--tri-secondary, #276a60) 100%);
             color: white;
         }
         @media (max-width: 768px) {
@@ -757,8 +757,13 @@ def _render_area_treinos(usuario, semana, treino_semana, progresso):
 def tela_dashboard(usuario):
     st.title("\u00c1rea do atleta")
     _aplicar_estilo_dashboard()
+    tema_app = st.session_state.get("tema_app", {})
+    logo_treinador = resolver_logo_treinador(tema_app.get("logo_url"))
     with st.container():
-        col_banner, col_foto = st.columns([8, 1])
+        col_logo, col_banner, col_foto = st.columns([1, 7, 1])
+        with col_logo:
+            if logo_treinador:
+                st.image(logo_treinador, width=80)
         with col_banner:
             nome_exibicao = usuario.get("apelido") or usuario.get("nome", "Atleta")
             st.markdown(

@@ -10,8 +10,16 @@ from core.dashboard import tela_dashboard
 from core.financeiro import garantir_assinatura_inicial, resumo_status_assinatura, usuario_tem_acesso
 from core.perfil import tela_meu_perfil
 from core.questionario import tela_questionario
-from core.treinador import buscar_convite_por_token, buscar_status_vinculo, definir_vinculo_treinador_atleta
+from core.treinador import (
+    buscar_convite_por_token,
+    buscar_status_vinculo,
+    buscar_tema_por_atleta,
+    buscar_tema_treinador,
+    definir_vinculo_treinador_atleta,
+    tema_padrao_treinador,
+)
 from core.treino import resetar_planejamento_atleta
+from core.ui import TEMA_PADRAO, aplicar_tema
 from core.usuarios import redefinir_objetivo_atleta
 
 
@@ -354,10 +362,24 @@ def renderizar_convite_treinador(usuario):
             st.rerun()
 
 
+def _obter_tema_usuario(usuario):
+    if not usuario:
+        return dict(TEMA_PADRAO)
+
+    if usuario.get("tipo_usuario") == "treinador":
+        return buscar_tema_treinador(usuario["id"])
+
+    if usuario.get("tipo_usuario") == "atleta":
+        return buscar_tema_por_atleta(usuario["id"])
+
+    return tema_padrao_treinador()
+
+
 def main():
     garantir_colunas_e_tabelas()
     inicializar_sessao()
     sincronizar_convite_da_url()
+    aplicar_tema(TEMA_PADRAO["cor_primaria"], TEMA_PADRAO["cor_secundaria"])
 
     if "usuario" not in st.session_state:
         st.session_state["usuario"] = None
@@ -366,6 +388,10 @@ def main():
     if usuario is None:
         tela_login()
         return
+
+    tema_usuario = _obter_tema_usuario(usuario)
+    st.session_state["tema_app"] = tema_usuario
+    aplicar_tema(tema_usuario.get("cor_primaria"), tema_usuario.get("cor_secundaria"))
 
     assinatura = garantir_assinatura_inicial(usuario)
     renderizar_sidebar(usuario, assinatura)

@@ -153,6 +153,38 @@ def _criar_tabela_convites_treinador_link(cursor):
     )
 
 
+def _criar_tabela_treinador_tema(cursor):
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS treinador_tema (
+            id SERIAL PRIMARY KEY,
+            treinador_id INTEGER NOT NULL,
+            cor_primaria VARCHAR(20),
+            cor_secundaria VARCHAR(20),
+            logo_url TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (treinador_id) REFERENCES usuarios(id)
+        )
+        """
+    )
+
+    colunas = {
+        "cor_primaria": "VARCHAR(20)",
+        "cor_secundaria": "VARCHAR(20)",
+        "logo_url": "TEXT",
+        "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+    }
+    for nome, definicao in colunas.items():
+        _adicionar_coluna_se_necessario(cursor, "treinador_tema", nome, definicao)
+
+    cursor.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_treinador_tema_treinador_unico
+        ON treinador_tema (treinador_id)
+        """
+    )
+
+
 def _criar_tabela_treinos_gerados(cursor):
     cursor.execute(
         """
@@ -466,6 +498,7 @@ def garantir_colunas_e_tabelas():
     _criar_tabela_usuarios(cursor)
     _criar_tabela_treinador_atleta(cursor)
     _criar_tabela_convites_treinador_link(cursor)
+    _criar_tabela_treinador_tema(cursor)
     _criar_tabela_treinos_gerados(cursor)
     _criar_tabela_treinos_realizados(cursor)
     _migrar_feito_em_para_timestamp(cursor)

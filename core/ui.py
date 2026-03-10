@@ -1,5 +1,46 @@
 import streamlit as st
 
+TEMA_PADRAO = {
+    "cor_primaria": "#1b6f5c",
+    "cor_secundaria": "#2f8f7a",
+}
+
+
+def aplicar_tema(cor_primaria, cor_secundaria):
+    cor_primaria = cor_primaria or TEMA_PADRAO["cor_primaria"]
+    cor_secundaria = cor_secundaria or TEMA_PADRAO["cor_secundaria"]
+    st.markdown(
+        f"""
+        <style>
+        :root {{
+            --tri-primary: {cor_primaria};
+            --tri-secondary: {cor_secundaria};
+            --primary-color: {cor_primaria};
+        }}
+        .stButton > button,
+        .stFormSubmitButton > button,
+        button[kind="primary"] {{
+            background: linear-gradient(135deg, var(--tri-primary) 0%, var(--tri-secondary) 100%) !important;
+            color: #ffffff !important;
+            border: none !important;
+        }}
+        .stButton > button:hover,
+        .stFormSubmitButton > button:hover,
+        button[kind="primary"]:hover {{
+            filter: brightness(0.94);
+            color: #ffffff !important;
+        }}
+        .stTabs [data-baseweb="tab"][aria-selected="true"] {{
+            color: var(--tri-primary) !important;
+        }}
+        .card-verde {{
+            background-color: var(--tri-primary);
+        }}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
 
 def apply_global_styles():
     st.markdown(
@@ -79,7 +120,7 @@ def apply_global_styles():
         .stFormSubmitButton > button {
             border-radius: 999px;
             border: none;
-            background: linear-gradient(135deg, #1f5c53 0%, #2f7d71 100%);
+            background: linear-gradient(135deg, var(--tri-primary, #1f5c53) 0%, var(--tri-secondary, #2f7d71) 100%);
             color: #ffffff;
             font-weight: 700;
             min-height: 2.9rem;
@@ -87,7 +128,7 @@ def apply_global_styles():
         }
         .stButton > button:hover,
         .stFormSubmitButton > button:hover {
-            background: linear-gradient(135deg, #184942 0%, #276a60 100%);
+            background: linear-gradient(135deg, var(--tri-primary, #184942) 0%, var(--tri-secondary, #276a60) 100%);
             color: #ffffff;
         }
         header[data-testid="stHeader"] {
