@@ -9,6 +9,9 @@ DEFAULT_PUBLIC_APP_URL = "https://trilab-treinamento.onrender.com"
 DEFAULT_TEMA_TREINADOR = {
     "cor_primaria": "#1b6f5c",
     "cor_secundaria": "#2f8f7a",
+    "cor_botao": "#1b6f5c",
+    "cor_cards": "#f7fbf9",
+    "cor_header": "#102f2b",
     "logo_url": None,
 }
 
@@ -62,23 +65,45 @@ def tema_padrao_treinador():
     return dict(DEFAULT_TEMA_TREINADOR)
 
 
-def salvar_tema_treinador(treinador_id, cor_primaria, cor_secundaria, logo_url):
+def salvar_tema_treinador(
+    treinador_id,
+    cor_primaria,
+    cor_secundaria,
+    logo_url,
+    cor_botao=None,
+    cor_cards=None,
+    cor_header=None,
+):
     conn = conectar()
     cursor = conn.cursor()
     cursor.execute(
         """
-        INSERT INTO treinador_tema (treinador_id, cor_primaria, cor_secundaria, logo_url)
-        VALUES (%s, %s, %s, %s)
+        INSERT INTO treinador_tema (
+            treinador_id,
+            cor_primaria,
+            cor_secundaria,
+            cor_botao,
+            cor_cards,
+            cor_header,
+            logo_url
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (treinador_id)
         DO UPDATE SET
             cor_primaria = EXCLUDED.cor_primaria,
             cor_secundaria = EXCLUDED.cor_secundaria,
+            cor_botao = EXCLUDED.cor_botao,
+            cor_cards = EXCLUDED.cor_cards,
+            cor_header = EXCLUDED.cor_header,
             logo_url = EXCLUDED.logo_url
         """,
         (
             treinador_id,
             _normalizar_cor(cor_primaria, DEFAULT_TEMA_TREINADOR["cor_primaria"]),
             _normalizar_cor(cor_secundaria, DEFAULT_TEMA_TREINADOR["cor_secundaria"]),
+            _normalizar_cor(cor_botao, DEFAULT_TEMA_TREINADOR["cor_botao"]),
+            _normalizar_cor(cor_cards, DEFAULT_TEMA_TREINADOR["cor_cards"]),
+            _normalizar_cor(cor_header, DEFAULT_TEMA_TREINADOR["cor_header"]),
             (logo_url or "").strip() or None,
         ),
     )
@@ -91,7 +116,16 @@ def buscar_tema_treinador(treinador_id):
     cursor = conn.cursor()
     cursor.execute(
         """
-        SELECT id, treinador_id, cor_primaria, cor_secundaria, logo_url, created_at
+        SELECT
+            id,
+            treinador_id,
+            cor_primaria,
+            cor_secundaria,
+            cor_botao,
+            cor_cards,
+            cor_header,
+            logo_url,
+            created_at
         FROM treinador_tema
         WHERE treinador_id = %s
         LIMIT 1
@@ -109,6 +143,9 @@ def buscar_tema_treinador(treinador_id):
         "treinador_id": tema["treinador_id"],
         "cor_primaria": _normalizar_cor(tema.get("cor_primaria"), DEFAULT_TEMA_TREINADOR["cor_primaria"]),
         "cor_secundaria": _normalizar_cor(tema.get("cor_secundaria"), DEFAULT_TEMA_TREINADOR["cor_secundaria"]),
+        "cor_botao": _normalizar_cor(tema.get("cor_botao"), DEFAULT_TEMA_TREINADOR["cor_botao"]),
+        "cor_cards": _normalizar_cor(tema.get("cor_cards"), DEFAULT_TEMA_TREINADOR["cor_cards"]),
+        "cor_header": _normalizar_cor(tema.get("cor_header"), DEFAULT_TEMA_TREINADOR["cor_header"]),
         "logo_url": tema.get("logo_url"),
         "created_at": tema.get("created_at"),
     }

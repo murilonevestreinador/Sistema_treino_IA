@@ -3,24 +3,36 @@ import streamlit as st
 TEMA_PADRAO = {
     "cor_primaria": "#1b6f5c",
     "cor_secundaria": "#2f8f7a",
+    "cor_botao": "#1b6f5c",
+    "cor_cards": "#f7fbf9",
+    "cor_header": "#102f2b",
 }
 
 
-def aplicar_tema(cor_primaria, cor_secundaria):
+def aplicar_tema(cor_primaria, cor_secundaria, cor_botao=None, cor_cards=None, cor_header=None):
     cor_primaria = cor_primaria or TEMA_PADRAO["cor_primaria"]
     cor_secundaria = cor_secundaria or TEMA_PADRAO["cor_secundaria"]
+    cor_botao = cor_botao or cor_primaria or TEMA_PADRAO["cor_botao"]
+    cor_cards = cor_cards or TEMA_PADRAO["cor_cards"]
+    cor_header = cor_header or TEMA_PADRAO["cor_header"]
     st.markdown(
         f"""
         <style>
         :root {{
             --tri-primary: {cor_primaria};
             --tri-secondary: {cor_secundaria};
+            --tri-button: {cor_botao};
+            --tri-card: {cor_cards};
+            --tri-header: {cor_header};
             --primary-color: {cor_primaria};
+        }}
+        header[data-testid="stHeader"] {{
+            background: {cor_header} !important;
         }}
         .stButton > button,
         .stFormSubmitButton > button,
         button[kind="primary"] {{
-            background: linear-gradient(135deg, var(--tri-primary) 0%, var(--tri-secondary) 100%) !important;
+            background: linear-gradient(135deg, var(--tri-button) 0%, var(--tri-secondary) 100%) !important;
             color: #ffffff !important;
             border: none !important;
         }}
@@ -35,6 +47,15 @@ def aplicar_tema(cor_primaria, cor_secundaria):
         }}
         .card-verde {{
             background-color: var(--tri-primary);
+        }}
+        .metric-card,
+        .workout-detail,
+        .history-card,
+        .exercise-card,
+        .section-shell,
+        .workout-card,
+        .auth-card {{
+            background: var(--tri-card) !important;
         }}
         </style>
         """,

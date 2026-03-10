@@ -229,7 +229,7 @@ def _aplicar_estilo_dashboard():
         .metric-card, .workout-detail, .history-card {
             border-radius: 18px;
             border: 1px solid rgba(16, 47, 43, 0.08);
-            background: rgba(255, 255, 255, 0.92);
+            background: var(--tri-card, rgba(255, 255, 255, 0.92));
             padding: 1rem 1.05rem;
             box-shadow: 0 12px 30px rgba(31, 92, 83, 0.08);
             margin-bottom: 0.9rem;
@@ -245,7 +245,7 @@ def _aplicar_estilo_dashboard():
             border: 1px solid rgba(16, 47, 43, 0.08);
             background:
                 radial-gradient(circle at top right, rgba(47, 125, 113, 0.10), transparent 32%),
-                rgba(255, 255, 255, 0.78);
+                var(--tri-card, rgba(255, 255, 255, 0.78));
             padding: 1rem;
             margin-bottom: 1rem;
         }
@@ -260,8 +260,7 @@ def _aplicar_estilo_dashboard():
         .workout-card {
             border-radius: 18px;
             border: 1px solid rgba(16, 47, 43, 0.08);
-            background:
-                linear-gradient(160deg, rgba(255, 255, 255, 0.96) 0%, rgba(236, 245, 241, 0.96) 100%);
+            background: var(--tri-card, rgba(255, 255, 255, 0.96));
             padding: 1rem;
             min-height: 150px;
             box-shadow: 0 12px 28px rgba(31, 92, 83, 0.08);
@@ -270,8 +269,7 @@ def _aplicar_estilo_dashboard():
         .workout-card.active {
             border-color: rgba(31, 92, 83, 0.28);
             box-shadow: 0 16px 34px rgba(31, 92, 83, 0.14);
-            background:
-                linear-gradient(155deg, rgba(244, 251, 249, 1) 0%, rgba(220, 241, 233, 0.95) 100%);
+            background: var(--tri-card, rgba(244, 251, 249, 1));
         }
         .workout-card .eyebrow {
             display: inline-block;
@@ -311,7 +309,7 @@ def _aplicar_estilo_dashboard():
         .exercise-card {
             border-radius: 16px;
             border: 1px solid rgba(16, 47, 43, 0.07);
-            background: rgba(247, 251, 249, 0.92);
+            background: var(--tri-card, rgba(247, 251, 249, 0.92));
             padding: 0.85rem 0.95rem;
             margin-bottom: 0.55rem;
         }
@@ -345,12 +343,12 @@ def _aplicar_estilo_dashboard():
         .stButton > button, .stFormSubmitButton > button {
             border-radius: 999px;
             border: none;
-            background: linear-gradient(135deg, var(--tri-primary, #1f5c53) 0%, var(--tri-secondary, #2f7d71) 100%);
+            background: linear-gradient(135deg, var(--tri-button, var(--tri-primary, #1f5c53)) 0%, var(--tri-secondary, #2f7d71) 100%);
             color: white;
             font-weight: 700;
         }
         .stButton > button:hover, .stFormSubmitButton > button:hover {
-            background: linear-gradient(135deg, var(--tri-primary, #184942) 0%, var(--tri-secondary, #276a60) 100%);
+            background: linear-gradient(135deg, var(--tri-button, var(--tri-primary, #184942)) 0%, var(--tri-secondary, #276a60) 100%);
             color: white;
         }
         @media (max-width: 768px) {

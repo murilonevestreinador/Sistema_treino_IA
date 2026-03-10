@@ -291,6 +291,9 @@ def _render_personalizacao_app(treinador):
     with st.form(f"form_tema_treinador_{treinador['id']}"):
         cor_primaria = st.color_picker("Cor primaria", value=tema_atual.get("cor_primaria", "#1b6f5c"))
         cor_secundaria = st.color_picker("Cor secundaria", value=tema_atual.get("cor_secundaria", "#2f8f7a"))
+        cor_botao = st.color_picker("Cor do botao", value=tema_atual.get("cor_botao", "#1b6f5c"))
+        cor_cards = st.color_picker("Cor de fundo dos cards", value=tema_atual.get("cor_cards", "#f7fbf9"))
+        cor_header = st.color_picker("Cor do header", value=tema_atual.get("cor_header", "#102f2b"))
         logo_upload = st.file_uploader(
             "Logo ou foto do treinador",
             type=["png", "jpg", "jpeg", "webp"],
@@ -317,6 +320,9 @@ def _render_personalizacao_app(treinador):
         cor_primaria,
         cor_secundaria,
         logo_url,
+        cor_botao=cor_botao,
+        cor_cards=cor_cards,
+        cor_header=cor_header,
     )
     st.session_state["mensagem_tema_treinador"] = "Personalizacao atualizada com sucesso."
     st.rerun()

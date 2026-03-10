@@ -161,6 +161,9 @@ def _criar_tabela_treinador_tema(cursor):
             treinador_id INTEGER NOT NULL,
             cor_primaria VARCHAR(20),
             cor_secundaria VARCHAR(20),
+            cor_botao VARCHAR(20),
+            cor_cards VARCHAR(20),
+            cor_header VARCHAR(20),
             logo_url TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (treinador_id) REFERENCES usuarios(id)
@@ -171,6 +174,9 @@ def _criar_tabela_treinador_tema(cursor):
     colunas = {
         "cor_primaria": "VARCHAR(20)",
         "cor_secundaria": "VARCHAR(20)",
+        "cor_botao": "VARCHAR(20)",
+        "cor_cards": "VARCHAR(20)",
+        "cor_header": "VARCHAR(20)",
         "logo_url": "TEXT",
         "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
     }

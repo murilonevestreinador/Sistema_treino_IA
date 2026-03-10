@@ -379,7 +379,13 @@ def main():
     garantir_colunas_e_tabelas()
     inicializar_sessao()
     sincronizar_convite_da_url()
-    aplicar_tema(TEMA_PADRAO["cor_primaria"], TEMA_PADRAO["cor_secundaria"])
+    aplicar_tema(
+        TEMA_PADRAO["cor_primaria"],
+        TEMA_PADRAO["cor_secundaria"],
+        TEMA_PADRAO["cor_botao"],
+        TEMA_PADRAO["cor_cards"],
+        TEMA_PADRAO["cor_header"],
+    )
 
     if "usuario" not in st.session_state:
         st.session_state["usuario"] = None
@@ -391,7 +397,13 @@ def main():
 
     tema_usuario = _obter_tema_usuario(usuario)
     st.session_state["tema_app"] = tema_usuario
-    aplicar_tema(tema_usuario.get("cor_primaria"), tema_usuario.get("cor_secundaria"))
+    aplicar_tema(
+        tema_usuario.get("cor_primaria"),
+        tema_usuario.get("cor_secundaria"),
+        tema_usuario.get("cor_botao"),
+        tema_usuario.get("cor_cards"),
+        tema_usuario.get("cor_header"),
+    )
 
     assinatura = garantir_assinatura_inicial(usuario)
     renderizar_sidebar(usuario, assinatura)
