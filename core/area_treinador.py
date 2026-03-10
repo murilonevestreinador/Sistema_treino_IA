@@ -12,6 +12,11 @@ from core.treinador import gerar_link_convite, listar_atletas_do_treinador, list
 from core.treino import buscar_treino_gerado, obter_ou_gerar_treino_semana, salvar_treino_gerado
 from core.usuarios import buscar_usuario_por_id
 
+try:
+    from streamlit_sortables import sort_items
+except ImportError:
+    sort_items = None
+
 DEFAULT_PUBLIC_APP_URL = "https://trilab-treinamento.onrender.com"
 
 SEXO_FILTROS = {
@@ -48,6 +53,147 @@ def _formatar_data_hora(valor):
     if not valor:
         return "-"
     return str(valor).replace("T", " ")
+
+
+def _assinatura_editor_treino(treino):
+    return tuple(
+        (
+            nome_treino,
+            tuple(
+                (
+                    exercicio.get("nome"),
+                    exercicio.get("series"),
+                    exercicio.get("reps"),
+                    exercicio.get("descanso"),
+                )
+                for exercicio in exercicios
+            ),
+        )
+        for nome_treino, exercicios in treino.items()
+    )
+
+
+def _chave_ordem_editor(atleta_id, semana_numero):
+    return f"ordem_editor_treino_{atleta_id}_{semana_numero}"
+
+
+def _gerar_ordem_padrao(treino):
+    return {
+        nome_treino: [f"{nome_treino}::{indice}" for indice, _ in enumerate(exercicios)]
+        for nome_treino, exercicios in treino.items()
+    }
+
+
+def _garantir_ordem_editor(atleta_id, semana_numero, treino):
+    chave = _chave_ordem_editor(atleta_id, semana_numero)
+    assinatura = _assinatura_editor_treino(treino)
+    estado = st.session_state.get(chave)
+    if not estado or estado.get("assinatura") != assinatura:
+        st.session_state[chave] = {
+            "assinatura": assinatura,
+            "ordem": _gerar_ordem_padrao(treino),
+        }
+    return st.session_state[chave]["ordem"]
+
+
+def _exercicios_ordenados(treino, ordem_salva):
+    treino_ordenado = {}
+    for nome_treino, exercicios in treino.items():
+        mapa_exercicios = {
+            f"{nome_treino}::{indice}": exercicio
+            for indice, exercicio in enumerate(exercicios)
+        }
+        ordem_atual = [item_id for item_id in ordem_salva.get(nome_treino, []) if item_id in mapa_exercicios]
+        faltantes = [item_id for item_id in mapa_exercicios if item_id not in ordem_atual]
+        ids_ordenados = ordem_atual + faltantes
+        treino_ordenado[nome_treino] = [mapa_exercicios[item_id] for item_id in ids_ordenados]
+        ordem_salva[nome_treino] = ids_ordenados
+    return treino_ordenado
+
+
+def _rotulo_bloco_exercicio(exercicio, indice_base):
+    return (
+        f"{indice_base + 1:02d} | {exercicio.get('nome', 'Exercicio')} | "
+        f"{exercicio.get('series', '-')}x{exercicio.get('reps', '-')} | "
+        f"descanso {exercicio.get('descanso', '-')}"
+    )
+
+
+def _render_ordenacao_exercicios(atleta_id, semana_numero, treino):
+    ordem_salva = _garantir_ordem_editor(atleta_id, semana_numero, treino)
+
+    for nome_treino, exercicios in treino.items():
+        st.markdown(f"**Ordenar {nome_treino}**")
+        st.caption("Arraste os blocos para cima ou para baixo antes de salvar a edicao.")
+
+        ids_exercicios = [f"{nome_treino}::{indice}" for indice, _ in enumerate(exercicios)]
+        rotulo_por_id = {
+            item_id: _rotulo_bloco_exercicio(exercicio, indice)
+            for indice, (item_id, exercicio) in enumerate(zip(ids_exercicios, exercicios))
+        }
+        ordem_atual = [item_id for item_id in ordem_salva.get(nome_treino, []) if item_id in rotulo_por_id]
+        ordem_atual += [item_id for item_id in ids_exercicios if item_id not in ordem_atual]
+
+        if sort_items:
+            itens_exibidos = [rotulo_por_id[item_id] for item_id in ordem_atual]
+            custom_style = """
+            .sortable-component {
+                border: 1px solid rgba(15, 23, 42, 0.08);
+                border-radius: 16px;
+                padding: 0.35rem;
+                margin-bottom: 0.75rem;
+                background: #f8fafc;
+            }
+            .sortable-container {
+                background: transparent;
+            }
+            .sortable-item, .sortable-item:hover {
+                background: #ffffff;
+                border: 1px solid rgba(15, 23, 42, 0.08);
+                border-radius: 12px;
+                color: #102f2b;
+                font-weight: 600;
+                padding: 0.7rem 0.85rem;
+                margin-bottom: 0.45rem;
+                box-shadow: 0 8px 18px rgba(15, 23, 42, 0.06);
+            }
+            """
+            itens_ordenados = sort_items(
+                itens_exibidos,
+                direction="vertical",
+                key=f"sort_{atleta_id}_{semana_numero}_{nome_treino}",
+                custom_style=custom_style,
+            )
+            id_por_rotulo = {rotulo_por_id[item_id]: item_id for item_id in ordem_atual}
+            ordem_salva[nome_treino] = [id_por_rotulo[rotulo] for rotulo in itens_ordenados if rotulo in id_por_rotulo]
+        else:
+            st.info("Reordenacao por arrastar sera habilitada quando a dependencia visual estiver instalada. Use os botoes abaixo por enquanto.")
+            nova_ordem = list(ordem_atual)
+            for posicao, item_id in enumerate(ordem_atual):
+                col_rotulo, col_cima, col_baixo = st.columns([8, 1, 1])
+                with col_rotulo:
+                    st.markdown(
+                        f"""
+                        <div style="padding:0.7rem 0.85rem; border:1px solid rgba(15, 23, 42, 0.08); border-radius:12px; background:#ffffff; margin-bottom:0.45rem;">
+                            {rotulo_por_id[item_id]}
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+                with col_cima:
+                    if st.button("↑", key=f"subir_{atleta_id}_{semana_numero}_{nome_treino}_{posicao}", use_container_width=True):
+                        if posicao > 0:
+                            nova_ordem[posicao - 1], nova_ordem[posicao] = nova_ordem[posicao], nova_ordem[posicao - 1]
+                            ordem_salva[nome_treino] = nova_ordem
+                            st.rerun()
+                with col_baixo:
+                    if st.button("↓", key=f"descer_{atleta_id}_{semana_numero}_{nome_treino}_{posicao}", use_container_width=True):
+                        if posicao < len(nova_ordem) - 1:
+                            nova_ordem[posicao + 1], nova_ordem[posicao] = nova_ordem[posicao], nova_ordem[posicao + 1]
+                            ordem_salva[nome_treino] = nova_ordem
+                            st.rerun()
+
+    return _exercicios_ordenados(treino, ordem_salva)
 
 
 def _render_linha_atleta(nome, email, foto_perfil=None):
@@ -265,11 +411,12 @@ def _render_visualizacao_atleta(treinador):
         )
         for item in opcoes_exercicios
     }
+    treino_para_edicao = _render_ordenacao_exercicios(atleta["id"], semana_escolhida["semana"], treino)
 
     with st.form(f"editar_treino_{atleta_id}_{semana_escolhida['semana']}"):
         treino_editado = {}
 
-        for nome_treino, exercicios in treino.items():
+        for nome_treino, exercicios in treino_para_edicao.items():
             st.markdown(f"**Treino {nome_treino}**")
             treino_editado[nome_treino] = []
 
