@@ -131,7 +131,7 @@ def renderizar_sidebar(usuario=None, assinatura=None):
                 st.session_state["secao_app"] = "principal"
                 st.rerun()
             st.markdown("- Atletas (na area do treinador)")
-            st.markdown("- Relatorios (na area do treinador)")
+            st.markdown("- BI e relatorios (na area do treinador)")
 
         st.markdown("### Financeiro")
         chave_menu = "menu_financeiro_aberto"

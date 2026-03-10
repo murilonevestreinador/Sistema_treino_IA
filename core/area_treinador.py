@@ -1,8 +1,10 @@
 import base64
 import os
+from datetime import date, timedelta
 
 import streamlit as st
 
+from core.bi import BIValidationError, TrainerBIService
 from core.cronograma import buscar_semana_por_numero, gerar_cronograma, obter_semana_atual
 from core.exercicios import carregar_exercicios
 from core.progresso import buscar_progresso_semana, calcular_progresso_semanal
@@ -12,6 +14,20 @@ from core.usuarios import buscar_usuario_por_id
 
 DEFAULT_PUBLIC_APP_URL = "https://trilab-treinamento.onrender.com"
 
+SEXO_FILTROS = {
+    "Todos": None,
+    "Feminino": "feminino",
+    "Masculino": "masculino",
+    "Outro": "outro",
+}
+OBJETIVO_FILTROS = {
+    "Todos": None,
+    "Desempenho": "desempenho",
+    "Hipertrofia": "hipertrofia",
+    "Saude": "saude",
+    "Perda de peso": "perda_peso",
+}
+
 
 def _foto_perfil_bytes(foto_perfil):
     if not foto_perfil:
@@ -20,6 +36,18 @@ def _foto_perfil_bytes(foto_perfil):
         return base64.b64decode(foto_perfil)
     except Exception:
         return None
+
+
+def _formatar_percentual(valor):
+    if valor is None:
+        return "-"
+    return f"{float(valor):.2f}%"
+
+
+def _formatar_data_hora(valor):
+    if not valor:
+        return "-"
+    return str(valor).replace("T", " ")
 
 
 def _render_linha_atleta(nome, email, foto_perfil=None):
@@ -32,6 +60,39 @@ def _render_linha_atleta(nome, email, foto_perfil=None):
             st.caption(" ")
     with col_info:
         st.write(f"{nome} ({email})")
+
+
+def _render_menu_local_treinador():
+    secao = st.session_state.get("secao_treinador", "visao_geral")
+    st.caption("Use o menu abaixo para alternar entre gestão dos atletas e BI.")
+    col_geral, col_atletas, col_bi = st.columns(3)
+    with col_geral:
+        if st.button(
+            "Visao geral",
+            key="btn_secao_treinador_geral",
+            type="primary" if secao == "visao_geral" else "secondary",
+            use_container_width=True,
+        ):
+            st.session_state["secao_treinador"] = "visao_geral"
+            st.rerun()
+    with col_atletas:
+        if st.button(
+            "Atletas",
+            key="btn_secao_treinador_atletas",
+            type="primary" if secao == "atletas" else "secondary",
+            use_container_width=True,
+        ):
+            st.session_state["secao_treinador"] = "atletas"
+            st.rerun()
+    with col_bi:
+        if st.button(
+            "BI",
+            key="btn_secao_treinador_bi",
+            type="primary" if secao == "bi" else "secondary",
+            use_container_width=True,
+        ):
+            st.session_state["secao_treinador"] = "bi"
+            st.rerun()
 
 
 def _render_convite(treinador):
@@ -56,7 +117,7 @@ def _render_convite(treinador):
 
     link_gerado = st.session_state.get("link_convite_gerado")
     if link_gerado:
-        st.caption("Envie este link para o atleta. Se ele criar conta por aqui, o v\u00ednculo ser\u00e1 autom\u00e1tico.")
+        st.caption("Envie este link para o atleta. Se ele criar conta por aqui, o vinculo sera automatico.")
         st.code(link_gerado)
 
 
@@ -94,6 +155,7 @@ def _render_vinculos(treinador):
 def _render_visualizacao_atleta(treinador):
     atletas_ativos = listar_atletas_do_treinador(treinador["id"])
     if not atletas_ativos:
+        st.info("Nenhum atleta ativo para visualizar.")
         return
 
     st.subheader("Selecionar atleta")
@@ -107,7 +169,7 @@ def _render_visualizacao_atleta(treinador):
             else:
                 st.caption(" ")
         with col_info:
-            st.write(f"{nome_exibicao}")
+            st.write(nome_exibicao)
             st.caption(item["atleta_email"])
         with col_acao:
             if st.button(
@@ -126,7 +188,7 @@ def _render_visualizacao_atleta(treinador):
 
     atleta_id = st.selectbox(
         "Ou selecione pela lista",
-        options=[item["atleta_id"] for item in atletas_ativos],
+        options=opcoes_ids,
         index=opcoes_ids.index(atleta_padrao),
         format_func=lambda valor: next(
             (item.get("atleta_apelido") or item["atleta_nome"])
@@ -137,7 +199,7 @@ def _render_visualizacao_atleta(treinador):
     st.session_state["atleta_treinador_selecionado"] = atleta_id
     atleta = buscar_usuario_por_id(atleta_id)
     if not atleta:
-        st.error("Atleta n\u00e3o encontrado.")
+        st.error("Atleta nao encontrado.")
         return
 
     cronograma, _, _ = gerar_cronograma(atleta)
@@ -170,7 +232,7 @@ def _render_visualizacao_atleta(treinador):
         st.caption("Treino desta semana foi editado por treinador.")
 
     for nome_treino, exercicios in treino.items():
-        status = "feito" if progresso.get(nome_treino, {}).get("feito") else "n\u00e3o feito"
+        status = "feito" if progresso.get(nome_treino, {}).get("feito") else "nao feito"
         st.markdown(f"**Treino {nome_treino}** ({status})")
         for exercicio in exercicios:
             st.markdown(
@@ -178,7 +240,7 @@ def _render_visualizacao_atleta(treinador):
             )
 
     if semana_escolhida["semana"] < semana_atual["semana"]:
-        st.info("Edi\u00e7\u00e3o dispon\u00edvel apenas para a semana atual ou futuras.")
+        st.info("Edicao disponivel apenas para a semana atual ou futuras.")
         return
 
     st.subheader("Editar treino da semana")
@@ -196,10 +258,13 @@ def _render_visualizacao_atleta(treinador):
     labels_exercicios = [item["label"] for item in opcoes_exercicios]
     label_por_nome = {item["nome"]: item["label"] for item in opcoes_exercicios}
     categoria_por_nome = {item["nome"]: item["categoria"] for item in opcoes_exercicios}
-    musculo_por_nome = {item["nome"]: next(
-        (ex["principal_musculo"] for ex in exercicios_db if ex["nome"] == item["nome"]),
-        "",
-    ) for item in opcoes_exercicios}
+    musculo_por_nome = {
+        item["nome"]: next(
+            (ex["principal_musculo"] for ex in exercicios_db if ex["nome"] == item["nome"]),
+            "",
+        )
+        for item in opcoes_exercicios
+    }
 
     with st.form(f"editar_treino_{atleta_id}_{semana_escolhida['semana']}"):
         treino_editado = {}
@@ -229,7 +294,7 @@ def _render_visualizacao_atleta(treinador):
                 col_series, col_reps = st.columns(2)
                 with col_series:
                     series = st.number_input(
-                        "S\u00e9ries",
+                        "Series",
                         min_value=1,
                         max_value=8,
                         value=int(exercicio["series"]),
@@ -258,7 +323,7 @@ def _render_visualizacao_atleta(treinador):
                     }
                 )
 
-        salvar = st.form_submit_button("Salvar edi\u00e7\u00e3o")
+        salvar = st.form_submit_button("Salvar edicao")
 
     if salvar:
         salvar_treino_gerado(
@@ -272,8 +337,230 @@ def _render_visualizacao_atleta(treinador):
         st.rerun()
 
 
+def _filtros_bi_padrao():
+    hoje = date.today()
+    inicio = (hoje.replace(day=1) - timedelta(days=365)).replace(day=1)
+    return {
+        "data_inicio": inicio,
+        "data_fim": hoje,
+        "sexo": None,
+        "objetivo": None,
+        "granularidade_retencao": "mensal",
+        "top_percentual_receita": 0.2,
+        "incluir_vinculos_encerrados": True,
+    }
+
+
+def _render_filtros_bi():
+    if "treinador_bi_filtros" not in st.session_state:
+        st.session_state["treinador_bi_filtros"] = _filtros_bi_padrao()
+
+    filtros = st.session_state["treinador_bi_filtros"]
+    with st.form("form_filtros_bi_treinador"):
+        col_data_inicio, col_data_fim, col_gran = st.columns(3)
+        with col_data_inicio:
+            data_inicio = st.date_input("Data inicial", value=filtros["data_inicio"])
+        with col_data_fim:
+            data_fim = st.date_input("Data final", value=filtros["data_fim"])
+        with col_gran:
+            granularidade = st.selectbox(
+                "Retencao",
+                options=["mensal", "trimestral"],
+                index=["mensal", "trimestral"].index(filtros["granularidade_retencao"]),
+            )
+
+        col_sexo, col_objetivo, col_top = st.columns(3)
+        sexo_labels = list(SEXO_FILTROS.keys())
+        sexo_inicial = next((label for label, valor in SEXO_FILTROS.items() if valor == filtros["sexo"]), "Todos")
+        objetivo_labels = list(OBJETIVO_FILTROS.keys())
+        objetivo_inicial = next(
+            (label for label, valor in OBJETIVO_FILTROS.items() if valor == filtros["objetivo"]),
+            "Todos",
+        )
+
+        with col_sexo:
+            sexo_label = st.selectbox("Sexo", options=sexo_labels, index=sexo_labels.index(sexo_inicial))
+        with col_objetivo:
+            objetivo_label = st.selectbox(
+                "Objetivo",
+                options=objetivo_labels,
+                index=objetivo_labels.index(objetivo_inicial),
+            )
+        with col_top:
+            top_percentual = st.slider(
+                "Top receita",
+                min_value=10,
+                max_value=50,
+                value=int(round(float(filtros["top_percentual_receita"]) * 100)),
+                step=5,
+                format="%d%%",
+            )
+
+        incluir_encerrados = st.checkbox(
+            "Incluir vinculos encerrados",
+            value=bool(filtros["incluir_vinculos_encerrados"]),
+        )
+        aplicar = st.form_submit_button("Atualizar BI")
+
+    if aplicar:
+        st.session_state["treinador_bi_filtros"] = {
+            "data_inicio": data_inicio,
+            "data_fim": data_fim,
+            "sexo": SEXO_FILTROS[sexo_label],
+            "objetivo": OBJETIVO_FILTROS[objetivo_label],
+            "granularidade_retencao": granularidade,
+            "top_percentual_receita": top_percentual / 100,
+            "incluir_vinculos_encerrados": incluir_encerrados,
+        }
+        st.rerun()
+
+    filtros = st.session_state["treinador_bi_filtros"]
+    return {
+        "data_inicio": filtros["data_inicio"].isoformat(),
+        "data_fim": filtros["data_fim"].isoformat(),
+        "sexo": filtros["sexo"],
+        "objetivo": filtros["objetivo"],
+        "granularidade_retencao": filtros["granularidade_retencao"],
+        "top_percentual_receita": filtros["top_percentual_receita"],
+        "incluir_vinculos_encerrados": filtros["incluir_vinculos_encerrados"],
+    }
+
+
+def _render_bi_treinador(treinador):
+    st.subheader("Business Intelligence")
+    st.caption("Acompanhe retencao, receita e engajamento por aluno com recortes de semana, mes e ano.")
+
+    filtros = _render_filtros_bi()
+    service = TrainerBIService()
+
+    try:
+        dashboard = service.get_dashboard_data(treinador["id"], filtros=filtros)
+        engajamento = service.get_student_engagement_report(treinador["id"], filtros=filtros)
+    except BIValidationError as exc:
+        st.error(str(exc))
+        return
+    except Exception as exc:
+        st.error(f"Nao foi possivel carregar o BI: {exc}")
+        return
+
+    resumo = engajamento["resumo"]
+    retencao = dashboard["retencao"]
+    financeiro = dashboard["financeiro"]
+    kpis = dashboard["kpis"]
+
+    col_1, col_2, col_3, col_4 = st.columns(4)
+    with col_1:
+        st.metric("Alunos ativos na semana", resumo["alunos_ativos_semana"])
+    with col_2:
+        st.metric("Media treinos no mes", resumo["media_treinos_mes"])
+    with col_3:
+        st.metric("Meses ativos medio", resumo["media_meses_ativos_periodo"])
+    with col_4:
+        st.metric("Retencao media", _formatar_percentual(retencao["taxa_media_retencao_percentual"]))
+
+    col_5, col_6, col_7, col_8 = st.columns(4)
+    with col_5:
+        st.metric("Receita no periodo", f"R$ {financeiro['receita_total_periodo']:.2f}")
+    with col_6:
+        st.metric("RMA", f"R$ {float(kpis['receita_media_por_aluno_rma']):.2f}")
+    with col_7:
+        st.metric("Conclusao do programa", _formatar_percentual(kpis["taxa_conclusao_programa_percentual"]))
+    with col_8:
+        ltv = kpis["valor_medio_ciclo_vida_ltv_estimado"]
+        st.metric("LTV estimado", f"R$ {ltv:.2f}" if ltv is not None else "-")
+
+    st.markdown("### Engajamento por aluno")
+    linhas_engajamento = []
+    for item in engajamento["alunos"]:
+        linhas_engajamento.append(
+            {
+                "Aluno": item["nome"],
+                "Email": item["email"] or "-",
+                "Status": item["status_vinculo"] or "-",
+                "Treinos semana": item["treinos_semana"],
+                "Treinos mes": item["treinos_mes"],
+                "Treinos ano": item["treinos_ano"],
+                "Meses ativos": item["meses_ativos_periodo"],
+                "Ultima atividade": _formatar_data_hora(item["ultima_atividade"]),
+                "Dias sem atividade": item["dias_desde_ultima_atividade"] if item["dias_desde_ultima_atividade"] is not None else "-",
+            }
+        )
+
+    if linhas_engajamento:
+        st.dataframe(linhas_engajamento, use_container_width=True, hide_index=True)
+    else:
+        st.info("Nenhum dado de treino encontrado para os filtros escolhidos.")
+
+    csv_engajamento = TrainerBIService.export_rows_to_csv(engajamento["alunos"])
+    json_dashboard = service.export_dashboard_json(treinador["id"], filtros=filtros)
+    col_export_csv, col_export_json = st.columns(2)
+    with col_export_csv:
+        st.download_button(
+            "Baixar CSV de engajamento",
+            data=csv_engajamento,
+            file_name="bi_engajamento_alunos.csv",
+            mime="text/csv",
+            use_container_width=True,
+            disabled=not bool(csv_engajamento),
+        )
+    with col_export_json:
+        st.download_button(
+            "Baixar JSON completo",
+            data=json_dashboard,
+            file_name="bi_treinador_dashboard.json",
+            mime="application/json",
+            use_container_width=True,
+        )
+
+    st.markdown("### Tendencia de retencao")
+    if retencao["tendencia"]:
+        st.dataframe(retencao["tendencia"], use_container_width=True, hide_index=True)
+    else:
+        st.caption("Sem base suficiente para tendencia de retencao.")
+
+    col_freq, col_receita = st.columns(2)
+    with col_freq:
+        st.markdown("### Frequencia por objetivo")
+        if kpis["taxa_frequencia_por_objetivo"]:
+            st.dataframe(kpis["taxa_frequencia_por_objetivo"], use_container_width=True, hide_index=True)
+        else:
+            st.caption("Sem dados de frequencia no periodo.")
+    with col_receita:
+        st.markdown("### Receita mensal")
+        if financeiro["historico_mensal"]:
+            st.dataframe(financeiro["historico_mensal"], use_container_width=True, hide_index=True)
+        else:
+            st.caption("Sem eventos financeiros no periodo.")
+
+    col_anual, col_picos = st.columns(2)
+    with col_anual:
+        st.markdown("### Receita anual")
+        if financeiro["resumo_anual"]:
+            st.dataframe(financeiro["resumo_anual"], use_container_width=True, hide_index=True)
+        else:
+            st.caption("Sem base anual para exibir.")
+    with col_picos:
+        picos = kpis["picos_demanda"]
+        st.markdown("### Picos de demanda")
+        st.write(f"Mes pico: {picos['mes_pico'] or '-'}")
+        st.write(f"Trimestre pico: {picos['trimestre_pico'] or '-'}")
+        st.write(f"Dia da semana pico: {picos['dia_semana_pico'] or '-'}")
+
+
 def tela_area_treinador(treinador):
-    st.title("\u00c1rea do treinador")
+    if "secao_treinador" not in st.session_state:
+        st.session_state["secao_treinador"] = "visao_geral"
+
+    st.title("Area do treinador")
+    _render_menu_local_treinador()
+
+    secao = st.session_state.get("secao_treinador", "visao_geral")
+    if secao == "atletas":
+        _render_visualizacao_atleta(treinador)
+        return
+    if secao == "bi":
+        _render_bi_treinador(treinador)
+        return
+
     _render_convite(treinador)
     _render_vinculos(treinador)
-    _render_visualizacao_atleta(treinador)

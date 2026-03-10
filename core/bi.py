@@ -188,9 +188,10 @@ class TrainerBIService:
     - KPIs de negocio (aquisicao, churn, RMA, LTV, frequencia, conclusao, concentracao e demanda)
     """
 
-    def __init__(self, conn_factory=conectar, cache_ttl_seconds: int = 120):
+    def __init__(self, conn_factory=conectar, cache_ttl_seconds: int = 120, param_placeholder: str = "%s"):
         self._conn_factory = conn_factory
         self._cache_ttl = max(0, int(cache_ttl_seconds))
+        self._param_placeholder = param_placeholder
         self._cache: dict[str, tuple[datetime, Any]] = {}
 
     def get_dashboard_data(self, treinador_id: int, filtros: BIFilters | dict[str, Any] | None = None) -> dict[str, Any]:
@@ -225,6 +226,16 @@ class TrainerBIService:
         filtros_resolvidos = filtros if isinstance(filtros, BIFilters) else BIFilters.from_dict(filtros)
         escopo = self._carregar_escopo(treinador_id, filtros_resolvidos)
         return self._calcular_kpis(escopo, filtros_resolvidos)
+
+    def get_student_engagement_report(
+        self,
+        treinador_id: int,
+        filtros: BIFilters | dict[str, Any] | None = None,
+        referencia: date | None = None,
+    ) -> dict[str, Any]:
+        filtros_resolvidos = filtros if isinstance(filtros, BIFilters) else BIFilters.from_dict(filtros)
+        escopo = self._carregar_escopo(treinador_id, filtros_resolvidos)
+        return self._calcular_engajamento_alunos(escopo, referencia=referencia)
 
     def export_dashboard_json(self, treinador_id: int, filtros: BIFilters | dict[str, Any] | None = None) -> str:
         dados = self.get_dashboard_data(treinador_id, filtros=filtros)
@@ -275,6 +286,9 @@ class TrainerBIService:
             return
         self._cache[key] = (datetime.now() + timedelta(seconds=self._cache_ttl), valor)
 
+    def _placeholder_list(self, total: int) -> str:
+        return ",".join(self._param_placeholder for _ in range(total))
+
     def _carregar_escopo(self, treinador_id: int, filtros: BIFilters) -> dict[str, Any]:
         if int(treinador_id) <= 0:
             raise BIValidationError("treinador_id invalido.")
@@ -311,12 +325,15 @@ class TrainerBIService:
             SELECT ta.atleta_id,
                    ta.status AS vinculo_status,
                    ta.created_at AS vinculo_created_at,
+                   u.nome,
+                   u.apelido,
+                   u.email,
                    u.sexo,
                    u.objetivo,
                    u.data_criacao
             FROM treinador_atleta ta
             JOIN usuarios u ON u.id = ta.atleta_id
-            WHERE ta.treinador_id = ?
+            WHERE ta.treinador_id = {self._param_placeholder}
               AND ta.status IN {status_sql}
               AND u.tipo_usuario = 'atleta'
             """,
@@ -348,14 +365,14 @@ class TrainerBIService:
             return []
         conn = self._conn_factory()
         cursor = conn.cursor()
-        placeholders = ",".join("?" for _ in atleta_ids)
+        placeholders = self._placeholder_list(len(atleta_ids))
         cursor.execute(
             f"""
             SELECT COALESCE(atleta_id, usuario_id) AS atleta_id,
                    semana_numero,
                    nome_treino,
                    COALESCE(feito, concluido, 0) AS feito,
-                   COALESCE(feito_em::text, data_realizada::text) AS realizado_em,
+                   COALESCE(CAST(feito_em AS TEXT), CAST(data_realizada AS TEXT)) AS realizado_em,
                    feedback_tipo,
                    feedback_contexto_ruim,
                    exercicio_substituir,
@@ -389,7 +406,7 @@ class TrainerBIService:
             return []
         conn = self._conn_factory()
         cursor = conn.cursor()
-        placeholders = ",".join("?" for _ in atleta_ids)
+        placeholders = self._placeholder_list(len(atleta_ids))
         cursor.execute(
             f"""
             SELECT COALESCE(atleta_id, usuario_id) AS atleta_id,
@@ -426,7 +443,7 @@ class TrainerBIService:
             return []
         conn = self._conn_factory()
         cursor = conn.cursor()
-        placeholders = ",".join("?" for _ in atleta_ids)
+        placeholders = self._placeholder_list(len(atleta_ids))
         cursor.execute(
             f"""
             SELECT a.usuario_id AS atleta_id,
@@ -652,6 +669,89 @@ class TrainerBIService:
             },
         }
 
+    def _calcular_engajamento_alunos(self, escopo: dict[str, Any], referencia: date | None = None) -> dict[str, Any]:
+        referencia = referencia or date.today()
+        inicio_semana = referencia - timedelta(days=referencia.weekday())
+        inicio_mes = referencia.replace(day=1)
+        inicio_ano = date(referencia.year, 1, 1)
+
+        atletas = {int(item["atleta_id"]): item for item in escopo["atletas"]}
+        treinos_done = [item for item in escopo["treinos_realizados"] if int(item.get("feito") or 0) == 1]
+
+        por_atleta: dict[int, dict[str, Any]] = {}
+        for atleta_id, atleta in atletas.items():
+            nome_exibicao = atleta.get("apelido") or atleta.get("nome") or f"Atleta {atleta_id}"
+            por_atleta[atleta_id] = {
+                "atleta_id": atleta_id,
+                "nome": nome_exibicao,
+                "email": atleta.get("email"),
+                "status_vinculo": atleta.get("vinculo_status"),
+                "treinos_semana": 0,
+                "treinos_mes": 0,
+                "treinos_ano": 0,
+                "total_treinos_periodo": 0,
+                "meses_ativos_periodo": 0,
+                "ultima_atividade": None,
+                "dias_desde_ultima_atividade": None,
+            }
+
+        meses_ativos_por_atleta: dict[int, set[str]] = {atleta_id: set() for atleta_id in atletas}
+        for treino in treinos_done:
+            atleta_id = int(treino["atleta_id"])
+            if atleta_id not in por_atleta:
+                continue
+            dt = treino["realizado_em_dt"]
+            item = por_atleta[atleta_id]
+            item["total_treinos_periodo"] += 1
+            meses_ativos_por_atleta[atleta_id].add(f"{dt.year:04d}-{dt.month:02d}")
+            if dt.date() >= inicio_ano:
+                item["treinos_ano"] += 1
+            if dt.date() >= inicio_mes:
+                item["treinos_mes"] += 1
+            if dt.date() >= inicio_semana:
+                item["treinos_semana"] += 1
+            if item["ultima_atividade"] is None or dt > item["ultima_atividade"]:
+                item["ultima_atividade"] = dt
+
+        linhas = []
+        for atleta_id, item in por_atleta.items():
+            item["meses_ativos_periodo"] = len(meses_ativos_por_atleta[atleta_id])
+            ultima = item["ultima_atividade"]
+            if ultima:
+                item["dias_desde_ultima_atividade"] = (referencia - ultima.date()).days
+                item["ultima_atividade"] = ultima.isoformat(timespec="seconds")
+            linhas.append(item)
+
+        linhas.sort(
+            key=lambda row: (
+                -(row["treinos_mes"] or 0),
+                -(row["treinos_semana"] or 0),
+                row["nome"].lower(),
+            )
+        )
+
+        total_alunos = len(linhas)
+        ativos_semana = sum(1 for row in linhas if row["treinos_semana"] > 0)
+        ativos_mes = sum(1 for row in linhas if row["treinos_mes"] > 0)
+        ativos_ano = sum(1 for row in linhas if row["treinos_ano"] > 0)
+
+        return {
+            "referencia": referencia.isoformat(),
+            "resumo": {
+                "total_alunos": total_alunos,
+                "alunos_ativos_semana": ativos_semana,
+                "alunos_ativos_mes": ativos_mes,
+                "alunos_ativos_ano": ativos_ano,
+                "media_treinos_semana": round(sum(row["treinos_semana"] for row in linhas) / total_alunos, 2) if total_alunos else 0.0,
+                "media_treinos_mes": round(sum(row["treinos_mes"] for row in linhas) / total_alunos, 2) if total_alunos else 0.0,
+                "media_treinos_ano": round(sum(row["treinos_ano"] for row in linhas) / total_alunos, 2) if total_alunos else 0.0,
+                "media_meses_ativos_periodo": round(
+                    sum(row["meses_ativos_periodo"] for row in linhas) / total_alunos, 2
+                ) if total_alunos else 0.0,
+            },
+            "alunos": linhas,
+        }
+
     def _kpi_aquisicao(self, atletas: dict[int, dict[str, Any]], periodos_mensais: list[dict[str, Any]]) -> list[dict[str, Any]]:
         resultado = []
         for periodo in periodos_mensais:
@@ -850,6 +950,8 @@ def demo_bi_em_memoria() -> dict[str, Any]:
         CREATE TABLE usuarios (
             id INTEGER PRIMARY KEY,
             nome TEXT,
+            apelido TEXT,
+            email TEXT,
             sexo TEXT,
             objetivo TEXT,
             tipo_usuario TEXT,
@@ -907,12 +1009,12 @@ def demo_bi_em_memoria() -> dict[str, Any]:
     )
 
     cur.executemany(
-        "INSERT INTO usuarios (id, nome, sexo, objetivo, tipo_usuario, data_criacao) VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO usuarios (id, nome, apelido, email, sexo, objetivo, tipo_usuario, data_criacao) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         [
-            (1, "Treinador", "masculino", "desempenho", "treinador", "2025-01-05T09:00:00"),
-            (101, "Ana", "feminino", "hipertrofia", "atleta", "2025-01-10T09:00:00"),
-            (102, "Bruno", "masculino", "performance", "atleta", "2025-01-15T09:00:00"),
-            (103, "Carla", "feminino", "perda de peso", "atleta", "2025-02-10T09:00:00"),
+            (1, "Treinador", None, "treinador@demo.com", "masculino", "desempenho", "treinador", "2025-01-05T09:00:00"),
+            (101, "Ana", "Aninha", "ana@demo.com", "feminino", "hipertrofia", "atleta", "2025-01-10T09:00:00"),
+            (102, "Bruno", None, "bruno@demo.com", "masculino", "performance", "atleta", "2025-01-15T09:00:00"),
+            (103, "Carla", None, "carla@demo.com", "feminino", "perda de peso", "atleta", "2025-02-10T09:00:00"),
         ],
     )
     cur.executemany(
@@ -968,7 +1070,7 @@ def demo_bi_em_memoria() -> dict[str, Any]:
         conn.row_factory = sqlite3.Row
         return conn
 
-    service = TrainerBIService(conn_factory=demo_conn, cache_ttl_seconds=0)
+    service = TrainerBIService(conn_factory=demo_conn, cache_ttl_seconds=0, param_placeholder="?")
     resultado = service.get_dashboard_data(
         treinador_id=1,
         filtros={
