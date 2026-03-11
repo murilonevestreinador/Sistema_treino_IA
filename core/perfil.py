@@ -1,10 +1,15 @@
 import base64
+import uuid
+from pathlib import Path
 
 import streamlit as st
 
 from core.treinador import (
+    buscar_tema_treinador,
     listar_treinadores_do_atleta,
     remover_vinculo_treinador_atleta,
+    resolver_logo_treinador,
+    salvar_tema_treinador,
     vincular_atleta_ao_treinador_por_email,
 )
 from core.usuarios import atualizar_perfil_usuario, excluir_usuario
@@ -77,6 +82,80 @@ def _render_form_perfil(usuario):
         st.rerun()
 
 
+def _salvar_logo_treinador(arquivo_upload):
+    if arquivo_upload is None:
+        return None
+
+    extensao = Path(arquivo_upload.name or "").suffix.lower()
+    if extensao not in {".png", ".jpg", ".jpeg", ".webp"}:
+        extensao = ".png"
+
+    diretorio = Path.cwd() / "uploads" / "logos"
+    diretorio.mkdir(parents=True, exist_ok=True)
+
+    nome_arquivo = f"treinador_logo_{uuid.uuid4().hex}{extensao}"
+    destino = diretorio / nome_arquivo
+    with open(destino, "wb") as arquivo_destino:
+        arquivo_destino.write(arquivo_upload.getbuffer())
+
+    return f"/uploads/logos/{nome_arquivo}"
+
+
+def _render_personalizacao_treinador(usuario):
+    if usuario.get("tipo_usuario") != "treinador":
+        return
+
+    st.subheader("Personalizacao do aplicativo")
+    st.caption("As cores e a logo definidas aqui tambem serao exibidas para os atletas vinculados.")
+
+    tema_atual = buscar_tema_treinador(usuario["id"])
+    logo_atual = resolver_logo_treinador(tema_atual.get("logo_url"))
+
+    if logo_atual:
+        st.image(logo_atual, width=120)
+
+    with st.form(f"form_tema_treinador_perfil_{usuario['id']}"):
+        cor_primaria = st.color_picker("Cor primaria", value=tema_atual.get("cor_primaria", "#1b6f5c"))
+        cor_secundaria = st.color_picker("Cor secundaria", value=tema_atual.get("cor_secundaria", "#2f8f7a"))
+        cor_botao = st.color_picker("Cor do botao", value=tema_atual.get("cor_botao", "#1b6f5c"))
+        cor_cards = st.color_picker("Cor de fundo dos cards", value=tema_atual.get("cor_cards", "#f7fbf9"))
+        cor_header = st.color_picker("Cor do header", value=tema_atual.get("cor_header", "#102f2b"))
+        logo_upload = st.file_uploader(
+            "Logo ou foto do treinador",
+            type=["png", "jpg", "jpeg", "webp"],
+            key=f"logo_treinador_perfil_{usuario['id']}",
+        )
+        remover_logo = st.checkbox(
+            "Remover logo atual",
+            value=False,
+            disabled=not bool(tema_atual.get("logo_url")),
+            key=f"remover_logo_treinador_perfil_{usuario['id']}",
+        )
+        salvar = st.form_submit_button("Salvar personalizacao", use_container_width=True)
+
+    if not salvar:
+        return
+
+    logo_url = tema_atual.get("logo_url")
+    if remover_logo:
+        logo_url = None
+    elif logo_upload is not None:
+        logo_url = _salvar_logo_treinador(logo_upload)
+
+    salvar_tema_treinador(
+        usuario["id"],
+        cor_primaria,
+        cor_secundaria,
+        logo_url,
+        cor_botao=cor_botao,
+        cor_cards=cor_cards,
+        cor_header=cor_header,
+    )
+    st.session_state["tema_app"] = buscar_tema_treinador(usuario["id"])
+    st.session_state["mensagem_perfil"] = "Personalizacao atualizada com sucesso."
+    st.rerun()
+
+
 def _render_vinculo_atleta(usuario):
     if usuario.get("tipo_usuario") != "atleta":
         return
@@ -144,5 +223,6 @@ def tela_meu_perfil(usuario):
         st.success(mensagem)
 
     _render_form_perfil(usuario)
+    _render_personalizacao_treinador(usuario)
     _render_vinculo_atleta(usuario)
     return _render_exclusao_conta(usuario)
