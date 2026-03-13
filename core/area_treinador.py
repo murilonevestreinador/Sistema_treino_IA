@@ -1,14 +1,22 @@
 import base64
 import os
+import uuid
 from datetime import date, timedelta
 from pathlib import Path
 
 import streamlit as st
 
+from core.carga import rotulo_categoria_movimento
 from core.bi import BIValidationError, TrainerBIService
 from core.cronograma import buscar_semana_por_numero, gerar_cronograma, obter_semana_atual
 from core.exercicios import carregar_exercicios
-from core.progresso import buscar_progresso_semana, calcular_progresso_semanal
+from core.progresso import (
+    buscar_progresso_semana,
+    calcular_progresso_semanal,
+    listar_avaliacoes_forca,
+    listar_historico_cargas,
+    salvar_ajuste_manual_avaliacao,
+)
 from core.treinador import (
     gerar_link_convite,
     listar_atletas_do_treinador,
@@ -427,6 +435,68 @@ def _render_linha_atleta(nome, email, foto_perfil=None):
         st.write(f"{nome} ({email})")
 
 
+def _render_painel_cargas_atleta(atleta):
+    avaliacoes = listar_avaliacoes_forca(atleta["id"])
+    historico = listar_historico_cargas(atleta["id"])
+
+    st.subheader("Forca, carga e historico")
+    if not avaliacoes:
+        st.caption("Nenhuma avaliacao de carga registrada ainda.")
+    else:
+        for avaliacao in avaliacoes:
+            referencia = avaliacao.get("carga_sugerida_manual") or avaliacao.get("carga_referencia_estimada")
+            with st.container(border=True):
+                st.markdown(
+                    f"**Semana {avaliacao['semana_numero']} | {rotulo_categoria_movimento(avaliacao.get('categoria_movimento'))}**"
+                )
+                st.caption(
+                    f"{avaliacao.get('exercicio_nome')} | carga usada {avaliacao.get('carga_utilizada') or '-'} kg | "
+                    f"reps {avaliacao.get('reps_realizadas') or '-'} | RPE {avaliacao.get('rpe') or '-'} | "
+                    f"referencia {referencia or '-'} kg"
+                )
+                with st.form(f"form_override_carga_{avaliacao['id']}"):
+                    carga_manual = st.number_input(
+                        "Carga sugerida manual (kg)",
+                        min_value=0.0,
+                        max_value=500.0,
+                        step=0.5,
+                        value=float(avaliacao.get("carga_sugerida_manual") or 0.0),
+                        key=f"manual_carga_{avaliacao['id']}",
+                    )
+                    observacao = st.text_input(
+                        "Observacao do treinador",
+                        value=str(avaliacao.get("observacao_treinador") or ""),
+                        key=f"obs_carga_{avaliacao['id']}",
+                    )
+                    salvar = st.form_submit_button("Salvar ajuste manual", use_container_width=True)
+                if salvar:
+                    salvar_ajuste_manual_avaliacao(
+                        avaliacao["id"],
+                        carga_sugerida_manual=carga_manual if carga_manual > 0 else None,
+                        observacao_treinador=observacao or None,
+                    )
+                    resetar_treinos_futuros(atleta["id"], avaliacao["semana_numero"])
+                    st.success("Ajuste manual salvo.")
+                    st.rerun()
+
+    if historico:
+        linhas = [
+            {
+                "Semana": item["semana_numero"],
+                "Treino": item["treino_nome"],
+                "Exercicio": item["exercicio_nome"],
+                "Categoria": rotulo_categoria_movimento(item.get("categoria_movimento")),
+                "Carga sugerida": item.get("carga_planejada"),
+                "Carga realizada": item.get("carga_realizada"),
+                "RPE alvo": item.get("rpe_alvo"),
+                "RPE real": item.get("rpe_real"),
+                "Dor": item.get("dor") or "-",
+            }
+            for item in historico
+        ]
+        st.dataframe(linhas, use_container_width=True, hide_index=True)
+
+
 def _render_menu_local_treinador():
     secao = st.session_state.get("secao_treinador", "visao_geral")
     st.caption("Use o menu abaixo para alternar entre gestão dos atletas e BI.")
@@ -599,8 +669,11 @@ def _render_visualizacao_atleta(treinador):
         st.markdown(f"**Treino {nome_treino}** ({status})")
         for exercicio in exercicios:
             st.markdown(
-                f"- {exercicio['nome']} ({exercicio['series']} x {exercicio['reps']}) | descanso {exercicio['descanso']}"
+                f"- {exercicio['nome']} ({exercicio['series']} x {exercicio['reps']}) | "
+                f"descanso {exercicio['descanso']} | {exercicio.get('orientacao_carga') or 'sem orientacao de carga'}"
             )
+
+    _render_painel_cargas_atleta(atleta)
 
     if semana_escolhida["semana"] < semana_atual["semana"]:
         st.info("Edicao disponivel apenas para a semana atual ou futuras.")

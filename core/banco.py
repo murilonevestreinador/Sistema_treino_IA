@@ -390,7 +390,103 @@ def _criar_tabela_planos(cursor):
             ativo INTEGER DEFAULT 1
         )
         """
+        )
+
+
+def _criar_tabela_avaliacao_forca(cursor):
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS avaliacao_forca (
+            id SERIAL PRIMARY KEY,
+            atleta_id INTEGER,
+            usuario_id INTEGER,
+            semana_numero INTEGER NOT NULL,
+            fase TEXT,
+            categoria_movimento TEXT NOT NULL,
+            exercicio_nome TEXT NOT NULL,
+            carga_utilizada REAL,
+            reps_realizadas INTEGER,
+            rpe REAL,
+            carga_referencia_estimada REAL,
+            carga_sugerida_manual REAL,
+            observacao_treinador TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(atleta_id, semana_numero, categoria_movimento),
+            FOREIGN KEY (atleta_id) REFERENCES usuarios(id)
+        )
+        """
     )
+
+    colunas = {
+        "atleta_id": "INTEGER",
+        "usuario_id": "INTEGER",
+        "fase": "TEXT",
+        "carga_utilizada": "REAL",
+        "reps_realizadas": "INTEGER",
+        "rpe": "REAL",
+        "carga_referencia_estimada": "REAL",
+        "carga_sugerida_manual": "REAL",
+        "observacao_treinador": "TEXT",
+        "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+        "updated_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+    }
+    for nome, definicao in colunas.items():
+        _adicionar_coluna_se_necessario(cursor, "avaliacao_forca", nome, definicao)
+
+
+def _criar_tabela_execucao_exercicio(cursor):
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS execucao_exercicio (
+            id SERIAL PRIMARY KEY,
+            atleta_id INTEGER,
+            usuario_id INTEGER,
+            semana_numero INTEGER NOT NULL,
+            fase TEXT,
+            treino_nome TEXT NOT NULL,
+            exercicio_nome TEXT NOT NULL,
+            categoria_movimento TEXT,
+            series_planejadas INTEGER,
+            reps_planejadas INTEGER,
+            rpe_alvo TEXT,
+            carga_planejada REAL,
+            orientacao_carga TEXT,
+            series_realizadas INTEGER,
+            reps_realizadas INTEGER,
+            carga_realizada REAL,
+            rpe_real REAL,
+            dor TEXT,
+            observacao TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(atleta_id, semana_numero, treino_nome, exercicio_nome),
+            FOREIGN KEY (atleta_id) REFERENCES usuarios(id)
+        )
+        """
+    )
+
+    colunas = {
+        "atleta_id": "INTEGER",
+        "usuario_id": "INTEGER",
+        "fase": "TEXT",
+        "categoria_movimento": "TEXT",
+        "series_planejadas": "INTEGER",
+        "reps_planejadas": "INTEGER",
+        "rpe_alvo": "TEXT",
+        "carga_planejada": "REAL",
+        "orientacao_carga": "TEXT",
+        "series_realizadas": "INTEGER",
+        "reps_realizadas": "INTEGER",
+        "carga_realizada": "REAL",
+        "rpe_real": "REAL",
+        "dor": "TEXT",
+        "observacao": "TEXT",
+        "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+        "updated_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+    }
+    for nome, definicao in colunas.items():
+        _adicionar_coluna_se_necessario(cursor, "execucao_exercicio", nome, definicao)
 
 
 def _seed_planos(cursor):
@@ -495,6 +591,24 @@ def _criar_indices_bi(cursor):
         ON usuarios (tipo_usuario, sexo, objetivo)
         """
     )
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_avaliacao_forca_atleta_categoria
+        ON avaliacao_forca (atleta_id, usuario_id, categoria_movimento, semana_numero DESC, created_at DESC)
+        """
+    )
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_execucao_exercicio_atleta_exercicio
+        ON execucao_exercicio (atleta_id, usuario_id, exercicio_nome, semana_numero DESC, created_at DESC)
+        """
+    )
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_execucao_exercicio_atleta_categoria
+        ON execucao_exercicio (atleta_id, usuario_id, categoria_movimento, semana_numero DESC, created_at DESC)
+        """
+    )
 
 
 def garantir_colunas_e_tabelas():
@@ -514,6 +628,8 @@ def garantir_colunas_e_tabelas():
     _criar_tabela_planos(cursor)
     _seed_planos(cursor)
     _criar_tabela_assinaturas(cursor)
+    _criar_tabela_avaliacao_forca(cursor)
+    _criar_tabela_execucao_exercicio(cursor)
     _criar_indices_bi(cursor)
 
     conn.commit()

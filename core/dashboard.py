@@ -4,14 +4,21 @@ from urllib.parse import parse_qs, urlparse
 import streamlit as st
 import streamlit.components.v1 as components
 
+from core.carga import rotulo_categoria_movimento
 from core.cronograma import buscar_semana_por_numero, gerar_cronograma, obter_semana_atual
 from core.exercicios import carregar_exercicios
 from core.progresso import (
+    buscar_avaliacao_referencia,
+    buscar_ultima_execucao,
     buscar_progresso_semana,
     calcular_progresso_semanal,
     historico_progresso,
+    listar_avaliacoes_forca,
+    listar_execucao_treino,
     marcar_treino_feito,
     registrar_preferencia_substituicao,
+    salvar_avaliacao_forca,
+    salvar_execucao_exercicio,
     salvar_feedback_treino,
 )
 from core.treinador import listar_convites_pendentes_do_atleta, resolver_logo_treinador, responder_convite
@@ -458,11 +465,14 @@ def _render_card_exercicios(exercicios):
     for indice, exercicio in enumerate(exercicios):
         col_info, col_video = st.columns([5, 1])
         with col_info:
+            orientacao_carga = exercicio.get("orientacao_carga")
+            complemento_carga = f"<br><span>{orientacao_carga}</span>" if orientacao_carga else ""
             st.markdown(
                 f"""
                 <div class="exercise-card">
                     <strong>{exercicio['nome']}</strong>
-                    <span>{exercicio['series']} x {exercicio['reps']} | Descanso {exercicio['descanso']}</span>
+                    <span>{exercicio['series']} x {exercicio['reps']} | Descanso {exercicio['descanso']} | RPE alvo {exercicio.get('rpe', '-')}</span>
+                    {complemento_carga}
                 </div>
                 """,
                 unsafe_allow_html=True,
@@ -476,6 +486,149 @@ def _render_card_exercicios(exercicios):
             ):
                 st.session_state["exercicio_video_aberto"] = exercicio
                 st.rerun()
+
+
+def _render_contexto_carga_semana(semana, avaliacoes):
+    if semana["semana"] == 1:
+        st.info("Semana 1: foco em tecnica, execucao, amplitude e controle. Nao ha teste de carga nesta semana.")
+        return
+    if semana["semana"] == 2:
+        st.warning("Semana 2: os exercicios-base marcados como avaliacao de carga devem registrar peso usado, repeticoes e RPE.")
+        return
+
+    total_avaliacoes = len(avaliacoes or [])
+    if total_avaliacoes:
+        st.success(
+            f"Semana {semana['semana']}: as cargas sugeridas usam a avaliacao da semana 2, a fase {semana['fase']} e os registros de RPE/dor."
+        )
+    else:
+        st.info("Ainda nao ha avaliacao de carga salva. As orientacoes seguem qualitativas ate existir referencia.")
+
+
+def _salvar_execucao_treino_atleta(usuario, semana, nome_treino, exercicios):
+    prefixo = f"exec_{usuario['id']}_{semana['semana']}_{nome_treino}"
+    payload = []
+    avaliacoes_salvas = 0
+
+    for indice, exercicio in enumerate(exercicios):
+        series_realizadas = int(st.session_state.get(f"{prefixo}_series_{indice}", exercicio.get("series") or 0) or 0)
+        reps_realizadas = int(st.session_state.get(f"{prefixo}_reps_{indice}", exercicio.get("reps") or 0) or 0)
+        carga_realizada = float(st.session_state.get(f"{prefixo}_carga_{indice}", 0.0) or 0.0)
+        rpe_real = float(st.session_state.get(f"{prefixo}_rpe_{indice}", 0.0) or 0.0)
+        dor = (st.session_state.get(f"{prefixo}_dor_{indice}", "") or "").strip() or None
+        observacao = (st.session_state.get(f"{prefixo}_obs_{indice}", "") or "").strip() or None
+
+        item = {
+            **exercicio,
+            "series_realizadas": series_realizadas,
+            "reps_realizadas": reps_realizadas,
+            "carga_realizada": carga_realizada if carga_realizada > 0 else None,
+            "rpe_real": rpe_real if rpe_real > 0 else None,
+            "dor": dor,
+            "observacao": observacao,
+        }
+        payload.append(item)
+
+        if exercicio.get("modo_carga") == "avaliacao":
+            avaliacao = salvar_avaliacao_forca(
+                usuario["id"],
+                semana["semana"],
+                semana["fase"],
+                exercicio.get("categoria_movimento"),
+                exercicio.get("nome"),
+                item.get("carga_realizada"),
+                item.get("reps_realizadas"),
+                item.get("rpe_real"),
+            )
+            if avaliacao:
+                avaliacoes_salvas += 1
+
+    salvar_execucao_exercicio(usuario["id"], semana["semana"], semana["fase"], nome_treino, payload)
+    if avaliacoes_salvas:
+        resetar_treinos_futuros(usuario["id"], semana["semana"])
+
+    st.session_state["mensagem_execucao_carga"] = (
+        f"Execucao de {nome_treino} salva."
+        + (f" {avaliacoes_salvas} avaliacao(oes) de carga atualizada(s)." if avaliacoes_salvas else "")
+    )
+    st.rerun()
+
+
+def _render_form_execucao_exercicios(usuario, semana, nome_treino, exercicios):
+    execucoes = {
+        item["exercicio_nome"]: item
+        for item in listar_execucao_treino(usuario["id"], semana["semana"], nome_treino)
+    }
+    prefixo = f"exec_{usuario['id']}_{semana['semana']}_{nome_treino}"
+
+    with st.form(f"form_execucao_{usuario['id']}_{semana['semana']}_{nome_treino}"):
+        st.markdown("#### Registrar carga e execucao")
+        st.caption("Preencha a execucao real para alimentar a prescricao das proximas sessoes.")
+
+        for indice, exercicio in enumerate(exercicios):
+            execucao = execucoes.get(exercicio["nome"], {})
+            st.markdown(f"**{exercicio['nome']}**")
+            if exercicio.get("modo_carga") == "avaliacao":
+                st.caption(
+                    f"Avaliacao de carga para {rotulo_categoria_movimento(exercicio.get('categoria_movimento'))}."
+                )
+
+            col_series, col_reps, col_carga, col_rpe = st.columns(4)
+            with col_series:
+                st.number_input(
+                    "Series realizadas",
+                    min_value=0,
+                    max_value=20,
+                    value=int(execucao.get("series_realizadas") or exercicio.get("series") or 0),
+                    key=f"{prefixo}_series_{indice}",
+                )
+            with col_reps:
+                st.number_input(
+                    "Reps realizadas",
+                    min_value=0,
+                    max_value=50,
+                    value=int(execucao.get("reps_realizadas") or exercicio.get("reps") or 0),
+                    key=f"{prefixo}_reps_{indice}",
+                )
+            with col_carga:
+                st.number_input(
+                    "Carga usada (kg)",
+                    min_value=0.0,
+                    max_value=500.0,
+                    step=0.5,
+                    value=float(execucao.get("carga_realizada") or exercicio.get("carga_sugerida") or 0.0),
+                    key=f"{prefixo}_carga_{indice}",
+                )
+            with col_rpe:
+                st.number_input(
+                    "RPE real",
+                    min_value=0.0,
+                    max_value=10.0,
+                    step=0.5,
+                    value=float(execucao.get("rpe_real") or 0.0),
+                    key=f"{prefixo}_rpe_{indice}",
+                )
+
+            col_dor, col_obs = st.columns(2)
+            with col_dor:
+                st.text_input(
+                    "Dor/desconforto",
+                    value=str(execucao.get("dor") or ""),
+                    key=f"{prefixo}_dor_{indice}",
+                    placeholder="Ex: joelho esquerdo sensivel",
+                )
+            with col_obs:
+                st.text_input(
+                    "Observacao",
+                    value=str(execucao.get("observacao") or ""),
+                    key=f"{prefixo}_obs_{indice}",
+                    placeholder="Ex: sobrou carga / muito pesado",
+                )
+
+        salvar = st.form_submit_button("Salvar execucao de carga", use_container_width=True)
+
+    if salvar:
+        _salvar_execucao_treino_atleta(usuario, semana, nome_treino, exercicios)
 
 
 def _anexar_links_exercicios(treino_semana, exercicios_db):
@@ -571,7 +724,8 @@ def _render_nav_local():
             st.rerun()
 
 
-def _render_resumo_geral(semana, treino_semana, concluidos, percentual):
+def _render_resumo_geral(usuario, semana, treino_semana, concluidos, percentual):
+    avaliacoes = listar_avaliacoes_forca(usuario["id"])
     st.markdown(
         f"""
         <div class="metric-card">
@@ -583,6 +737,7 @@ def _render_resumo_geral(semana, treino_semana, concluidos, percentual):
     )
     st.progress(percentual / 100 if treino_semana else 0)
     st.write(f"Progresso semanal: {percentual}% ({concluidos}/{len(treino_semana)})")
+    _render_contexto_carga_semana(semana, avaliacoes)
 
     st.markdown(
         """
@@ -710,6 +865,7 @@ def _render_detalhe_treino(usuario, semana, nome_treino, exercicios, progresso_i
     )
 
     _render_card_exercicios(exercicios)
+    _render_form_execucao_exercicios(usuario, semana, nome_treino, exercicios)
 
     chave_checkbox = f"feito_{usuario['id']}_{semana['semana']}_{nome_treino}"
     if chave_checkbox not in st.session_state:
@@ -737,6 +893,7 @@ def _render_detalhe_treino(usuario, semana, nome_treino, exercicios, progresso_i
 
 
 def _render_area_treinos(usuario, semana, treino_semana, progresso):
+    _render_contexto_carga_semana(semana, listar_avaliacoes_forca(usuario["id"]))
     if not st.session_state.get("feedback_pendente"):
         _render_video_exercicio()
     treino_aberto = _render_grade_treinos(semana, treino_semana, progresso)
@@ -793,6 +950,9 @@ def tela_dashboard(usuario):
     mensagem_feedback = st.session_state.pop("mensagem_feedback_treino", None)
     if mensagem_feedback:
         st.success(mensagem_feedback)
+    mensagem_execucao = st.session_state.pop("mensagem_execucao_carga", None)
+    if mensagem_execucao:
+        st.success(mensagem_execucao)
 
     _render_convites_pendentes(usuario)
 
@@ -807,7 +967,7 @@ def tela_dashboard(usuario):
     if secao == "treinos":
         _render_area_treinos(usuario, semana_atual, treino_semana, progresso)
     else:
-        _render_resumo_geral(semana_atual, treino_semana, concluidos, percentual)
+        _render_resumo_geral(usuario, semana_atual, treino_semana, concluidos, percentual)
         _render_historico(usuario, semana_atual, cronograma)
 
     registros = historico_progresso(usuario["id"])
