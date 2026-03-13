@@ -1,6 +1,7 @@
 import streamlit as st
 
 from core.financeiro import listar_planos_ativos
+from core.ui import inject_app_icons
 
 
 def _ir_para_app(modo=None):
@@ -21,6 +22,7 @@ def _ir_para_pagamento(plano_codigo):
 
 
 st.set_page_config(page_title="Planos e Precos", layout="wide")
+inject_app_icons()
 st.title("Planos e Precos")
 st.write(
     "Escolha o plano ideal para usar a TriLab TREINAMENTO com treinos de forca para corredores, periodizacao e adaptacao por feedback."

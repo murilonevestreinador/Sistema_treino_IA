@@ -8,6 +8,7 @@ from core.financeiro import (
     resumo_status_assinatura,
     status_para_exibicao,
 )
+from core.ui import inject_app_icons
 
 
 def _ir_para_app():
@@ -18,6 +19,7 @@ def _ir_para_app():
 
 
 st.set_page_config(page_title="Minha Assinatura", layout="wide")
+inject_app_icons()
 st.title("Minha Assinatura")
 
 usuario = st.session_state.get("usuario")

@@ -2,12 +2,15 @@ from pathlib import Path
 
 import streamlit as st
 
+from core.ui import inject_app_icons
+
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 ARQUIVO_PRIVACIDADE = BASE_DIR / "legal" / "privacidade.md"
 
 
 st.set_page_config(page_title="Politica de Privacidade", layout="wide")
+inject_app_icons()
 st.title("Politica de Privacidade")
 
 with ARQUIVO_PRIVACIDADE.open("r", encoding="utf-8") as arquivo:

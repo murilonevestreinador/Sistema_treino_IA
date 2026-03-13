@@ -1,4 +1,9 @@
+import base64
+import json
+from pathlib import Path
+
 import streamlit as st
+import streamlit.components.v1 as components
 
 TEMA_PADRAO = {
     "cor_primaria": "#003B7A",
@@ -6,6 +11,16 @@ TEMA_PADRAO = {
     "cor_botao": "#FF3B30",
     "cor_cards": "#FFFFFF",
     "cor_header": "#0F172A",
+}
+
+ASSETS_DIR = Path.cwd() / "assets"
+ICON_FILES = {
+    "favicon_16": ASSETS_DIR / "favicon-16x16.png",
+    "favicon_32": ASSETS_DIR / "favicon-32x32.png",
+    "favicon_ico": ASSETS_DIR / "favicon.ico",
+    "apple_touch_icon": ASSETS_DIR / "apple-touch-icon.png",
+    "android_192": ASSETS_DIR / "android-chrome-192x192.png",
+    "android_512": ASSETS_DIR / "android-chrome-512x512.png",
 }
 
 
@@ -333,6 +348,106 @@ def apply_global_styles():
         </style>
         """,
         unsafe_allow_html=True,
+    )
+
+
+def _arquivo_para_data_url(caminho):
+    if not caminho.exists():
+        return None
+
+    mime_types = {
+        ".png": "image/png",
+        ".ico": "image/x-icon",
+        ".svg": "image/svg+xml",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".webp": "image/webp",
+    }
+    mime = mime_types.get(caminho.suffix.lower(), "application/octet-stream")
+    conteudo = base64.b64encode(caminho.read_bytes()).decode("ascii")
+    return f"data:{mime};base64,{conteudo}"
+
+
+def inject_app_icons():
+    favicon_16 = _arquivo_para_data_url(ICON_FILES["favicon_16"])
+    favicon_32 = _arquivo_para_data_url(ICON_FILES["favicon_32"])
+    favicon_ico = _arquivo_para_data_url(ICON_FILES["favicon_ico"])
+    apple_touch_icon = _arquivo_para_data_url(ICON_FILES["apple_touch_icon"])
+    android_192 = _arquivo_para_data_url(ICON_FILES["android_192"])
+    android_512 = _arquivo_para_data_url(ICON_FILES["android_512"])
+
+    if not any([favicon_16, favicon_32, favicon_ico, apple_touch_icon, android_192, android_512]):
+        return
+
+    manifest = {
+        "name": "TriLab TREINAMENTO",
+        "short_name": "TriLab",
+        "display": "standalone",
+        "theme_color": "#003B7A",
+        "background_color": "#FFFFFF",
+        "icons": [
+            {
+                "src": android_192,
+                "sizes": "192x192",
+                "type": "image/png",
+            },
+            {
+                "src": android_512,
+                "sizes": "512x512",
+                "type": "image/png",
+            },
+        ],
+    }
+    manifest_json = json.dumps(manifest)
+
+    components.html(
+        f"""
+        <script>
+        const doc = window.parent.document;
+        const head = doc.head;
+
+        function upsertLink(id, rel, href, sizes=null, type=null) {{
+            if (!href) return;
+            let el = doc.getElementById(id);
+            if (!el) {{
+                el = doc.createElement('link');
+                el.id = id;
+                head.appendChild(el);
+            }}
+            el.rel = rel;
+            el.href = href;
+            if (sizes) el.sizes = sizes;
+            if (type) el.type = type;
+        }}
+
+        function upsertMeta(id, name, content) {{
+            let el = doc.getElementById(id);
+            if (!el) {{
+                el = doc.createElement('meta');
+                el.id = id;
+                el.name = name;
+                head.appendChild(el);
+            }}
+            el.content = content;
+        }}
+
+        upsertLink('trilab-favicon-16', 'icon', {json.dumps(favicon_16)}, '16x16', 'image/png');
+        upsertLink('trilab-favicon-32', 'icon', {json.dumps(favicon_32)}, '32x32', 'image/png');
+        upsertLink('trilab-favicon-ico', 'shortcut icon', {json.dumps(favicon_ico)}, null, 'image/x-icon');
+        upsertLink('trilab-apple-touch', 'apple-touch-icon', {json.dumps(apple_touch_icon)}, '180x180', 'image/png');
+
+        upsertMeta('trilab-theme-color', 'theme-color', '#003B7A');
+        upsertMeta('trilab-mobile-web-title', 'apple-mobile-web-app-title', 'TriLab TREINAMENTO');
+        upsertMeta('trilab-mobile-capable', 'apple-mobile-web-app-capable', 'yes');
+
+        const manifestData = {manifest_json};
+        const manifestBlob = new Blob([JSON.stringify(manifestData)], {{ type: 'application/manifest+json' }});
+        const manifestUrl = URL.createObjectURL(manifestBlob);
+        upsertLink('trilab-manifest', 'manifest', manifestUrl, null, 'application/manifest+json');
+        </script>
+        """,
+        height=0,
+        width=0,
     )
 
 

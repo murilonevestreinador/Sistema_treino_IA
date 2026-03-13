@@ -2,12 +2,15 @@ from pathlib import Path
 
 import streamlit as st
 
+from core.ui import inject_app_icons
+
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 ARQUIVO_TERMOS = BASE_DIR / "legal" / "termos.md"
 
 
 st.set_page_config(page_title="Termos de Uso", layout="wide")
+inject_app_icons()
 st.title("Termos de Uso")
 
 with ARQUIVO_TERMOS.open("r", encoding="utf-8") as arquivo:

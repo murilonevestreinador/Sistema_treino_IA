@@ -1,6 +1,7 @@
 import streamlit as st
 
 from core.financeiro import assinar_plano_manual, buscar_plano_por_codigo, listar_planos_ativos
+from core.ui import inject_app_icons
 
 
 def _ir_para(nome_pagina):
@@ -11,6 +12,7 @@ def _ir_para(nome_pagina):
 
 
 st.set_page_config(page_title="Pagamento Manual", layout="wide")
+inject_app_icons()
 st.title("Pagamento Manual")
 st.write("MVP interno para simular a compra sem gateway. No futuro, esta etapa sera integrada ao Asaas via API e webhook.")
 

@@ -19,7 +19,7 @@ from core.treinador import (
     tema_padrao_treinador,
 )
 from core.treino import resetar_planejamento_atleta
-from core.ui import TEMA_PADRAO, aplicar_tema, apply_global_styles
+from core.ui import TEMA_PADRAO, aplicar_tema, apply_global_styles, inject_app_icons
 from core.usuarios import redefinir_objetivo_atleta
 
 
@@ -538,6 +538,7 @@ def main():
     garantir_colunas_e_tabelas()
     inicializar_sessao()
     sincronizar_convite_da_url()
+    inject_app_icons()
     apply_global_styles()
     _aplicar_estilo_shell_app()
     aplicar_tema(

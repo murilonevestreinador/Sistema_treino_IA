@@ -1,7 +1,9 @@
 import streamlit as st
 
+from core.ui import inject_app_icons
 
 st.set_page_config(page_title="FAQ", layout="wide")
+inject_app_icons()
 st.title("FAQ")
 
 with st.expander("A TriLab e para quem?"):
