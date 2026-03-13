@@ -337,13 +337,8 @@ def apply_global_styles():
 
 
 def auth_card_start(title, subtitle):
-    st.markdown(
-        """
-        <div class="auth-card">
-        """,
-        unsafe_allow_html=True,
-    )
+    return None
 
 
 def auth_card_end():
-    st.markdown("</div>", unsafe_allow_html=True)
+    return None
