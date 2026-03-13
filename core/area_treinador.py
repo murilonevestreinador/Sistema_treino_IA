@@ -158,6 +158,14 @@ def _rotulo_bloco_exercicio(exercicio, indice_base):
     )
 
 
+def _sort_component_habilitado():
+    if not sort_items:
+        return False
+    if os.getenv("RENDER_EXTERNAL_HOSTNAME") or os.getenv("RENDER") or os.getenv("RENDER_SERVICE_ID"):
+        return False
+    return True
+
+
 def _render_ordenacao_exercicios(atleta_id, semana_numero, treino):
     ordem_salva = _garantir_ordem_editor(atleta_id, semana_numero, treino)
 
@@ -173,7 +181,7 @@ def _render_ordenacao_exercicios(atleta_id, semana_numero, treino):
         ordem_atual = [item_id for item_id in ordem_salva.get(nome_treino, []) if item_id in rotulo_por_id]
         ordem_atual += [item_id for item_id in ids_exercicios if item_id not in ordem_atual]
 
-        if sort_items:
+        if _sort_component_habilitado():
             itens_exibidos = [rotulo_por_id[item_id] for item_id in ordem_atual]
             custom_style = """
             .sortable-component {
@@ -265,7 +273,7 @@ def _reordenar_exercicios_editor(atleta_id, semana_numero, nome_treino, exercici
     ordem_atual = [item["uid"] for item in exercicios]
     st.caption("Arraste para reorganizar a ordem real dos exercicios deste treino.")
 
-    if sort_items:
+    if _sort_component_habilitado():
         custom_style = """
         .sortable-component {
             border: 1px dashed rgba(15, 23, 42, 0.12);
