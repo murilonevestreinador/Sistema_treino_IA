@@ -431,6 +431,16 @@ def inject_app_icons():
             el.content = content;
         }}
 
+        function upsertStyle(id, cssText) {{
+            let el = doc.getElementById(id);
+            if (!el) {{
+                el = doc.createElement('style');
+                el.id = id;
+                head.appendChild(el);
+            }}
+            el.textContent = cssText;
+        }}
+
         upsertLink('trilab-favicon-16', 'icon', {json.dumps(favicon_16)}, '16x16', 'image/png');
         upsertLink('trilab-favicon-32', 'icon', {json.dumps(favicon_32)}, '32x32', 'image/png');
         upsertLink('trilab-favicon-ico', 'shortcut icon', {json.dumps(favicon_ico)}, null, 'image/x-icon');
@@ -439,6 +449,16 @@ def inject_app_icons():
         upsertMeta('trilab-theme-color', 'theme-color', '#003B7A');
         upsertMeta('trilab-mobile-web-title', 'apple-mobile-web-app-title', 'TriLab TREINAMENTO');
         upsertMeta('trilab-mobile-capable', 'apple-mobile-web-app-capable', 'yes');
+        upsertStyle(
+            'trilab-sidebar-nav-uppercase',
+            `
+            [data-testid="stSidebarNav"] a,
+            [data-testid="stSidebarNav"] a span,
+            [data-testid="stSidebarNav"] div[data-testid="stSidebarNavItems"] span {{
+                text-transform: uppercase !important;
+            }}
+            `
+        );
 
         const manifestData = {manifest_json};
         const manifestBlob = new Blob([JSON.stringify(manifestData)], {{ type: 'application/manifest+json' }});
