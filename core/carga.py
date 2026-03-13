@@ -167,7 +167,10 @@ def descrever_prescricao_carga(semana_numero, fase, exercicio, rpe_alvo, avaliac
             "modo_carga": "prescrita",
             "categoria_movimento": categoria,
             "carga_sugerida": carga_sugerida,
-            "orientacao_carga": f"Carga sugerida: {carga_sugerida} kg | RPE alvo {rpe_alvo}.",
+            "orientacao_carga": (
+                f"Carga sugerida: {carga_sugerida} kg | RPE alvo {rpe_alvo}. "
+                "Carga sugerida com base na sua avaliacao anterior."
+            ),
         }
 
     return {

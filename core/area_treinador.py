@@ -22,7 +22,12 @@ from core.treinador import (
     listar_atletas_do_treinador,
     listar_vinculos,
 )
-from core.treino import buscar_treino_gerado, obter_ou_gerar_treino_semana, salvar_treino_gerado
+from core.treino import (
+    buscar_treino_gerado,
+    obter_ou_gerar_treino_semana,
+    resetar_treinos_futuros,
+    salvar_treino_gerado,
+)
 from core.usuarios import buscar_usuario_por_id
 
 try:
@@ -443,6 +448,25 @@ def _render_painel_cargas_atleta(atleta):
     if not avaliacoes:
         st.caption("Nenhuma avaliacao de carga registrada ainda.")
     else:
+        linhas_avaliacao = []
+        for avaliacao in avaliacoes:
+            referencia = avaliacao.get("carga_sugerida_manual") or avaliacao.get("carga_referencia_estimada")
+            linhas_avaliacao.append(
+                {
+                    "Semana": avaliacao["semana_numero"],
+                    "Exercicio": avaliacao.get("exercicio_nome"),
+                    "Categoria": rotulo_categoria_movimento(avaliacao.get("categoria_movimento")),
+                    "Carga": avaliacao.get("carga_utilizada"),
+                    "Reps": avaliacao.get("reps_realizadas"),
+                    "RPE": avaliacao.get("rpe"),
+                    "Referencia estimada": referencia,
+                }
+            )
+
+        st.dataframe(linhas_avaliacao, use_container_width=True, hide_index=True)
+
+        st.markdown("#### Ajuste manual da carga futura")
+        st.caption("Use os cards abaixo para confirmar ou ajustar a referencia que sera usada nas proximas semanas.")
         for avaliacao in avaliacoes:
             referencia = avaliacao.get("carga_sugerida_manual") or avaliacao.get("carga_referencia_estimada")
             with st.container(border=True):

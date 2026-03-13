@@ -344,6 +344,85 @@ def _aplicar_estilo_dashboard():
             margin: 0.15rem 0 0;
             color: #4f6863;
         }
+        .evaluation-shell {
+            border-radius: 24px;
+            border: 1px solid rgba(194, 93, 35, 0.16);
+            background:
+                radial-gradient(circle at top right, rgba(255, 198, 89, 0.22), transparent 34%),
+                linear-gradient(135deg, rgba(255, 247, 237, 0.96) 0%, rgba(255, 251, 245, 0.98) 100%);
+            padding: 1rem 1.05rem;
+            margin-bottom: 1rem;
+            box-shadow: 0 16px 34px rgba(194, 93, 35, 0.10);
+        }
+        .evaluation-shell h3 {
+            margin: 0;
+            color: #7a3414;
+        }
+        .evaluation-shell p {
+            margin: 0.45rem 0 0;
+            color: #9a4d21;
+            line-height: 1.5;
+        }
+        .evaluation-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 0.7rem;
+            margin-top: 0.85rem;
+        }
+        .evaluation-tip {
+            border-radius: 16px;
+            background: rgba(255, 255, 255, 0.72);
+            padding: 0.7rem 0.8rem;
+            border: 1px solid rgba(194, 93, 35, 0.10);
+        }
+        .evaluation-tip strong {
+            display: block;
+            color: #7a3414;
+            margin-bottom: 0.15rem;
+        }
+        .exercise-card.evaluation {
+            border-color: rgba(194, 93, 35, 0.22);
+            background: linear-gradient(135deg, rgba(255, 247, 237, 0.98) 0%, rgba(255, 252, 248, 1) 100%);
+            box-shadow: 0 12px 28px rgba(194, 93, 35, 0.08);
+        }
+        .badge-evaluation {
+            display: inline-block;
+            margin-bottom: 0.4rem;
+            padding: 0.18rem 0.55rem;
+            border-radius: 999px;
+            background: rgba(194, 93, 35, 0.14);
+            color: #9a3412;
+            font-size: 0.74rem;
+            font-weight: 800;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+        }
+        .evaluation-entry {
+            border-radius: 18px;
+            border: 1px solid rgba(194, 93, 35, 0.16);
+            background: linear-gradient(135deg, rgba(255, 248, 240, 0.98) 0%, rgba(255, 255, 255, 0.98) 100%);
+            padding: 0.95rem 1rem;
+            margin-bottom: 0.9rem;
+        }
+        .evaluation-entry h4 {
+            margin: 0;
+            color: #7a3414;
+        }
+        .evaluation-entry p {
+            margin: 0.3rem 0 0;
+            color: #8f4a24;
+            line-height: 1.45;
+        }
+        .evaluation-summary {
+            border-radius: 18px;
+            border: 1px solid rgba(21, 128, 61, 0.15);
+            background: linear-gradient(135deg, rgba(240, 253, 244, 0.96) 0%, rgba(255, 255, 255, 0.98) 100%);
+            padding: 0.95rem 1rem;
+            margin-bottom: 0.85rem;
+        }
+        .evaluation-summary strong {
+            color: #166534;
+        }
         .nav-chip-row .stButton > button {
             width: 100%;
         }
@@ -467,9 +546,16 @@ def _render_card_exercicios(exercicios):
         with col_info:
             orientacao_carga = exercicio.get("orientacao_carga")
             complemento_carga = f"<br><span>{orientacao_carga}</span>" if orientacao_carga else ""
+            badge_avaliacao = (
+                '<div class="badge-evaluation">Avaliacao</div>'
+                if exercicio.get("modo_carga") == "avaliacao"
+                else ""
+            )
+            classe_avaliacao = "evaluation" if exercicio.get("modo_carga") == "avaliacao" else ""
             st.markdown(
                 f"""
-                <div class="exercise-card">
+                <div class="exercise-card {classe_avaliacao}">
+                    {badge_avaliacao}
                     <strong>{exercicio['nome']}</strong>
                     <span>{exercicio['series']} x {exercicio['reps']} | Descanso {exercicio['descanso']} | RPE alvo {exercicio.get('rpe', '-')}</span>
                     {complemento_carga}
@@ -486,6 +572,60 @@ def _render_card_exercicios(exercicios):
             ):
                 st.session_state["exercicio_video_aberto"] = exercicio
                 st.rerun()
+
+
+def _render_resumo_avaliacao_concluida(usuario_id, semana_numero):
+    resumo = st.session_state.get(f"resumo_avaliacao_{usuario_id}_{semana_numero}")
+    if not resumo:
+        return
+
+    st.markdown(
+        """
+        <div class="evaluation-summary">
+            <strong>Resumo da avaliacao concluida</strong>
+            <div>Perfeito. Usaremos esses dados para ajustar melhor suas cargas a partir da proxima semana.</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    for item in resumo:
+        st.caption(
+            f"{item['exercicio']} | carga {item['carga']} kg | reps {item['reps']} | RPE {item['rpe']}"
+        )
+
+
+def _render_guia_avaliacao_semana(semana, exercicios):
+    if semana["semana"] != 2:
+        return
+
+    exercicios_avaliativos = [item for item in exercicios if item.get("modo_carga") == "avaliacao"]
+    if not exercicios_avaliativos:
+        return
+
+    st.markdown(
+        """
+        <div class="evaluation-shell">
+            <h3>Avaliacao de carga da semana</h3>
+            <p>Nesta semana, alguns exercicios serao usados como referencia para ajustar melhor suas cargas nas proximas sessoes. Escolha uma carga desafiadora, mas segura, mantendo boa tecnica e sem chegar a falha.</p>
+            <div class="evaluation-grid">
+                <div class="evaluation-tip">
+                    <strong>Objetivo</strong>
+                    Encontrar uma carga segura e representativa.
+                </div>
+                <div class="evaluation-tip">
+                    <strong>Prioridade</strong>
+                    Tecnica, controle e boa execucao continuam em primeiro lugar.
+                </div>
+                <div class="evaluation-tip">
+                    <strong>Sem falhar</strong>
+                    Nao busque esforco maximo. Pare antes da falha.
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.caption(f"Exercicios de avaliacao neste treino: {len(exercicios_avaliativos)}")
 
 
 def _render_contexto_carga_semana(semana, avaliacoes):
@@ -509,6 +649,8 @@ def _salvar_execucao_treino_atleta(usuario, semana, nome_treino, exercicios):
     prefixo = f"exec_{usuario['id']}_{semana['semana']}_{nome_treino}"
     payload = []
     avaliacoes_salvas = 0
+    erros = []
+    resumo_avaliacoes = []
 
     for indice, exercicio in enumerate(exercicios):
         series_realizadas = int(st.session_state.get(f"{prefixo}_series_{indice}", exercicio.get("series") or 0) or 0)
@@ -530,12 +672,34 @@ def _salvar_execucao_treino_atleta(usuario, semana, nome_treino, exercicios):
         payload.append(item)
 
         if exercicio.get("modo_carga") == "avaliacao":
+            if carga_realizada <= 0:
+                erros.append(f"{exercicio['nome']}: informe uma carga utilizada maior que zero.")
+            if reps_realizadas <= 0:
+                erros.append(f"{exercicio['nome']}: informe repeticoes realizadas acima de zero.")
+            if not 5 <= rpe_real <= 10:
+                erros.append(f"{exercicio['nome']}: selecione um RPE entre 5 e 10.")
+            resumo_avaliacoes.append(
+                {
+                    "exercicio": exercicio["nome"],
+                    "carga": round(carga_realizada, 1),
+                    "reps": reps_realizadas,
+                    "rpe": round(rpe_real, 1),
+                }
+            )
+
+    if erros:
+        for erro in erros:
+            st.error(erro)
+        return
+
+    for item in payload:
+        if item.get("modo_carga") == "avaliacao":
             avaliacao = salvar_avaliacao_forca(
                 usuario["id"],
                 semana["semana"],
                 semana["fase"],
-                exercicio.get("categoria_movimento"),
-                exercicio.get("nome"),
+                item.get("categoria_movimento"),
+                item.get("nome"),
                 item.get("carga_realizada"),
                 item.get("reps_realizadas"),
                 item.get("rpe_real"),
@@ -546,6 +710,7 @@ def _salvar_execucao_treino_atleta(usuario, semana, nome_treino, exercicios):
     salvar_execucao_exercicio(usuario["id"], semana["semana"], semana["fase"], nome_treino, payload)
     if avaliacoes_salvas:
         resetar_treinos_futuros(usuario["id"], semana["semana"])
+        st.session_state[f"resumo_avaliacao_{usuario['id']}_{semana['semana']}"] = resumo_avaliacoes
 
     st.session_state["mensagem_execucao_carga"] = (
         f"Execucao de {nome_treino} salva."
@@ -564,66 +729,127 @@ def _render_form_execucao_exercicios(usuario, semana, nome_treino, exercicios):
     with st.form(f"form_execucao_{usuario['id']}_{semana['semana']}_{nome_treino}"):
         st.markdown("#### Registrar carga e execucao")
         st.caption("Preencha a execucao real para alimentar a prescricao das proximas sessoes.")
+        if semana["semana"] == 2:
+            st.markdown("##### Exercicios de avaliacao")
+            st.caption("Preencha carga, repeticoes e RPE apenas com uma carga desafiadora e segura.")
 
         for indice, exercicio in enumerate(exercicios):
             execucao = execucoes.get(exercicio["nome"], {})
-            st.markdown(f"**{exercicio['nome']}**")
             if exercicio.get("modo_carga") == "avaliacao":
-                st.caption(
-                    f"Avaliacao de carga para {rotulo_categoria_movimento(exercicio.get('categoria_movimento'))}."
+                st.markdown(
+                    f"""
+                    <div class="evaluation-entry">
+                        <div class="badge-evaluation">Avaliacao</div>
+                        <h4>{exercicio['nome']}</h4>
+                        <p>{exercicio['series']} x {exercicio['reps']} | {rotulo_categoria_movimento(exercicio.get('categoria_movimento'))}</p>
+                        <p>{exercicio.get('orientacao_carga') or ''}</p>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
                 )
+                col_carga, col_reps, col_rpe = st.columns(3)
+                with col_carga:
+                    st.number_input(
+                        "Carga utilizada (kg)",
+                        min_value=0.0,
+                        max_value=500.0,
+                        step=0.5,
+                        value=float(execucao.get("carga_realizada") or 0.0),
+                        key=f"{prefixo}_carga_{indice}",
+                    )
+                with col_reps:
+                    st.number_input(
+                        "Repeticoes realizadas",
+                        min_value=0,
+                        max_value=50,
+                        value=int(execucao.get("reps_realizadas") or exercicio.get("reps") or 0),
+                        key=f"{prefixo}_reps_{indice}",
+                    )
+                with col_rpe:
+                    st.select_slider(
+                        "Esforco percebido (RPE)",
+                        options=[5, 6, 7, 8, 9, 10],
+                        value=int(execucao.get("rpe_real") or 7),
+                        key=f"{prefixo}_rpe_{indice}",
+                    )
+                st.caption("RPE 6 = leve | RPE 7 = moderado | RPE 8 = desafiador | RPE 9 = muito dificil | RPE 10 = esforco maximo")
 
-            col_series, col_reps, col_carga, col_rpe = st.columns(4)
-            with col_series:
-                st.number_input(
-                    "Series realizadas",
-                    min_value=0,
-                    max_value=20,
-                    value=int(execucao.get("series_realizadas") or exercicio.get("series") or 0),
-                    key=f"{prefixo}_series_{indice}",
-                )
-            with col_reps:
-                st.number_input(
-                    "Reps realizadas",
-                    min_value=0,
-                    max_value=50,
-                    value=int(execucao.get("reps_realizadas") or exercicio.get("reps") or 0),
-                    key=f"{prefixo}_reps_{indice}",
-                )
-            with col_carga:
-                st.number_input(
-                    "Carga usada (kg)",
-                    min_value=0.0,
-                    max_value=500.0,
-                    step=0.5,
-                    value=float(execucao.get("carga_realizada") or exercicio.get("carga_sugerida") or 0.0),
-                    key=f"{prefixo}_carga_{indice}",
-                )
-            with col_rpe:
-                st.number_input(
-                    "RPE real",
-                    min_value=0.0,
-                    max_value=10.0,
-                    step=0.5,
-                    value=float(execucao.get("rpe_real") or 0.0),
-                    key=f"{prefixo}_rpe_{indice}",
-                )
+                col_series, col_dor, col_obs = st.columns([1, 1.2, 1.8])
+                with col_series:
+                    st.number_input(
+                        "Series realizadas",
+                        min_value=0,
+                        max_value=20,
+                        value=int(execucao.get("series_realizadas") or exercicio.get("series") or 0),
+                        key=f"{prefixo}_series_{indice}",
+                    )
+                with col_dor:
+                    st.text_input(
+                        "Dor/desconforto",
+                        value=str(execucao.get("dor") or ""),
+                        key=f"{prefixo}_dor_{indice}",
+                        placeholder="Ex: joelho esquerdo sensivel",
+                    )
+                with col_obs:
+                    st.text_input(
+                        "Observacao",
+                        value=str(execucao.get("observacao") or ""),
+                        key=f"{prefixo}_obs_{indice}",
+                        placeholder="Ex: carga segura e controlada",
+                    )
+            else:
+                st.markdown(f"**{exercicio['nome']}**")
+                col_series, col_reps, col_carga, col_rpe = st.columns(4)
+                with col_series:
+                    st.number_input(
+                        "Series realizadas",
+                        min_value=0,
+                        max_value=20,
+                        value=int(execucao.get("series_realizadas") or exercicio.get("series") or 0),
+                        key=f"{prefixo}_series_{indice}",
+                    )
+                with col_reps:
+                    st.number_input(
+                        "Reps realizadas",
+                        min_value=0,
+                        max_value=50,
+                        value=int(execucao.get("reps_realizadas") or exercicio.get("reps") or 0),
+                        key=f"{prefixo}_reps_{indice}",
+                    )
+                with col_carga:
+                    st.number_input(
+                        "Carga usada (kg)",
+                        min_value=0.0,
+                        max_value=500.0,
+                        step=0.5,
+                        value=float(execucao.get("carga_realizada") or exercicio.get("carga_sugerida") or 0.0),
+                        key=f"{prefixo}_carga_{indice}",
+                    )
+                with col_rpe:
+                    st.number_input(
+                        "RPE real",
+                        min_value=0.0,
+                        max_value=10.0,
+                        step=0.5,
+                        value=float(execucao.get("rpe_real") or 0.0),
+                        key=f"{prefixo}_rpe_{indice}",
+                    )
 
-            col_dor, col_obs = st.columns(2)
-            with col_dor:
-                st.text_input(
-                    "Dor/desconforto",
-                    value=str(execucao.get("dor") or ""),
-                    key=f"{prefixo}_dor_{indice}",
-                    placeholder="Ex: joelho esquerdo sensivel",
-                )
-            with col_obs:
-                st.text_input(
-                    "Observacao",
-                    value=str(execucao.get("observacao") or ""),
-                    key=f"{prefixo}_obs_{indice}",
-                    placeholder="Ex: sobrou carga / muito pesado",
-                )
+                col_dor, col_obs = st.columns(2)
+                with col_dor:
+                    st.text_input(
+                        "Dor/desconforto",
+                        value=str(execucao.get("dor") or ""),
+                        key=f"{prefixo}_dor_{indice}",
+                        placeholder="Ex: joelho esquerdo sensivel",
+                    )
+                with col_obs:
+                    st.text_input(
+                        "Observacao",
+                        value=str(execucao.get("observacao") or ""),
+                        key=f"{prefixo}_obs_{indice}",
+                        placeholder="Ex: sobrou carga / muito pesado",
+                    )
 
         salvar = st.form_submit_button("Salvar execucao de carga", use_container_width=True)
 
@@ -738,6 +964,7 @@ def _render_resumo_geral(usuario, semana, treino_semana, concluidos, percentual)
     st.progress(percentual / 100 if treino_semana else 0)
     st.write(f"Progresso semanal: {percentual}% ({concluidos}/{len(treino_semana)})")
     _render_contexto_carga_semana(semana, avaliacoes)
+    _render_resumo_avaliacao_concluida(usuario["id"], semana["semana"])
 
     st.markdown(
         """
@@ -864,6 +1091,7 @@ def _render_detalhe_treino(usuario, semana, nome_treino, exercicios, progresso_i
         unsafe_allow_html=True,
     )
 
+    _render_guia_avaliacao_semana(semana, exercicios)
     _render_card_exercicios(exercicios)
     _render_form_execucao_exercicios(usuario, semana, nome_treino, exercicios)
 
@@ -894,6 +1122,7 @@ def _render_detalhe_treino(usuario, semana, nome_treino, exercicios, progresso_i
 
 def _render_area_treinos(usuario, semana, treino_semana, progresso):
     _render_contexto_carga_semana(semana, listar_avaliacoes_forca(usuario["id"]))
+    _render_resumo_avaliacao_concluida(usuario["id"], semana["semana"])
     if not st.session_state.get("feedback_pendente"):
         _render_video_exercicio()
     treino_aberto = _render_grade_treinos(semana, treino_semana, progresso)
