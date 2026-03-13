@@ -1,20 +1,21 @@
 import streamlit as st
 
 TEMA_PADRAO = {
-    "cor_primaria": "#1b6f5c",
-    "cor_secundaria": "#2f8f7a",
-    "cor_botao": "#1b6f5c",
-    "cor_cards": "#f7fbf9",
-    "cor_header": "#102f2b",
+    "cor_primaria": "#003B7A",
+    "cor_secundaria": "#FF3B30",
+    "cor_botao": "#FF3B30",
+    "cor_cards": "#FFFFFF",
+    "cor_header": "#0F172A",
 }
 
 
 def aplicar_tema(cor_primaria, cor_secundaria, cor_botao=None, cor_cards=None, cor_header=None):
     cor_primaria = cor_primaria or TEMA_PADRAO["cor_primaria"]
     cor_secundaria = cor_secundaria or TEMA_PADRAO["cor_secundaria"]
-    cor_botao = cor_botao or cor_primaria or TEMA_PADRAO["cor_botao"]
+    cor_botao = cor_botao or TEMA_PADRAO["cor_botao"]
     cor_cards = cor_cards or TEMA_PADRAO["cor_cards"]
     cor_header = cor_header or TEMA_PADRAO["cor_header"]
+
     st.markdown(
         f"""
         <style>
@@ -24,38 +25,23 @@ def aplicar_tema(cor_primaria, cor_secundaria, cor_botao=None, cor_cards=None, c
             --tri-button: {cor_botao};
             --tri-card: {cor_cards};
             --tri-header: {cor_header};
+            --tri-bg: #f7f8fa;
+            --tri-surface: #ffffff;
+            --tri-surface-soft: #f1f5f9;
+            --tri-text: #0f172a;
+            --tri-text-soft: #475569;
+            --tri-border: rgba(15, 23, 42, 0.10);
+            --tri-border-strong: rgba(15, 23, 42, 0.16);
+            --tri-success: #15803d;
+            --tri-warning: #c2410c;
+            --tri-danger: #dc2626;
+            --tri-radius-sm: 12px;
+            --tri-radius-md: 18px;
+            --tri-radius-lg: 24px;
+            --tri-shadow-soft: 0 12px 28px rgba(15, 23, 42, 0.06);
+            --tri-shadow-card: 0 18px 40px rgba(15, 23, 42, 0.08);
+            --tri-shadow-strong: 0 24px 56px rgba(15, 23, 42, 0.12);
             --primary-color: {cor_primaria};
-        }}
-        header[data-testid="stHeader"] {{
-            background: {cor_header} !important;
-        }}
-        .stButton > button,
-        .stFormSubmitButton > button,
-        button[kind="primary"] {{
-            background: linear-gradient(135deg, var(--tri-button) 0%, var(--tri-secondary) 100%) !important;
-            color: #ffffff !important;
-            border: none !important;
-        }}
-        .stButton > button:hover,
-        .stFormSubmitButton > button:hover,
-        button[kind="primary"]:hover {{
-            filter: brightness(0.94);
-            color: #ffffff !important;
-        }}
-        .stTabs [data-baseweb="tab"][aria-selected="true"] {{
-            color: var(--tri-primary) !important;
-        }}
-        .card-verde {{
-            background-color: var(--tri-primary);
-        }}
-        .metric-card,
-        .workout-detail,
-        .history-card,
-        .exercise-card,
-        .section-shell,
-        .workout-card,
-        .auth-card {{
-            background: var(--tri-card) !important;
         }}
         </style>
         """,
@@ -68,114 +54,267 @@ def apply_global_styles():
         """
         <style>
         .stApp {
+            color: var(--tri-text);
             background:
-                radial-gradient(circle at top right, rgba(23, 112, 104, 0.08), transparent 28%),
-                radial-gradient(circle at bottom left, rgba(16, 47, 43, 0.08), transparent 24%),
-                linear-gradient(180deg, #f4f7f5 0%, #edf3ef 100%);
+                radial-gradient(circle at top left, rgba(0, 59, 122, 0.08), transparent 26%),
+                radial-gradient(circle at bottom right, rgba(255, 59, 48, 0.08), transparent 22%),
+                linear-gradient(180deg, #f7f8fa 0%, #ffffff 54%, #f7f8fa 100%);
+        }
+        html, body, [class*="css"] {
+            font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
         }
         .main .block-container {
-            max-width: 420px;
-            padding-top: 6vh;
-            padding-bottom: 4vh;
+            max-width: 1280px;
+            padding-top: 1.35rem;
+            padding-bottom: 2.5rem;
+            padding-left: 1.25rem;
+            padding-right: 1.25rem;
+        }
+        h1, h2, h3, h4, h5, h6 {
+            color: var(--tri-text);
+            letter-spacing: -0.03em;
+            font-weight: 800;
+        }
+        h1 {
+            font-size: clamp(2rem, 2.6vw, 2.9rem);
+        }
+        h2 {
+            font-size: clamp(1.45rem, 2vw, 2.05rem);
+        }
+        p, li, label, .stMarkdown, .stCaption {
+            color: var(--tri-text-soft);
+        }
+        a {
+            color: var(--tri-primary);
+            text-decoration: none;
+        }
+        a:hover {
+            color: var(--tri-secondary);
+        }
+        header[data-testid="stHeader"] {
+            background: rgba(247, 248, 250, 0.82);
+            backdrop-filter: blur(16px);
+            border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+        }
+        [data-testid="stSidebar"] {
+            background:
+                linear-gradient(180deg, #0f172a 0%, #111827 100%);
+            border-right: 1px solid rgba(255, 255, 255, 0.06);
+        }
+        [data-testid="stSidebar"] * {
+            color: rgba(248, 250, 252, 0.94);
+        }
+        [data-testid="stSidebar"] .stButton > button,
+        [data-testid="stSidebar"] .stFormSubmitButton > button {
+            background: rgba(255, 255, 255, 0.06) !important;
+            border: 1px solid rgba(255, 255, 255, 0.08) !important;
+            color: #f8fafc !important;
+            box-shadow: none !important;
+        }
+        [data-testid="stSidebar"] .stButton > button:hover,
+        [data-testid="stSidebar"] .stFormSubmitButton > button:hover {
+            background: rgba(255, 255, 255, 0.12) !important;
+            border-color: rgba(255, 255, 255, 0.18) !important;
+        }
+        .stButton > button,
+        .stFormSubmitButton > button,
+        button[kind="primary"] {
+            min-height: 2.95rem;
+            border-radius: 999px;
+            border: 1px solid transparent !important;
+            background: linear-gradient(135deg, var(--tri-button) 0%, var(--tri-secondary) 100%) !important;
+            color: #ffffff !important;
+            font-weight: 800;
+            letter-spacing: 0.01em;
+            box-shadow: 0 14px 28px rgba(255, 59, 48, 0.18);
+            transition: transform 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease;
+        }
+        .stButton > button:hover,
+        .stFormSubmitButton > button:hover,
+        button[kind="primary"]:hover {
+            transform: translateY(-1px);
+            filter: brightness(0.98);
+            box-shadow: 0 18px 32px rgba(255, 59, 48, 0.22);
+            color: #ffffff !important;
+        }
+        .stButton > button:focus,
+        .stFormSubmitButton > button:focus,
+        button[kind="primary"]:focus {
+            box-shadow: 0 0 0 4px rgba(0, 59, 122, 0.14), 0 18px 32px rgba(255, 59, 48, 0.18) !important;
+        }
+        button[kind="secondary"] {
+            background: #ffffff !important;
+            color: var(--tri-text) !important;
+            border: 1px solid rgba(15, 23, 42, 0.12) !important;
+            box-shadow: none !important;
+        }
+        button[kind="secondary"]:hover {
+            border-color: rgba(0, 59, 122, 0.24) !important;
+            color: var(--tri-primary) !important;
+        }
+        div[data-testid="stTextInput"] input,
+        div[data-testid="stTextArea"] textarea,
+        div[data-testid="stNumberInput"] input,
+        div[data-testid="stDateInput"] input,
+        div[data-baseweb="select"] > div,
+        div[data-testid="stMultiSelect"] > div,
+        div[data-testid="stSelectbox"] > div {
+            border-radius: 16px !important;
+            border: 1px solid var(--tri-border) !important;
+            background: rgba(255, 255, 255, 0.98) !important;
+            color: var(--tri-text) !important;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+        }
+        div[data-testid="stTextInput"] input:focus,
+        div[data-testid="stTextArea"] textarea:focus,
+        div[data-testid="stNumberInput"] input:focus,
+        div[data-testid="stDateInput"] input:focus {
+            border-color: rgba(0, 59, 122, 0.28) !important;
+            box-shadow: 0 0 0 4px rgba(0, 59, 122, 0.10) !important;
+        }
+        div[data-testid="stTextInput"] label,
+        div[data-testid="stTextArea"] label,
+        div[data-testid="stNumberInput"] label,
+        div[data-testid="stDateInput"] label,
+        div[data-testid="stSelectbox"] label,
+        div[data-testid="stMultiSelect"] label,
+        div[data-testid="stFileUploader"] label {
+            color: var(--tri-text) !important;
+            font-weight: 700 !important;
+        }
+        .stCheckbox label,
+        .stRadio label {
+            color: var(--tri-text) !important;
+        }
+        div[data-testid="stTabs"] {
+            background: rgba(255, 255, 255, 0.94);
+            border: 1px solid var(--tri-border);
+            border-radius: 22px;
+            padding: 0.45rem;
+            box-shadow: var(--tri-shadow-soft);
+        }
+        button[data-baseweb="tab"] {
+            border-radius: 999px;
+            min-height: 2.65rem;
+            font-weight: 700;
+        }
+        .stTabs [data-baseweb="tab"][aria-selected="true"] {
+            background: rgba(0, 59, 122, 0.10) !important;
+            color: var(--tri-primary) !important;
+        }
+        div[data-testid="stMetric"] {
+            border-radius: 20px;
+            border: 1px solid var(--tri-border);
+            background: rgba(255, 255, 255, 0.96);
+            box-shadow: var(--tri-shadow-soft);
+            padding: 1rem 1.05rem;
+        }
+        div[data-testid="stMetricLabel"] {
+            color: var(--tri-text-soft);
+        }
+        div[data-testid="stMetricValue"] {
+            color: var(--tri-text);
+            font-weight: 800;
+        }
+        .stAlert {
+            border-radius: 18px;
+            border: 1px solid var(--tri-border) !important;
+            box-shadow: var(--tri-shadow-soft);
+        }
+        .stDataFrame, div[data-testid="stDataFrame"] {
+            border: 1px solid var(--tri-border);
+            border-radius: 20px;
+            overflow: hidden;
+            background: #ffffff;
+            box-shadow: var(--tri-shadow-soft);
+        }
+        div[data-testid="stForm"] {
+            border: 1px solid var(--tri-border);
+            border-radius: 22px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 1rem;
+            box-shadow: var(--tri-shadow-soft);
+        }
+        [data-testid="stPopover"] > div {
+            border-radius: 22px !important;
+            border: 1px solid var(--tri-border) !important;
+            box-shadow: var(--tri-shadow-card) !important;
         }
         .auth-brand {
             text-align: center;
-            margin-bottom: 1rem;
+            margin-bottom: 1.25rem;
         }
         .auth-brand h1 {
             margin: 0;
-            color: #123a34;
-            font-size: 2rem;
-            line-height: 1.1;
-            letter-spacing: -0.02em;
+            color: var(--tri-text);
+            font-size: 2.4rem;
+            line-height: 1;
         }
         .auth-brand p {
-            margin: 0.45rem 0 0;
-            color: #55716b;
-            font-size: 0.96rem;
+            margin: 0.55rem auto 0;
+            color: var(--tri-text-soft);
+            font-size: 1rem;
+            max-width: 34rem;
         }
         .auth-card {
-            border: 1px solid rgba(18, 58, 52, 0.08);
-            border-radius: 22px;
-            background: rgba(255, 255, 255, 0.94);
-            box-shadow: 0 18px 46px rgba(17, 66, 60, 0.10);
-            padding: 1.2rem 1.1rem 1rem;
-            margin-top: 0.9rem;
+            border: 1px solid var(--tri-border);
+            border-radius: 26px;
+            background: rgba(255, 255, 255, 0.96);
+            box-shadow: var(--tri-shadow-strong);
+            padding: 1.25rem 1.2rem 1.05rem;
+            margin-top: 1rem;
             margin-bottom: 0.8rem;
         }
         .auth-card-header h3 {
             margin: 0;
-            color: #14342f;
-            font-size: 1.1rem;
+            color: var(--tri-text);
+            font-size: 1.15rem;
         }
         .auth-card-header p {
             margin: 0.3rem 0 0;
-            color: #5d756f;
-            font-size: 0.9rem;
+            color: var(--tri-text-soft);
+            font-size: 0.94rem;
         }
-        .auth-card-header {
-            margin-bottom: 0.9rem;
+        .app-shell,
+        .metric-card,
+        .workout-detail,
+        .history-card,
+        .exercise-card,
+        .section-shell,
+        .workout-card,
+        .trainer-editor-shell,
+        .trainer-editor-card {
+            background: var(--tri-card) !important;
+            border: 1px solid var(--tri-border) !important;
+            box-shadow: var(--tri-shadow-soft) !important;
         }
-        div[data-testid="stTabs"] {
-            background: rgba(255, 255, 255, 0.72);
-            border: 1px solid rgba(18, 58, 52, 0.06);
-            border-radius: 20px;
-            padding: 0.45rem;
-        }
-        button[data-baseweb="tab"] {
-            border-radius: 999px;
-            padding-top: 0.35rem;
-            padding-bottom: 0.35rem;
-        }
-        div[data-testid="stTextInput"] input,
-        div[data-testid="stSelectbox"] > div,
-        div[data-testid="stRadio"] label,
-        div[data-testid="stCheckbox"] label {
-            font-size: 0.95rem;
-        }
-        div[data-testid="stTextInput"] input {
-            border-radius: 14px;
-            min-height: 2.9rem;
-        }
-        .stButton > button,
-        .stFormSubmitButton > button {
-            border-radius: 999px;
-            border: none;
-            background: linear-gradient(135deg, var(--tri-primary, #1f5c53) 0%, var(--tri-secondary, #2f7d71) 100%);
-            color: #ffffff;
-            font-weight: 700;
-            min-height: 2.9rem;
-            width: 100%;
-        }
-        .stButton > button:hover,
-        .stFormSubmitButton > button:hover {
-            background: linear-gradient(135deg, var(--tri-primary, #184942) 0%, var(--tri-secondary, #276a60) 100%);
-            color: #ffffff;
-        }
-        header[data-testid="stHeader"] {
-            background: transparent;
+        @media (max-width: 1024px) {
+            .main .block-container {
+                padding-left: 1rem;
+                padding-right: 1rem;
+            }
         }
         @media (max-width: 768px) {
             .main .block-container {
-                max-width: 92%;
-                padding-top: 1.2rem;
-                padding-bottom: 1.2rem;
+                padding-top: 0.9rem;
+                padding-bottom: 1.3rem;
+                padding-left: 0.85rem;
+                padding-right: 0.85rem;
             }
             .auth-brand h1 {
-                font-size: 1.65rem;
+                font-size: 1.9rem;
             }
-            .auth-brand p,
-            .auth-card-header p {
-                font-size: 0.88rem;
+            .auth-brand p {
+                font-size: 0.92rem;
             }
-            .auth-card {
+            .auth-card,
+            div[data-testid="stForm"],
+            div[data-testid="stMetric"] {
                 border-radius: 18px;
-                padding: 1rem 0.9rem 0.85rem;
             }
             .stButton > button,
             .stFormSubmitButton > button {
                 width: 100%;
-                min-height: 3rem;
             }
         }
         </style>

@@ -214,87 +214,88 @@ def _aplicar_estilo_dashboard():
         <style>
         .stApp {
             background:
-                radial-gradient(circle at top left, rgba(27, 110, 104, 0.08), transparent 26%),
-                linear-gradient(180deg, #f6f8f6 0%, #edf3ef 100%);
+                radial-gradient(circle at top left, rgba(0, 59, 122, 0.08), transparent 24%),
+                radial-gradient(circle at bottom right, rgba(255, 59, 48, 0.07), transparent 22%),
+                linear-gradient(180deg, #f7f8fa 0%, #ffffff 100%);
         }
         .athlete-banner {
-            padding: 1.1rem 1.3rem;
-            border-radius: 18px;
-            background: linear-gradient(135deg, #102f2b 0%, var(--tri-primary, #1f5c53) 58%, var(--tri-secondary, #2f7d71) 100%);
-            color: #f5fbf8;
-            box-shadow: 0 18px 42px rgba(16, 47, 43, 0.14);
+            padding: 1.2rem 1.35rem;
+            border-radius: 24px;
+            background: linear-gradient(135deg, #0f172a 0%, var(--tri-primary, #003b7a) 62%, #1d4ed8 100%);
+            color: #f8fafc;
+            box-shadow: 0 24px 48px rgba(15, 23, 42, 0.16);
             margin-bottom: 1rem;
         }
         .athlete-banner h1 {
             margin: 0;
-            font-size: 1.85rem;
+            font-size: 2rem;
         }
         .athlete-banner p {
             margin: 0.35rem 0 0;
-            color: rgba(245, 251, 248, 0.82);
+            color: rgba(248, 250, 252, 0.80);
         }
         .metric-card, .workout-detail, .history-card {
-            border-radius: 18px;
-            border: 1px solid rgba(16, 47, 43, 0.08);
-            background: var(--tri-card, rgba(255, 255, 255, 0.92));
+            border-radius: 22px;
+            border: 1px solid rgba(15, 23, 42, 0.08);
+            background: rgba(255, 255, 255, 0.96);
             padding: 1rem 1.05rem;
-            box-shadow: 0 12px 30px rgba(31, 92, 83, 0.08);
+            box-shadow: 0 16px 32px rgba(15, 23, 42, 0.06);
             margin-bottom: 0.9rem;
         }
         .metric-card strong,
         .history-card strong {
             display: block;
-            color: #14342f;
+            color: #0f172a;
             margin-bottom: 0.2rem;
         }
         .section-shell {
-            border-radius: 22px;
-            border: 1px solid rgba(16, 47, 43, 0.08);
+            border-radius: 24px;
+            border: 1px solid rgba(15, 23, 42, 0.08);
             background:
-                radial-gradient(circle at top right, rgba(47, 125, 113, 0.10), transparent 32%),
-                var(--tri-card, rgba(255, 255, 255, 0.78));
+                radial-gradient(circle at top right, rgba(0, 59, 122, 0.08), transparent 34%),
+                rgba(255, 255, 255, 0.90);
             padding: 1rem;
             margin-bottom: 1rem;
         }
         .section-shell h3 {
             margin: 0 0 0.35rem;
-            color: #102f2b;
+            color: #0f172a;
         }
         .section-shell p {
             margin: 0;
-            color: #40615b;
+            color: #475569;
         }
         .workout-card {
-            border-radius: 18px;
-            border: 1px solid rgba(16, 47, 43, 0.08);
-            background: var(--tri-card, rgba(255, 255, 255, 0.96));
+            border-radius: 22px;
+            border: 1px solid rgba(15, 23, 42, 0.08);
+            background: rgba(255, 255, 255, 0.98);
             padding: 1rem;
             min-height: 150px;
-            box-shadow: 0 12px 28px rgba(31, 92, 83, 0.08);
+            box-shadow: 0 14px 28px rgba(15, 23, 42, 0.06);
             margin-bottom: 0.7rem;
         }
         .workout-card.active {
-            border-color: rgba(31, 92, 83, 0.28);
-            box-shadow: 0 16px 34px rgba(31, 92, 83, 0.14);
-            background: var(--tri-card, rgba(244, 251, 249, 1));
+            border-color: rgba(0, 59, 122, 0.20);
+            box-shadow: 0 20px 38px rgba(0, 59, 122, 0.10);
+            background: linear-gradient(135deg, rgba(248, 250, 252, 1) 0%, rgba(255, 255, 255, 1) 100%);
         }
         .workout-card .eyebrow {
             display: inline-block;
             font-size: 0.72rem;
             letter-spacing: 0.08em;
             text-transform: uppercase;
-            color: var(--tri-secondary, #2f7d71);
+            color: var(--tri-secondary, #ff3b30);
             font-weight: 700;
             margin-bottom: 0.5rem;
         }
         .workout-card h4 {
             margin: 0 0 0.35rem;
-            color: #102f2b;
+            color: #0f172a;
             font-size: 1.15rem;
         }
         .workout-card p {
             margin: 0;
-            color: #4a6761;
+            color: #475569;
             line-height: 1.45;
         }
         .status-pill {
@@ -306,27 +307,27 @@ def _aplicar_estilo_dashboard():
             font-weight: 700;
         }
         .status-pill.done {
-            background: rgba(33, 128, 92, 0.12);
-            color: #1e6e51;
+            background: rgba(21, 128, 61, 0.10);
+            color: #166534;
         }
         .status-pill.pending {
-            background: rgba(16, 47, 43, 0.08);
-            color: #36534d;
+            background: rgba(15, 23, 42, 0.06);
+            color: #334155;
         }
         .exercise-card {
-            border-radius: 16px;
-            border: 1px solid rgba(16, 47, 43, 0.07);
-            background: var(--tri-card, rgba(247, 251, 249, 0.92));
+            border-radius: 18px;
+            border: 1px solid rgba(15, 23, 42, 0.07);
+            background: rgba(248, 250, 252, 0.94);
             padding: 0.85rem 0.95rem;
             margin-bottom: 0.55rem;
         }
         .exercise-card strong {
             display: block;
-            color: #123a34;
+            color: #0f172a;
             margin-bottom: 0.18rem;
         }
         .exercise-card span {
-            color: #4f6863;
+            color: #475569;
             font-size: 0.92rem;
         }
         .detail-header {
@@ -338,29 +339,29 @@ def _aplicar_estilo_dashboard():
         }
         .detail-header h3 {
             margin: 0;
-            color: #102f2b;
+            color: #0f172a;
         }
         .detail-header p {
             margin: 0.15rem 0 0;
-            color: #4f6863;
+            color: #475569;
         }
         .evaluation-shell {
             border-radius: 24px;
-            border: 1px solid rgba(194, 93, 35, 0.16);
+            border: 1px solid rgba(255, 59, 48, 0.14);
             background:
-                radial-gradient(circle at top right, rgba(255, 198, 89, 0.22), transparent 34%),
-                linear-gradient(135deg, rgba(255, 247, 237, 0.96) 0%, rgba(255, 251, 245, 0.98) 100%);
+                radial-gradient(circle at top right, rgba(255, 59, 48, 0.16), transparent 34%),
+                linear-gradient(135deg, rgba(255, 247, 245, 0.96) 0%, rgba(255, 255, 255, 0.98) 100%);
             padding: 1rem 1.05rem;
             margin-bottom: 1rem;
-            box-shadow: 0 16px 34px rgba(194, 93, 35, 0.10);
+            box-shadow: 0 18px 36px rgba(255, 59, 48, 0.10);
         }
         .evaluation-shell h3 {
             margin: 0;
-            color: #7a3414;
+            color: #0f172a;
         }
         .evaluation-shell p {
             margin: 0.45rem 0 0;
-            color: #9a4d21;
+            color: #475569;
             line-height: 1.5;
         }
         .evaluation-grid {
@@ -373,25 +374,25 @@ def _aplicar_estilo_dashboard():
             border-radius: 16px;
             background: rgba(255, 255, 255, 0.72);
             padding: 0.7rem 0.8rem;
-            border: 1px solid rgba(194, 93, 35, 0.10);
+            border: 1px solid rgba(15, 23, 42, 0.08);
         }
         .evaluation-tip strong {
             display: block;
-            color: #7a3414;
+            color: #0f172a;
             margin-bottom: 0.15rem;
         }
         .exercise-card.evaluation {
-            border-color: rgba(194, 93, 35, 0.22);
-            background: linear-gradient(135deg, rgba(255, 247, 237, 0.98) 0%, rgba(255, 252, 248, 1) 100%);
-            box-shadow: 0 12px 28px rgba(194, 93, 35, 0.08);
+            border-color: rgba(255, 59, 48, 0.16);
+            background: linear-gradient(135deg, rgba(255, 246, 245, 0.98) 0%, rgba(255, 255, 255, 1) 100%);
+            box-shadow: 0 12px 28px rgba(255, 59, 48, 0.08);
         }
         .badge-evaluation {
             display: inline-block;
             margin-bottom: 0.4rem;
             padding: 0.18rem 0.55rem;
             border-radius: 999px;
-            background: rgba(194, 93, 35, 0.14);
-            color: #9a3412;
+            background: rgba(255, 59, 48, 0.12);
+            color: #b91c1c;
             font-size: 0.74rem;
             font-weight: 800;
             letter-spacing: 0.06em;
@@ -399,29 +400,29 @@ def _aplicar_estilo_dashboard():
         }
         .evaluation-entry {
             border-radius: 18px;
-            border: 1px solid rgba(194, 93, 35, 0.16);
-            background: linear-gradient(135deg, rgba(255, 248, 240, 0.98) 0%, rgba(255, 255, 255, 0.98) 100%);
+            border: 1px solid rgba(255, 59, 48, 0.14);
+            background: linear-gradient(135deg, rgba(255, 247, 245, 0.98) 0%, rgba(255, 255, 255, 0.98) 100%);
             padding: 0.95rem 1rem;
             margin-bottom: 0.9rem;
         }
         .evaluation-entry h4 {
             margin: 0;
-            color: #7a3414;
+            color: #0f172a;
         }
         .evaluation-entry p {
             margin: 0.3rem 0 0;
-            color: #8f4a24;
+            color: #475569;
             line-height: 1.45;
         }
         .evaluation-summary {
             border-radius: 18px;
-            border: 1px solid rgba(21, 128, 61, 0.15);
+            border: 1px solid rgba(0, 59, 122, 0.12);
             background: linear-gradient(135deg, rgba(240, 253, 244, 0.96) 0%, rgba(255, 255, 255, 0.98) 100%);
             padding: 0.95rem 1rem;
             margin-bottom: 0.85rem;
         }
         .evaluation-summary strong {
-            color: #166534;
+            color: #0f172a;
         }
         .nav-chip-row .stButton > button {
             width: 100%;

@@ -396,17 +396,33 @@ def _aplicar_estilo_editor_treino():
     st.markdown(
         """
         <style>
+        .trainer-banner {
+            padding: 1.15rem 1.25rem;
+            border-radius: 24px;
+            background: linear-gradient(135deg, #0f172a 0%, var(--tri-primary, #003b7a) 62%, #1d4ed8 100%);
+            color: #f8fafc;
+            margin-bottom: 1rem;
+            box-shadow: 0 24px 52px rgba(15, 23, 42, 0.14);
+        }
+        .trainer-banner h2 {
+            margin: 0;
+            color: #f8fafc;
+        }
+        .trainer-banner p {
+            margin: 0.35rem 0 0;
+            color: rgba(248, 250, 252, 0.78);
+        }
         .trainer-editor-shell {
             border: 1px solid rgba(15, 23, 42, 0.08);
-            border-radius: 20px;
+            border-radius: 24px;
             padding: 1rem;
-            background: rgba(255, 255, 255, 0.86);
-            box-shadow: 0 14px 32px rgba(15, 23, 42, 0.05);
+            background: rgba(255, 255, 255, 0.94);
+            box-shadow: 0 18px 34px rgba(15, 23, 42, 0.06);
             margin-bottom: 1rem;
         }
         .trainer-editor-card {
             border: 1px solid rgba(15, 23, 42, 0.08);
-            border-radius: 16px;
+            border-radius: 18px;
             padding: 0.9rem 0.95rem;
             background: #ffffff;
             box-shadow: 0 10px 22px rgba(15, 23, 42, 0.04);
@@ -414,12 +430,12 @@ def _aplicar_estilo_editor_treino():
         }
         .trainer-editor-card h4 {
             margin: 0;
-            color: #102f2b;
+            color: #0f172a;
             font-size: 1rem;
         }
         .trainer-editor-card p {
             margin: 0.2rem 0 0;
-            color: #58706b;
+            color: #475569;
             font-size: 0.88rem;
         }
         </style>
@@ -1074,6 +1090,16 @@ def tela_area_treinador(treinador):
         st.session_state["secao_treinador"] = "visao_geral"
 
     st.title("Area do treinador")
+    _aplicar_estilo_editor_treino()
+    st.markdown(
+        """
+        <div class="trainer-banner">
+            <h2>Painel do treinador</h2>
+            <p>Gerencie atletas, acompanhe desempenho e ajuste os treinos com uma interface mais limpa e profissional.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
     _render_menu_local_treinador()
 
     secao = st.session_state.get("secao_treinador", "visao_geral")

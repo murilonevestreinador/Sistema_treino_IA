@@ -19,11 +19,140 @@ from core.treinador import (
     tema_padrao_treinador,
 )
 from core.treino import resetar_planejamento_atleta
-from core.ui import TEMA_PADRAO, aplicar_tema
+from core.ui import TEMA_PADRAO, aplicar_tema, apply_global_styles
 from core.usuarios import redefinir_objetivo_atleta
 
 
 st.set_page_config(page_title="TriLab TREINAMENTO", layout="wide")
+
+
+def _aplicar_estilo_shell_app():
+    st.markdown(
+        """
+        <style>
+        .trilab-topbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 1rem;
+            padding: 1.1rem 1.2rem;
+            border-radius: 26px;
+            border: 1px solid rgba(15, 23, 42, 0.08);
+            background:
+                linear-gradient(135deg, #0f172a 0%, #003b7a 58%, #1d4ed8 100%);
+            color: #f8fafc;
+            box-shadow: 0 24px 52px rgba(15, 23, 42, 0.14);
+            margin-bottom: 1rem;
+        }
+        .trilab-topbar h1 {
+            margin: 0;
+            color: #f8fafc;
+            font-size: 1.75rem;
+        }
+        .trilab-topbar p {
+            margin: 0.3rem 0 0;
+            color: rgba(248, 250, 252, 0.80);
+        }
+        .trilab-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            padding: 0.3rem 0.7rem;
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.12);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            color: #f8fafc;
+            font-size: 0.75rem;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+        .sidebar-shell {
+            padding: 0.25rem 0 0.4rem;
+        }
+        .sidebar-brand {
+            padding: 0.95rem 1rem;
+            border-radius: 20px;
+            background: linear-gradient(135deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.03) 100%);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            margin-bottom: 0.9rem;
+        }
+        .sidebar-brand h2 {
+            margin: 0;
+            color: #f8fafc;
+            font-size: 1.1rem;
+        }
+        .sidebar-brand p {
+            margin: 0.3rem 0 0;
+            color: rgba(248, 250, 252, 0.72);
+            font-size: 0.88rem;
+            line-height: 1.45;
+        }
+        .sidebar-section-title {
+            margin: 1rem 0 0.45rem;
+            font-size: 0.76rem;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: rgba(248, 250, 252, 0.52);
+            font-weight: 800;
+        }
+        .sidebar-link-list {
+            padding: 0.85rem 0.95rem;
+            border-radius: 18px;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            line-height: 1.8;
+            margin-bottom: 0.85rem;
+        }
+        .sidebar-link-list a {
+            color: rgba(248, 250, 252, 0.92);
+        }
+        .sidebar-account {
+            padding: 0.85rem 0.95rem;
+            border-radius: 18px;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            margin-bottom: 0.75rem;
+        }
+        .sidebar-account strong {
+            color: #f8fafc;
+            display: block;
+        }
+        .sidebar-account span {
+            color: rgba(248, 250, 252, 0.72);
+            font-size: 0.88rem;
+        }
+        .footer-shell {
+            margin-top: 1.5rem;
+            padding: 1rem 1.1rem 1.25rem;
+            border-top: 1px solid rgba(15, 23, 42, 0.08);
+            text-align: center;
+            color: #64748b;
+            font-size: 0.92rem;
+        }
+        .footer-shell a {
+            margin: 0 0.45rem;
+        }
+        .empty-shell {
+            padding: 1.1rem 1.2rem;
+            border-radius: 22px;
+            border: 1px dashed rgba(15, 23, 42, 0.16);
+            background: rgba(255, 255, 255, 0.78);
+        }
+        @media (max-width: 768px) {
+            .trilab-topbar {
+                display: block;
+                padding: 1rem;
+                border-radius: 20px;
+            }
+            .trilab-topbar h1 {
+                font-size: 1.45rem;
+            }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def inicializar_sessao():
@@ -77,15 +206,13 @@ def _data_para_formulario(data_texto):
 
 
 def renderizar_rodape():
-    st.markdown("---")
     st.markdown(
         """
-        <div style="text-align: center; padding: 0.5rem 0 1rem 0; font-size: 0.95rem;">
+        <div class="footer-shell">
             <a href="/termos" target="_self">Termos de Uso</a>
-            &nbsp;|&nbsp;
             <a href="/privacidade" target="_self">Politica de Privacidade</a>
-            &nbsp;|&nbsp;
             <a href="/contato" target="_self">Contato</a>
+            <div style="margin-top:0.45rem;">TriLab TREINAMENTO • sports tech para treinador e atleta.</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -101,29 +228,51 @@ def _abrir_pagina_sidebar(destino):
 
 def renderizar_sidebar(usuario=None, assinatura=None):
     with st.sidebar:
-        st.markdown("## TriLab TREINAMENTO")
-        st.markdown("### Publico")
         st.markdown(
             """
-            - [Planos e Precos](/planos)
-            - [FAQ](/faq)
-            - [Contato](/contato)
-            - [Termos de Uso](/termos)
-            - [Politica de Privacidade](/privacidade)
+            <div class="sidebar-shell">
+                <div class="sidebar-brand">
+                    <h2>TriLab TREINAMENTO</h2>
+                    <p>Planejamento esportivo premium com foco em clareza, consistencia e performance.</p>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        st.markdown('<div class="sidebar-section-title">Publico</div>', unsafe_allow_html=True)
+        st.markdown(
             """
+            <div class="sidebar-link-list">
+                <div><a href="/planos" target="_self">Planos e Precos</a></div>
+                <div><a href="/faq" target="_self">FAQ</a></div>
+                <div><a href="/contato" target="_self">Contato</a></div>
+                <div><a href="/termos" target="_self">Termos de Uso</a></div>
+                <div><a href="/privacidade" target="_self">Politica de Privacidade</a></div>
+            </div>
+            """
+            ,
+            unsafe_allow_html=True,
         )
 
         if not usuario:
             return
 
         st.divider()
-        st.markdown(f"**Conta:** {usuario.get('nome', 'Usuario')}")
+        st.markdown(
+            f"""
+            <div class="sidebar-account">
+                <strong>{usuario.get('nome', 'Usuario')}</strong>
+                <span>Perfil {usuario.get('tipo_usuario', 'atleta')}</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
         if assinatura:
             resumo = resumo_status_assinatura(assinatura)
             st.caption(resumo["titulo"])
 
         if usuario.get("tipo_usuario") == "atleta":
-            st.markdown("### Atleta")
+            st.markdown('<div class="sidebar-section-title">Atleta</div>', unsafe_allow_html=True)
             if st.button("Area do Atleta", key="sb_area_atleta", use_container_width=True):
                 st.session_state["secao_app"] = "principal"
                 st.session_state["secao_atleta"] = "visao_geral"
@@ -132,16 +281,15 @@ def renderizar_sidebar(usuario=None, assinatura=None):
                 st.session_state["secao_app"] = "principal"
                 st.session_state["secao_atleta"] = "treinos"
                 st.rerun()
-            st.markdown("- Historico (na area do atleta)")
+            st.caption("Historico disponivel dentro da area do atleta.")
         else:
-            st.markdown("### Treinador")
+            st.markdown('<div class="sidebar-section-title">Treinador</div>', unsafe_allow_html=True)
             if st.button("Area do Treinador", key="sb_area_treinador", use_container_width=True):
                 st.session_state["secao_app"] = "principal"
                 st.rerun()
-            st.markdown("- Atletas (na area do treinador)")
-            st.markdown("- BI e relatorios (na area do treinador)")
+            st.caption("Atletas, BI e relatorios ficam centralizados no painel do treinador.")
 
-        st.markdown("### Financeiro")
+        st.markdown('<div class="sidebar-section-title">Financeiro</div>', unsafe_allow_html=True)
         chave_menu = "menu_financeiro_aberto"
         if chave_menu not in st.session_state:
             st.session_state[chave_menu] = False
@@ -173,10 +321,21 @@ def renderizar_assinatura_necessaria(assinatura):
 
 
 def renderizar_menu_superior(usuario):
-    col_titulo, col_menu = st.columns([4, 1])
+    col_titulo, col_menu = st.columns([5, 1.2])
     with col_titulo:
         nome_exibicao = usuario.get("apelido") or usuario.get("nome", "Usu\u00e1rio")
-        st.caption(f"{nome_exibicao} | {usuario.get('tipo_usuario', 'atleta').capitalize()}")
+        st.markdown(
+            f"""
+            <div class="trilab-topbar">
+                <div>
+                    <div class="trilab-badge">{usuario.get('tipo_usuario', 'atleta')}</div>
+                    <h1>TriLab TREINAMENTO</h1>
+                    <p>{nome_exibicao}, acompanhe seu plano com um fluxo limpo, esportivo e profissional.</p>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
     with col_menu:
         with st.popover("Menu"):
             st.write(f"Usu\u00e1rio: {usuario.get('nome', 'Usu\u00e1rio')}")
@@ -379,6 +538,8 @@ def main():
     garantir_colunas_e_tabelas()
     inicializar_sessao()
     sincronizar_convite_da_url()
+    apply_global_styles()
+    _aplicar_estilo_shell_app()
     aplicar_tema(
         TEMA_PADRAO["cor_primaria"],
         TEMA_PADRAO["cor_secundaria"],
