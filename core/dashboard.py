@@ -329,6 +329,13 @@ def _aplicar_estilo_dashboard():
         .exercise-card span {
             color: #475569;
             font-size: 0.92rem;
+            display: block;
+        }
+        .exercise-card .exercise-guidance {
+            margin-top: 0.4rem;
+            color: #334155;
+            font-size: 0.9rem;
+            line-height: 1.4;
         }
         .detail-header {
             display: flex;
@@ -546,7 +553,12 @@ def _render_card_exercicios(exercicios):
         col_info, col_video = st.columns([5, 1])
         with col_info:
             orientacao_carga = exercicio.get("orientacao_carga")
-            complemento_carga = f"<br><span>{orientacao_carga}</span>" if orientacao_carga else ""
+            carga_exibida = exercicio.get("carga_sugerida")
+            if carga_exibida is not None:
+                peso_texto = f"{carga_exibida} kg"
+            else:
+                peso_texto = exercicio.get("carga") or "-"
+            complemento_carga = f'<span class="exercise-guidance">{orientacao_carga}</span>' if orientacao_carga else ""
             badge_avaliacao = (
                 '<div class="badge-evaluation">Avaliacao</div>'
                 if exercicio.get("modo_carga") == "avaliacao"
@@ -554,14 +566,15 @@ def _render_card_exercicios(exercicios):
             )
             classe_avaliacao = "evaluation" if exercicio.get("modo_carga") == "avaliacao" else ""
             st.markdown(
-                f"""
-                <div class="exercise-card {classe_avaliacao}">
-                    {badge_avaliacao}
-                    <strong>{exercicio['nome']}</strong>
-                    <span>{exercicio['series']} x {exercicio['reps']} | Descanso {exercicio['descanso']} | RPE alvo {exercicio.get('rpe', '-')}</span>
-                    {complemento_carga}
-                </div>
-                """,
+                (
+                    f'<div class="exercise-card {classe_avaliacao}">'
+                    f"{badge_avaliacao}"
+                    f"<strong>{exercicio['nome']}</strong>"
+                    f"<span>Series {exercicio['series']} | Reps {exercicio['reps']} | "
+                    f"Descanso {exercicio['descanso']} | Peso {peso_texto} | RPE alvo {exercicio.get('rpe', '-')}</span>"
+                    f"{complemento_carga}"
+                    f"</div>"
+                ),
                 unsafe_allow_html=True,
             )
         with col_video:

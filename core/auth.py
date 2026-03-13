@@ -1,4 +1,6 @@
+import base64
 from datetime import datetime
+from pathlib import Path
 
 import streamlit as st
 
@@ -10,6 +12,11 @@ from core.usuarios import (
     buscar_usuario_por_email,
     criar_usuario,
 )
+
+
+ASSETS_DIR = Path.cwd() / "assets"
+LOGO_TRILAB_LADO = ASSETS_DIR / "logo_trilab_lado.png"
+LOGO_TRILAB_CIMA = ASSETS_DIR / "logo_trilab_cima.png"
 
 
 def _token_convite_da_url():
@@ -45,18 +52,30 @@ def _capturar_convite_em_sessao():
     return None
 
 
-def tela_login():
-    _capturar_convite_em_sessao()
-    apply_global_styles()
-    st.markdown(
-        """
+def _logo_auth_html():
+    if not LOGO_TRILAB_LADO.exists() or not LOGO_TRILAB_CIMA.exists():
+        return """
         <div class="auth-brand">
             <h1>TriLab TREINAMENTO</h1>
             <p>Acesse sua conta ou crie um novo acesso em poucos passos.</p>
         </div>
-        """,
-        unsafe_allow_html=True,
-    )
+        """
+
+    logo_lado = base64.b64encode(LOGO_TRILAB_LADO.read_bytes()).decode("ascii")
+    logo_cima = base64.b64encode(LOGO_TRILAB_CIMA.read_bytes()).decode("ascii")
+    return f"""
+    <div class="auth-brand">
+        <img class="auth-brand-logo auth-brand-logo-desktop" src="data:image/png;base64,{logo_lado}" alt="Logo TriLab horizontal">
+        <img class="auth-brand-logo auth-brand-logo-mobile" src="data:image/png;base64,{logo_cima}" alt="Logo TriLab vertical">
+        <p>Acesse sua conta ou crie um novo acesso em poucos passos.</p>
+    </div>
+    """
+
+
+def tela_login():
+    _capturar_convite_em_sessao()
+    apply_global_styles()
+    st.markdown(_logo_auth_html(), unsafe_allow_html=True)
 
     aba_entrar, aba_cadastro, aba_recuperar = st.tabs(["Entrar", "Criar conta", "Esqueci a senha"])
 

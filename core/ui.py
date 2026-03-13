@@ -244,11 +244,17 @@ def apply_global_styles():
             text-align: center;
             margin-bottom: 1.25rem;
         }
-        .auth-brand h1 {
-            margin: 0;
-            color: var(--tri-text);
-            font-size: 2.4rem;
-            line-height: 1;
+        .auth-brand-logo {
+            display: block;
+            margin: 0 auto;
+            height: auto;
+        }
+        .auth-brand-logo-desktop {
+            width: min(620px, 84%);
+        }
+        .auth-brand-logo-mobile {
+            display: none;
+            width: min(320px, 72%);
         }
         .auth-brand p {
             margin: 0.55rem auto 0;
@@ -306,6 +312,13 @@ def apply_global_styles():
             }
             .auth-brand p {
                 font-size: 0.92rem;
+            }
+            .auth-brand-logo-desktop {
+                display: none;
+            }
+            .auth-brand-logo-mobile {
+                display: block;
+                width: min(300px, 78%);
             }
             .auth-card,
             div[data-testid="stForm"],
