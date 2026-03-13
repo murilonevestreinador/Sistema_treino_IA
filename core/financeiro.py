@@ -117,15 +117,17 @@ def criar_trial_assinatura(usuario_id, tipo_usuario):
     cursor.execute(
         """
         INSERT INTO assinaturas (
-            usuario_id, plano_id, status, data_inicio, data_fim,
-            renovacao_automatica, gateway, gateway_reference, criado_em
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            usuario_id, plano_id, tipo_plano, status, valor, data_inicio, data_fim,
+            renovacao_automatica, gateway, gateway_reference, criado_em, created_at
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
         RETURNING id
         """,
         (
             usuario_id,
             plano["id"],
+            plano.get("tipo"),
             "trial",
+            float(plano.get("preco_mensal") or 0),
             data_inicio,
             data_fim,
             0,
@@ -261,15 +263,17 @@ def criar_assinatura_manual(usuario, plano):
     cursor.execute(
         """
         INSERT INTO assinaturas (
-            usuario_id, plano_id, status, data_inicio, data_fim,
-            renovacao_automatica, gateway, gateway_reference, criado_em
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            usuario_id, plano_id, tipo_plano, status, valor, data_inicio, data_fim,
+            renovacao_automatica, gateway, gateway_reference, criado_em, created_at
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
         RETURNING id
         """,
         (
             usuario["id"],
             plano["id"],
+            plano.get("tipo"),
             retorno_gateway["status"],
+            float(plano.get("preco_mensal") or 0),
             data_inicio,
             data_fim,
             1,
@@ -279,6 +283,24 @@ def criar_assinatura_manual(usuario, plano):
         ),
     )
     assinatura_id = cursor.fetchone()["id"]
+    cursor.execute(
+        """
+        INSERT INTO pagamentos (
+            usuario_id, assinatura_id, valor, status, metodo_pagamento,
+            data_pagamento, data_vencimento, referencia_externa
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        """,
+        (
+            usuario["id"],
+            assinatura_id,
+            float(plano.get("preco_mensal") or 0),
+            "pago" if retorno_gateway["status"] == "ativa" else "pendente",
+            retorno_gateway.get("gateway", "manual"),
+            data_inicio if retorno_gateway["status"] == "ativa" else None,
+            data_fim,
+            retorno_gateway.get("gateway_reference"),
+        ),
+    )
     conn.commit()
     conn.close()
     return buscar_assinatura_por_id(assinatura_id)

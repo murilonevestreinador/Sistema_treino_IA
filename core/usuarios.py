@@ -4,6 +4,7 @@ import secrets
 from datetime import datetime, timedelta
 
 from core.banco import conectar
+from core.permissoes import normalizar_status_conta, normalizar_tipo_usuario
 
 
 def _linha_para_dict(linha):
@@ -17,20 +18,17 @@ def _normalizar_sexo(sexo):
     return "outro"
 
 
-def _normalizar_tipo_usuario(tipo_usuario):
-    tipo = (tipo_usuario or "atleta").strip().lower()
-    if tipo == "treinador":
-        return "treinador"
-    return "atleta"
-
-
 def _usuario_sem_senha(usuario):
     if not usuario:
         return None
     usuario_limpo = dict(usuario)
     usuario_limpo.pop("senha", None)
     usuario_limpo["sexo"] = _normalizar_sexo(usuario_limpo.get("sexo"))
-    usuario_limpo["tipo_usuario"] = _normalizar_tipo_usuario(usuario_limpo.get("tipo_usuario"))
+    usuario_limpo["tipo_usuario"] = normalizar_tipo_usuario(
+        usuario_limpo.get("tipo_usuario"),
+        usuario_limpo.get("is_admin"),
+    )
+    usuario_limpo["status_conta"] = normalizar_status_conta(usuario_limpo.get("status_conta"))
     usuario_limpo["onboarding_completo"] = int(usuario_limpo.get("onboarding_completo") or 0)
     usuario_limpo["is_admin"] = int(usuario_limpo.get("is_admin") or 0)
     usuario_limpo["aceitou_termos"] = int(usuario_limpo.get("aceitou_termos") or 0)
@@ -78,12 +76,12 @@ def criar_usuario(dados):
     cursor.execute(
         """
         INSERT INTO usuarios (
-            nome, apelido, foto_perfil, email, senha, sexo, tipo_usuario, onboarding_completo, is_admin,
+            nome, apelido, foto_perfil, email, senha, sexo, tipo_usuario, status_conta, onboarding_completo, is_admin,
             idade, peso, altura, objetivo, distancia_principal, tempo_pratica,
             treinos_corrida_semana, tem_prova, data_prova, distancia_prova,
             treinos_musculacao_semana, local_treino, experiencia_musculacao,
             historico_lesao, dor_atual, aceitou_termos, aceitou_privacidade, data_consentimento
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING id
         """,
         (
@@ -93,9 +91,10 @@ def criar_usuario(dados):
             (dados.get("email") or "").strip().lower(),
             hash_senha(dados.get("senha") or ""),
             _normalizar_sexo(dados.get("sexo")),
-            _normalizar_tipo_usuario(dados.get("tipo_usuario")),
+            normalizar_tipo_usuario(dados.get("tipo_usuario"), dados.get("is_admin")),
+            normalizar_status_conta(dados.get("status_conta")),
             int(dados.get("onboarding_completo", 0)),
-            int(dados.get("is_admin", 0)),
+            int(normalizar_tipo_usuario(dados.get("tipo_usuario"), dados.get("is_admin")) == "admin"),
             dados.get("idade"),
             dados.get("peso"),
             dados.get("altura"),
@@ -346,6 +345,130 @@ def atualizar_perfil_usuario(usuario_id, dados_perfil):
     conn.commit()
     conn.close()
     return buscar_usuario_por_id(usuario_id)
+
+
+def atualizar_tipo_usuario(usuario_id, tipo_usuario):
+    tipo_normalizado = normalizar_tipo_usuario(tipo_usuario)
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        UPDATE usuarios
+        SET tipo_usuario = %s,
+            is_admin = %s
+        WHERE id = %s
+        """,
+        (tipo_normalizado, int(tipo_normalizado == "admin"), usuario_id),
+    )
+    conn.commit()
+    conn.close()
+    return buscar_usuario_por_id(usuario_id)
+
+
+def atualizar_status_conta(usuario_id, status_conta):
+    status_normalizado = normalizar_status_conta(status_conta)
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        UPDATE usuarios
+        SET status_conta = %s
+        WHERE id = %s
+        """,
+        (status_normalizado, usuario_id),
+    )
+    conn.commit()
+    conn.close()
+    return buscar_usuario_por_id(usuario_id)
+
+
+def redefinir_senha_usuario(usuario_id, nova_senha):
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        UPDATE usuarios
+        SET senha = %s
+        WHERE id = %s
+        """,
+        (hash_senha(nova_senha or ""), usuario_id),
+    )
+    conn.commit()
+    conn.close()
+    return buscar_usuario_por_id(usuario_id)
+
+
+def listar_usuarios(
+    busca=None,
+    tipo_usuario=None,
+    status_conta=None,
+):
+    filtros = []
+    params = []
+
+    busca_normalizada = (busca or "").strip().lower()
+    if busca_normalizada:
+        filtros.append("(LOWER(COALESCE(u.nome, '')) LIKE %s OR LOWER(COALESCE(u.email, '')) LIKE %s)")
+        termo = f"%{busca_normalizada}%"
+        params.extend([termo, termo])
+
+    tipo_normalizado = (tipo_usuario or "").strip().lower()
+    if tipo_normalizado:
+        filtros.append("LOWER(COALESCE(u.tipo_usuario, '')) = %s")
+        params.append(tipo_normalizado)
+
+    status_normalizado = (status_conta or "").strip().lower()
+    if status_normalizado:
+        filtros.append("LOWER(COALESCE(u.status_conta, 'ativo')) = %s")
+        params.append(status_normalizado)
+
+    where_sql = f"WHERE {' AND '.join(filtros)}" if filtros else ""
+
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        f"""
+        SELECT
+            u.*,
+            a.status AS assinatura_status,
+            a.data_inicio AS assinatura_data_inicio,
+            a.data_fim AS assinatura_data_fim,
+            a.valor AS assinatura_valor,
+            p.nome AS plano_nome,
+            p.codigo AS plano_codigo
+        FROM usuarios u
+        LEFT JOIN LATERAL (
+            SELECT *
+            FROM assinaturas ax
+            WHERE ax.usuario_id = u.id
+            ORDER BY
+                CASE ax.status
+                    WHEN 'ativa' THEN 0
+                    WHEN 'trial' THEN 1
+                    WHEN 'inadimplente' THEN 2
+                    WHEN 'cancelada' THEN 3
+                    ELSE 4
+                END,
+                COALESCE(ax.created_at, CURRENT_TIMESTAMP) DESC,
+                ax.id DESC
+            LIMIT 1
+        ) a ON TRUE
+        LEFT JOIN planos p ON p.id = a.plano_id
+        {where_sql}
+        ORDER BY COALESCE(u.data_criacao, CURRENT_TIMESTAMP) DESC, u.id DESC
+        """,
+        tuple(params),
+    )
+    usuarios = [_usuario_sem_senha(item) | {
+        "assinatura_status": item.get("assinatura_status"),
+        "assinatura_data_inicio": item.get("assinatura_data_inicio"),
+        "assinatura_data_fim": item.get("assinatura_data_fim"),
+        "assinatura_valor": item.get("assinatura_valor"),
+        "plano_nome": item.get("plano_nome"),
+        "plano_codigo": item.get("plano_codigo"),
+    } for item in cursor.fetchall()]
+    conn.close()
+    return usuarios
 
 
 def excluir_usuario(usuario_id):

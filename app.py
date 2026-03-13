@@ -3,13 +3,23 @@ from datetime import date, datetime
 import streamlit as st
 
 from core.area_treinador import tela_area_treinador
+from core.admin import tela_area_admin
 from core.auth import tela_login
 from core.banco import garantir_colunas_e_tabelas
 from core.cronograma import gerar_cronograma, gerar_mensagem_usuario
 from core.dashboard import tela_dashboard
 from core.financeiro import garantir_assinatura_inicial, resumo_status_assinatura, usuario_tem_acesso
 from core.perfil import tela_meu_perfil
+from core.permissoes import conta_ativa, eh_admin, eh_atleta, eh_treinador
 from core.questionario import tela_questionario
+from core.sessao_persistente import (
+    capturar_browser_key_da_url,
+    injetar_bridge_navegador,
+    preparar_rotacao_browser_key,
+    registrar_sessao_persistente,
+    restaurar_usuario_persistente,
+    revogar_sessao_persistente_atual,
+)
 from core.treinador import (
     buscar_convite_por_token,
     buscar_status_vinculo,
@@ -170,7 +180,13 @@ def inicializar_sessao():
 
 
 def fazer_logout():
+    usuario = st.session_state.get("usuario")
+    if usuario:
+        revogar_sessao_persistente_atual(usuario.get("id"))
+    preparar_rotacao_browser_key()
     for chave in list(st.session_state.keys()):
+        if chave == "browser_key_reset_nonce":
+            continue
         del st.session_state[chave]
     st.rerun()
 
@@ -271,7 +287,13 @@ def renderizar_sidebar(usuario=None, assinatura=None):
             resumo = resumo_status_assinatura(assinatura)
             st.caption(resumo["titulo"])
 
-        if usuario.get("tipo_usuario") == "atleta":
+        if eh_admin(usuario):
+            st.markdown('<div class="sidebar-section-title">Admin</div>', unsafe_allow_html=True)
+            if st.button("Painel Admin", key="sb_area_admin", use_container_width=True):
+                st.session_state["secao_app"] = "principal"
+                st.rerun()
+            st.caption("Usuarios, financeiro, BI e auditoria centralizados no admin.")
+        elif eh_atleta(usuario):
             st.markdown('<div class="sidebar-section-title">Atleta</div>', unsafe_allow_html=True)
             if st.button("Area do Atleta", key="sb_area_atleta", use_container_width=True):
                 st.session_state["secao_app"] = "principal"
@@ -342,7 +364,7 @@ def renderizar_menu_superior(usuario):
             if usuario.get("apelido"):
                 st.write(f"Apelido: {usuario['apelido']}")
             st.write(f"Perfil: {usuario.get('tipo_usuario', 'atleta')}")
-            if usuario.get("tipo_usuario") == "atleta":
+            if eh_atleta(usuario):
                 st.divider()
                 st.write("Navega\u00e7\u00e3o")
                 col_area, col_treinos, col_perfil = st.columns(3)
@@ -449,7 +471,7 @@ def renderizar_menu_superior(usuario):
                         st.success("Objetivo redefinido. Seu planejamento foi recalculado.")
                         st.rerun()
                 st.divider()
-            else:
+            elif eh_treinador(usuario):
                 st.divider()
                 st.write("Navega\u00e7\u00e3o")
                 col_painel, col_perfil = st.columns(2)
@@ -461,6 +483,15 @@ def renderizar_menu_superior(usuario):
                     if st.button("Meu perfil", key="btn_menu_perfil_treinador", use_container_width=True):
                         st.session_state["secao_app"] = "perfil"
                         st.rerun()
+                st.divider()
+            else:
+                st.divider()
+                if st.button("Painel admin", key="btn_menu_painel_admin", use_container_width=True):
+                    st.session_state["secao_app"] = "principal"
+                    st.rerun()
+                if st.button("Meu perfil", key="btn_menu_perfil_admin", use_container_width=True):
+                    st.session_state["secao_app"] = "perfil"
+                    st.rerun()
                 st.divider()
             if st.button("Logout", key="btn_logout_global", use_container_width=True):
                 fazer_logout()
@@ -537,6 +568,8 @@ def _obter_tema_usuario(usuario):
 def main():
     garantir_colunas_e_tabelas()
     inicializar_sessao()
+    injetar_bridge_navegador()
+    capturar_browser_key_da_url()
     sincronizar_convite_da_url()
     inject_app_icons()
     apply_global_styles()
@@ -554,7 +587,19 @@ def main():
 
     usuario = st.session_state.get("usuario")
     if usuario is None:
+        usuario = restaurar_usuario_persistente()
+        if usuario:
+            st.session_state["usuario"] = usuario
+
+    if usuario is None:
         tela_login()
+        return
+
+    registrar_sessao_persistente(usuario["id"])
+    if not conta_ativa(usuario):
+        st.error("Sua conta esta inativa, suspensa ou cancelada. Entre em contato com o suporte.")
+        if st.button("Fazer logout", use_container_width=True):
+            fazer_logout()
         return
 
     tema_usuario = _obter_tema_usuario(usuario)
@@ -567,7 +612,7 @@ def main():
         tema_usuario.get("cor_header"),
     )
 
-    assinatura = garantir_assinatura_inicial(usuario)
+    assinatura = None if eh_admin(usuario) else garantir_assinatura_inicial(usuario)
     renderizar_sidebar(usuario, assinatura)
     renderizar_menu_superior(usuario)
     renderizar_convite_treinador(usuario)
@@ -579,13 +624,18 @@ def main():
         renderizar_rodape()
         return
 
+    if eh_admin(usuario):
+        tela_area_admin(usuario)
+        renderizar_rodape()
+        return
+
     tem_acesso, assinatura = usuario_tem_acesso(usuario)
     if not tem_acesso:
         renderizar_assinatura_necessaria(assinatura)
         renderizar_rodape()
         return
 
-    if usuario.get("tipo_usuario") == "treinador":
+    if eh_treinador(usuario):
         tela_area_treinador(usuario)
         renderizar_rodape()
         return

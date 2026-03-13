@@ -67,6 +67,7 @@ def _criar_tabela_usuarios(cursor):
             senha TEXT,
             sexo TEXT,
             tipo_usuario TEXT DEFAULT 'atleta',
+            status_conta TEXT DEFAULT 'ativo',
             onboarding_completo INTEGER DEFAULT 0,
             is_admin INTEGER DEFAULT 0,
             idade INTEGER,
@@ -96,6 +97,7 @@ def _criar_tabela_usuarios(cursor):
         "apelido": "TEXT",
         "foto_perfil": "TEXT",
         "tipo_usuario": "TEXT DEFAULT 'atleta'",
+        "status_conta": "TEXT DEFAULT 'ativo'",
         "onboarding_completo": "INTEGER DEFAULT 0",
         "is_admin": "INTEGER DEFAULT 0",
         "idade": "INTEGER",
@@ -359,6 +361,23 @@ def _criar_tabela_recuperacao_senha(cursor):
     )
 
 
+def _criar_tabela_sessoes_persistentes(cursor):
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS sessoes_persistentes (
+            id SERIAL PRIMARY KEY,
+            usuario_id INTEGER NOT NULL,
+            browser_key_hash TEXT NOT NULL UNIQUE,
+            user_agent TEXT,
+            ultimo_acesso TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            revogado_em TIMESTAMP NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (usuario_id) REFERENCES usuarios(id)
+        )
+        """
+    )
+
+
 def _criar_tabela_preferencias_substituicao(cursor):
     cursor.execute(
         """
@@ -512,13 +531,16 @@ def _criar_tabela_assinaturas(cursor):
             id SERIAL PRIMARY KEY,
             usuario_id INTEGER NOT NULL,
             plano_id INTEGER NOT NULL,
+            tipo_plano TEXT,
             status TEXT NOT NULL,
+            valor REAL,
             data_inicio TEXT NOT NULL,
             data_fim TEXT,
             renovacao_automatica INTEGER DEFAULT 1,
             gateway TEXT DEFAULT 'manual',
             gateway_reference TEXT,
             criado_em TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (usuario_id) REFERENCES usuarios(id),
             FOREIGN KEY (plano_id) REFERENCES planos(id)
         )
@@ -528,16 +550,88 @@ def _criar_tabela_assinaturas(cursor):
     colunas = {
         "usuario_id": "INTEGER NOT NULL",
         "plano_id": "INTEGER NOT NULL",
+        "tipo_plano": "TEXT",
         "status": "TEXT NOT NULL",
+        "valor": "REAL",
         "data_inicio": "TEXT NOT NULL",
         "data_fim": "TEXT",
         "renovacao_automatica": "INTEGER DEFAULT 1",
         "gateway": "TEXT DEFAULT 'manual'",
         "gateway_reference": "TEXT",
         "criado_em": "TEXT",
+        "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
     }
     for nome, definicao in colunas.items():
         _adicionar_coluna_se_necessario(cursor, "assinaturas", nome, definicao)
+
+
+def _criar_tabela_pagamentos(cursor):
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS pagamentos (
+            id SERIAL PRIMARY KEY,
+            usuario_id INTEGER NOT NULL,
+            assinatura_id INTEGER NULL,
+            valor REAL NOT NULL,
+            status TEXT NOT NULL,
+            metodo_pagamento TEXT,
+            data_pagamento TEXT,
+            data_vencimento TEXT,
+            referencia_externa TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (usuario_id) REFERENCES usuarios(id),
+            FOREIGN KEY (assinatura_id) REFERENCES assinaturas(id)
+        )
+        """
+    )
+
+
+def _criar_tabela_admin_logs(cursor):
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS admin_logs (
+            id SERIAL PRIMARY KEY,
+            admin_id INTEGER NOT NULL,
+            acao TEXT NOT NULL,
+            alvo_tipo TEXT NOT NULL,
+            alvo_id INTEGER,
+            detalhes TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (admin_id) REFERENCES usuarios(id)
+        )
+        """
+    )
+
+
+def _sincronizar_papeis_legados(cursor):
+    cursor.execute(
+        """
+        UPDATE usuarios
+        SET tipo_usuario = 'admin'
+        WHERE COALESCE(is_admin, 0) = 1
+          AND COALESCE(tipo_usuario, '') <> 'admin'
+        """
+    )
+    cursor.execute(
+        """
+        UPDATE usuarios
+        SET status_conta = 'ativo'
+        WHERE status_conta IS NULL OR btrim(status_conta) = ''
+        """
+    )
+    cursor.execute(
+        """
+        UPDATE assinaturas a
+        SET tipo_plano = COALESCE(NULLIF(a.tipo_plano, ''), p.tipo),
+            valor = COALESCE(a.valor, p.preco_mensal)
+        FROM planos p
+        WHERE p.id = a.plano_id
+          AND (
+              a.tipo_plano IS NULL OR btrim(COALESCE(a.tipo_plano, '')) = ''
+              OR a.valor IS NULL
+          )
+        """
+    )
 
 
 def _criar_indices_bi(cursor):
@@ -588,7 +682,19 @@ def _criar_indices_bi(cursor):
     cursor.execute(
         """
         CREATE INDEX IF NOT EXISTS idx_usuarios_tipo_segmento
-        ON usuarios (tipo_usuario, sexo, objetivo)
+        ON usuarios (tipo_usuario, status_conta, sexo, objetivo)
+        """
+    )
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_pagamentos_usuario_status_vencimento
+        ON pagamentos (usuario_id, status, data_vencimento, created_at)
+        """
+    )
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_admin_logs_admin_data
+        ON admin_logs (admin_id, created_at DESC)
         """
     )
     cursor.execute(
@@ -624,12 +730,16 @@ def garantir_colunas_e_tabelas():
     _migrar_feito_em_para_timestamp(cursor)
     _migrar_data_realizada_para_timestamp(cursor)
     _criar_tabela_recuperacao_senha(cursor)
+    _criar_tabela_sessoes_persistentes(cursor)
     _criar_tabela_preferencias_substituicao(cursor)
     _criar_tabela_planos(cursor)
     _seed_planos(cursor)
     _criar_tabela_assinaturas(cursor)
+    _criar_tabela_pagamentos(cursor)
+    _criar_tabela_admin_logs(cursor)
     _criar_tabela_avaliacao_forca(cursor)
     _criar_tabela_execucao_exercicio(cursor)
+    _sincronizar_papeis_legados(cursor)
     _criar_indices_bi(cursor)
 
     conn.commit()

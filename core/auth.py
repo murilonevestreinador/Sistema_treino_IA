@@ -5,6 +5,8 @@ from pathlib import Path
 import streamlit as st
 
 from core.financeiro import criar_trial_assinatura
+from core.permissoes import conta_ativa
+from core.sessao_persistente import registrar_sessao_persistente
 from core.treinador import buscar_convite_por_token, definir_vinculo_treinador_atleta
 from core.ui import apply_global_styles, auth_card_end, auth_card_start
 from core.usuarios import (
@@ -110,6 +112,9 @@ def _tela_login_tab():
         if not usuario:
             st.warning("E-mail ou senha incorretos.")
             return
+        if not conta_ativa(usuario):
+            st.warning("Sua conta esta inativa, suspensa ou cancelada. Fale com o suporte.")
+            return
 
         convite_token = (st.session_state.get("convite_treinador_token") or "").strip()
         if convite_token and usuario.get("tipo_usuario") != "atleta":
@@ -120,6 +125,7 @@ def _tela_login_tab():
             st.session_state["convite_treinador_resposta_pendente"] = convite_token
 
         st.session_state["usuario"] = usuario
+        registrar_sessao_persistente(usuario["id"])
         st.session_state.setdefault("mostrar_overview", False)
         st.rerun()
 

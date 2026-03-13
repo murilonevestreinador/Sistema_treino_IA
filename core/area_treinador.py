@@ -18,6 +18,7 @@ from core.progresso import (
     salvar_ajuste_manual_avaliacao,
 )
 from core.treinador import (
+    buscar_atleta_vinculado,
     gerar_link_convite,
     listar_atletas_do_treinador,
     listar_vinculos,
@@ -678,9 +679,9 @@ def _render_visualizacao_atleta(treinador):
         ),
     )
     st.session_state["atleta_treinador_selecionado"] = atleta_id
-    atleta = buscar_usuario_por_id(atleta_id)
+    atleta = buscar_atleta_vinculado(treinador["id"], atleta_id)
     if not atleta:
-        st.error("Atleta nao encontrado.")
+        st.error("Atleta nao encontrado ou sem permissao de acesso.")
         return
 
     cronograma, _, _ = gerar_cronograma(atleta)
