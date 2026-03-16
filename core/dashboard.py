@@ -214,16 +214,16 @@ def _aplicar_estilo_dashboard():
         <style>
         .stApp {
             background:
-                radial-gradient(circle at top left, rgba(0, 59, 122, 0.08), transparent 24%),
-                radial-gradient(circle at bottom right, rgba(255, 59, 48, 0.07), transparent 22%),
-                linear-gradient(180deg, #f7f8fa 0%, #ffffff 100%);
+                radial-gradient(circle at top left, color-mix(in srgb, var(--tri-primary) 14%, transparent), transparent 24%),
+                radial-gradient(circle at bottom right, color-mix(in srgb, var(--tri-secondary) 12%, transparent), transparent 22%),
+                linear-gradient(180deg, var(--tri-bg) 0%, var(--tri-surface) 100%);
         }
         .athlete-banner {
             padding: 1.2rem 1.35rem;
             border-radius: 24px;
-            background: linear-gradient(135deg, #0f172a 0%, var(--tri-primary, #003b7a) 62%, #1d4ed8 100%);
-            color: #f8fafc;
-            box-shadow: 0 24px 48px rgba(15, 23, 42, 0.16);
+            background: linear-gradient(135deg, var(--tri-header-start) 0%, var(--tri-primary) 62%, var(--tri-header-end) 100%);
+            color: var(--tri-text-on-header);
+            box-shadow: var(--tri-shadow-strong);
             margin-bottom: 1rem;
         }
         .athlete-banner h1 {
@@ -232,70 +232,70 @@ def _aplicar_estilo_dashboard():
         }
         .athlete-banner p {
             margin: 0.35rem 0 0;
-            color: rgba(248, 250, 252, 0.80);
+            color: color-mix(in srgb, var(--tri-text-on-header) 80%, transparent);
         }
         .metric-card, .workout-detail, .history-card {
             border-radius: 22px;
-            border: 1px solid rgba(15, 23, 42, 0.08);
-            background: rgba(255, 255, 255, 0.96);
+            border: 1px solid var(--tri-border);
+            background: color-mix(in srgb, var(--tri-surface) 96%, transparent);
             padding: 1rem 1.05rem;
-            box-shadow: 0 16px 32px rgba(15, 23, 42, 0.06);
+            box-shadow: var(--tri-shadow-soft);
             margin-bottom: 0.9rem;
         }
         .metric-card strong,
         .history-card strong {
             display: block;
-            color: #0f172a;
+            color: var(--tri-text-strong);
             margin-bottom: 0.2rem;
         }
         .section-shell {
             border-radius: 24px;
-            border: 1px solid rgba(15, 23, 42, 0.08);
+            border: 1px solid var(--tri-border);
             background:
-                radial-gradient(circle at top right, rgba(0, 59, 122, 0.08), transparent 34%),
-                rgba(255, 255, 255, 0.90);
+                radial-gradient(circle at top right, color-mix(in srgb, var(--tri-primary) 10%, transparent), transparent 34%),
+                color-mix(in srgb, var(--tri-surface) 90%, transparent);
             padding: 1rem;
             margin-bottom: 1rem;
         }
         .section-shell h3 {
             margin: 0 0 0.35rem;
-            color: #0f172a;
+            color: var(--tri-text-strong);
         }
         .section-shell p {
             margin: 0;
-            color: #475569;
+            color: var(--tri-text-soft);
         }
         .workout-card {
             border-radius: 22px;
-            border: 1px solid rgba(15, 23, 42, 0.08);
-            background: rgba(255, 255, 255, 0.98);
+            border: 1px solid var(--tri-border);
+            background: color-mix(in srgb, var(--tri-surface) 98%, transparent);
             padding: 1rem;
             min-height: 150px;
-            box-shadow: 0 14px 28px rgba(15, 23, 42, 0.06);
+            box-shadow: var(--tri-shadow-soft);
             margin-bottom: 0.7rem;
         }
         .workout-card.active {
-            border-color: rgba(0, 59, 122, 0.20);
-            box-shadow: 0 20px 38px rgba(0, 59, 122, 0.10);
-            background: linear-gradient(135deg, rgba(248, 250, 252, 1) 0%, rgba(255, 255, 255, 1) 100%);
+            border-color: var(--tri-border-strong);
+            box-shadow: var(--tri-shadow-card);
+            background: linear-gradient(135deg, var(--tri-bg-soft) 0%, var(--tri-surface) 100%);
         }
         .workout-card .eyebrow {
             display: inline-block;
             font-size: 0.72rem;
             letter-spacing: 0.08em;
             text-transform: uppercase;
-            color: var(--tri-secondary, #ff3b30);
+            color: var(--tri-secondary);
             font-weight: 700;
             margin-bottom: 0.5rem;
         }
         .workout-card h4 {
             margin: 0 0 0.35rem;
-            color: #0f172a;
+            color: var(--tri-text-strong);
             font-size: 1.15rem;
         }
         .workout-card p {
             margin: 0;
-            color: #475569;
+            color: var(--tri-text-soft);
             line-height: 1.45;
         }
         .status-pill {
@@ -307,33 +307,35 @@ def _aplicar_estilo_dashboard():
             font-weight: 700;
         }
         .status-pill.done {
-            background: rgba(21, 128, 61, 0.10);
-            color: #166534;
+            background: var(--tri-success-bg);
+            color: var(--tri-success-text);
+            border: 1px solid var(--tri-success-border);
         }
         .status-pill.pending {
-            background: rgba(15, 23, 42, 0.06);
-            color: #334155;
+            background: var(--tri-bg-soft);
+            color: var(--tri-text);
+            border: 1px solid var(--tri-border);
         }
         .exercise-card {
             border-radius: 18px;
-            border: 1px solid rgba(15, 23, 42, 0.07);
-            background: rgba(248, 250, 252, 0.94);
+            border: 1px solid var(--tri-border);
+            background: color-mix(in srgb, var(--tri-bg-soft) 94%, transparent);
             padding: 0.85rem 0.95rem;
             margin-bottom: 0.55rem;
         }
         .exercise-card strong {
             display: block;
-            color: #0f172a;
+            color: var(--tri-text-strong);
             margin-bottom: 0.18rem;
         }
         .exercise-card span {
-            color: #475569;
+            color: var(--tri-text-soft);
             font-size: 0.92rem;
             display: block;
         }
         .exercise-card .exercise-guidance {
             margin-top: 0.4rem;
-            color: #334155;
+            color: var(--tri-text);
             font-size: 0.9rem;
             line-height: 1.4;
         }
@@ -346,29 +348,29 @@ def _aplicar_estilo_dashboard():
         }
         .detail-header h3 {
             margin: 0;
-            color: #0f172a;
+            color: var(--tri-text-strong);
         }
         .detail-header p {
             margin: 0.15rem 0 0;
-            color: #475569;
+            color: var(--tri-text-soft);
         }
         .evaluation-shell {
             border-radius: 24px;
-            border: 1px solid rgba(255, 59, 48, 0.14);
+            border: 1px solid var(--tri-warning-border);
             background:
-                radial-gradient(circle at top right, rgba(255, 59, 48, 0.16), transparent 34%),
-                linear-gradient(135deg, rgba(255, 247, 245, 0.96) 0%, rgba(255, 255, 255, 0.98) 100%);
+                radial-gradient(circle at top right, color-mix(in srgb, var(--tri-warning) 16%, transparent), transparent 34%),
+                linear-gradient(135deg, var(--tri-warning-bg) 0%, var(--tri-surface) 100%);
             padding: 1rem 1.05rem;
             margin-bottom: 1rem;
-            box-shadow: 0 18px 36px rgba(255, 59, 48, 0.10);
+            box-shadow: var(--tri-shadow-soft);
         }
         .evaluation-shell h3 {
             margin: 0;
-            color: #0f172a;
+            color: var(--tri-text-strong);
         }
         .evaluation-shell p {
             margin: 0.45rem 0 0;
-            color: #475569;
+            color: var(--tri-text-soft);
             line-height: 1.5;
         }
         .evaluation-grid {
@@ -379,27 +381,27 @@ def _aplicar_estilo_dashboard():
         }
         .evaluation-tip {
             border-radius: 16px;
-            background: rgba(255, 255, 255, 0.72);
+            background: color-mix(in srgb, var(--tri-surface) 72%, transparent);
             padding: 0.7rem 0.8rem;
-            border: 1px solid rgba(15, 23, 42, 0.08);
+            border: 1px solid var(--tri-border);
         }
         .evaluation-tip strong {
             display: block;
-            color: #0f172a;
+            color: var(--tri-text-strong);
             margin-bottom: 0.15rem;
         }
         .exercise-card.evaluation {
-            border-color: rgba(255, 59, 48, 0.16);
-            background: linear-gradient(135deg, rgba(255, 246, 245, 0.98) 0%, rgba(255, 255, 255, 1) 100%);
-            box-shadow: 0 12px 28px rgba(255, 59, 48, 0.08);
+            border-color: var(--tri-warning-border);
+            background: linear-gradient(135deg, var(--tri-warning-bg) 0%, var(--tri-surface) 100%);
+            box-shadow: var(--tri-shadow-soft);
         }
         .badge-evaluation {
             display: inline-block;
             margin-bottom: 0.4rem;
             padding: 0.18rem 0.55rem;
             border-radius: 999px;
-            background: rgba(255, 59, 48, 0.12);
-            color: #b91c1c;
+            background: var(--tri-danger-bg);
+            color: var(--tri-danger-text);
             font-size: 0.74rem;
             font-weight: 800;
             letter-spacing: 0.06em;
@@ -407,43 +409,32 @@ def _aplicar_estilo_dashboard():
         }
         .evaluation-entry {
             border-radius: 18px;
-            border: 1px solid rgba(255, 59, 48, 0.14);
-            background: linear-gradient(135deg, rgba(255, 247, 245, 0.98) 0%, rgba(255, 255, 255, 0.98) 100%);
+            border: 1px solid var(--tri-warning-border);
+            background: linear-gradient(135deg, var(--tri-warning-bg) 0%, var(--tri-surface) 100%);
             padding: 0.95rem 1rem;
             margin-bottom: 0.9rem;
         }
         .evaluation-entry h4 {
             margin: 0;
-            color: #0f172a;
+            color: var(--tri-text-strong);
         }
         .evaluation-entry p {
             margin: 0.3rem 0 0;
-            color: #475569;
+            color: var(--tri-text-soft);
             line-height: 1.45;
         }
         .evaluation-summary {
             border-radius: 18px;
-            border: 1px solid rgba(0, 59, 122, 0.12);
-            background: linear-gradient(135deg, rgba(240, 253, 244, 0.96) 0%, rgba(255, 255, 255, 0.98) 100%);
+            border: 1px solid var(--tri-success-border);
+            background: linear-gradient(135deg, var(--tri-success-bg) 0%, var(--tri-surface) 100%);
             padding: 0.95rem 1rem;
             margin-bottom: 0.85rem;
         }
         .evaluation-summary strong {
-            color: #0f172a;
+            color: var(--tri-text-strong);
         }
         .nav-chip-row .stButton > button {
             width: 100%;
-        }
-        .stButton > button, .stFormSubmitButton > button {
-            border-radius: 999px;
-            border: none;
-            background: linear-gradient(135deg, var(--tri-button, var(--tri-primary, #1f5c53)) 0%, var(--tri-secondary, #2f7d71) 100%);
-            color: white;
-            font-weight: 700;
-        }
-        .stButton > button:hover, .stFormSubmitButton > button:hover {
-            background: linear-gradient(135deg, var(--tri-button, var(--tri-primary, #184942)) 0%, var(--tri-secondary, #276a60) 100%);
-            color: white;
         }
         @media (max-width: 768px) {
             .block-container {

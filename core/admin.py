@@ -49,12 +49,12 @@ def _aplicar_estilo_admin():
     st.markdown(
         """
         <style>
-        .admin-hero{padding:1.2rem 1.25rem;border-radius:28px;background:radial-gradient(circle at top right, rgba(255,255,255,0.12), transparent 24%),linear-gradient(135deg,#111827 0%,#0f4c81 55%,#1f7a8c 100%);color:#f8fafc;box-shadow:0 28px 54px rgba(15,23,42,.18);margin-bottom:1rem}
-        .admin-hero h1{margin:0;color:#f8fafc;font-size:2rem}
-        .admin-hero p{margin:.35rem 0 0;color:rgba(248,250,252,.8)}
-        .admin-card{border-radius:22px;border:1px solid rgba(15,23,42,.08);background:rgba(255,255,255,.96);padding:1rem 1.05rem;box-shadow:0 16px 30px rgba(15,23,42,.06);margin-bottom:.85rem}
-        .admin-card strong{display:block;font-size:1.55rem;color:#0f172a}
-        .admin-card span{color:#475569;font-size:.92rem}
+        .admin-hero{padding:1.2rem 1.25rem;border-radius:28px;background:radial-gradient(circle at top right, color-mix(in srgb, var(--tri-text-on-header) 12%, transparent), transparent 24%),linear-gradient(135deg,var(--tri-header-start) 0%,var(--tri-primary) 55%,var(--tri-header-end) 100%);color:var(--tri-text-on-header);box-shadow:var(--tri-shadow-strong);margin-bottom:1rem}
+        .admin-hero h1{margin:0;color:var(--tri-text-on-header);font-size:2rem}
+        .admin-hero p{margin:.35rem 0 0;color:color-mix(in srgb, var(--tri-text-on-header) 80%, transparent)}
+        .admin-card{border-radius:22px;border:1px solid var(--tri-border);background:color-mix(in srgb, var(--tri-surface) 96%, transparent);padding:1rem 1.05rem;box-shadow:var(--tri-shadow-soft);margin-bottom:.85rem}
+        .admin-card strong{display:block;font-size:1.55rem;color:var(--tri-text-strong)}
+        .admin-card span{color:var(--tri-text-soft);font-size:.92rem}
         </style>
         """,
         unsafe_allow_html=True,

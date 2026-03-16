@@ -47,21 +47,20 @@ def _aplicar_estilo_shell_app():
             gap: 1rem;
             padding: 1.1rem 1.2rem;
             border-radius: 26px;
-            border: 1px solid rgba(15, 23, 42, 0.08);
-            background:
-                linear-gradient(135deg, #0f172a 0%, #003b7a 58%, #1d4ed8 100%);
-            color: #f8fafc;
-            box-shadow: 0 24px 52px rgba(15, 23, 42, 0.14);
+            border: 1px solid var(--tri-border);
+            background: linear-gradient(135deg, var(--tri-header-start) 0%, var(--tri-header-end) 100%);
+            color: var(--tri-text-on-header);
+            box-shadow: var(--tri-shadow-strong);
             margin-bottom: 1rem;
         }
         .trilab-topbar h1 {
             margin: 0;
-            color: #f8fafc;
+            color: var(--tri-text-on-header);
             font-size: 1.75rem;
         }
         .trilab-topbar p {
             margin: 0.3rem 0 0;
-            color: rgba(248, 250, 252, 0.80);
+            color: color-mix(in srgb, var(--tri-text-on-header) 80%, transparent);
         }
         .trilab-badge {
             display: inline-flex;
@@ -69,9 +68,9 @@ def _aplicar_estilo_shell_app():
             gap: 0.35rem;
             padding: 0.3rem 0.7rem;
             border-radius: 999px;
-            background: rgba(255, 255, 255, 0.12);
-            border: 1px solid rgba(255, 255, 255, 0.12);
-            color: #f8fafc;
+            background: color-mix(in srgb, var(--tri-text-on-header) 14%, transparent);
+            border: 1px solid color-mix(in srgb, var(--tri-text-on-header) 16%, transparent);
+            color: var(--tri-text-on-header);
             font-size: 0.75rem;
             font-weight: 800;
             text-transform: uppercase;
@@ -83,18 +82,18 @@ def _aplicar_estilo_shell_app():
         .sidebar-brand {
             padding: 0.95rem 1rem;
             border-radius: 20px;
-            background: linear-gradient(135deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.03) 100%);
-            border: 1px solid rgba(255, 255, 255, 0.08);
+            background: linear-gradient(135deg, color-mix(in srgb, var(--tri-text-on-header) 10%, transparent) 0%, transparent 100%);
+            border: 1px solid color-mix(in srgb, var(--tri-text-on-header) 12%, transparent);
             margin-bottom: 0.9rem;
         }
         .sidebar-brand h2 {
             margin: 0;
-            color: #f8fafc;
+            color: var(--tri-text-on-header);
             font-size: 1.1rem;
         }
         .sidebar-brand p {
             margin: 0.3rem 0 0;
-            color: rgba(248, 250, 252, 0.72);
+            color: color-mix(in srgb, var(--tri-text-on-header) 72%, transparent);
             font-size: 0.88rem;
             line-height: 1.45;
         }
@@ -103,41 +102,41 @@ def _aplicar_estilo_shell_app():
             font-size: 0.76rem;
             letter-spacing: 0.1em;
             text-transform: uppercase;
-            color: rgba(248, 250, 252, 0.52);
+            color: color-mix(in srgb, var(--tri-text-on-header) 52%, transparent);
             font-weight: 800;
         }
         .sidebar-link-list {
             padding: 0.85rem 0.95rem;
             border-radius: 18px;
-            background: rgba(255, 255, 255, 0.04);
-            border: 1px solid rgba(255, 255, 255, 0.06);
+            background: color-mix(in srgb, var(--tri-text-on-header) 6%, transparent);
+            border: 1px solid color-mix(in srgb, var(--tri-text-on-header) 8%, transparent);
             line-height: 1.8;
             margin-bottom: 0.85rem;
         }
         .sidebar-link-list a {
-            color: rgba(248, 250, 252, 0.92);
+            color: color-mix(in srgb, var(--tri-text-on-header) 92%, transparent);
         }
         .sidebar-account {
             padding: 0.85rem 0.95rem;
             border-radius: 18px;
-            background: rgba(255, 255, 255, 0.04);
-            border: 1px solid rgba(255, 255, 255, 0.06);
+            background: color-mix(in srgb, var(--tri-text-on-header) 6%, transparent);
+            border: 1px solid color-mix(in srgb, var(--tri-text-on-header) 8%, transparent);
             margin-bottom: 0.75rem;
         }
         .sidebar-account strong {
-            color: #f8fafc;
+            color: var(--tri-text-on-header);
             display: block;
         }
         .sidebar-account span {
-            color: rgba(248, 250, 252, 0.72);
+            color: color-mix(in srgb, var(--tri-text-on-header) 72%, transparent);
             font-size: 0.88rem;
         }
         .footer-shell {
             margin-top: 1.5rem;
             padding: 1rem 1.1rem 1.25rem;
-            border-top: 1px solid rgba(15, 23, 42, 0.08);
+            border-top: 1px solid var(--tri-border);
             text-align: center;
-            color: #64748b;
+            color: var(--tri-text-soft);
             font-size: 0.92rem;
         }
         .footer-shell a {
@@ -146,8 +145,8 @@ def _aplicar_estilo_shell_app():
         .empty-shell {
             padding: 1.1rem 1.2rem;
             border-radius: 22px;
-            border: 1px dashed rgba(15, 23, 42, 0.16);
-            background: rgba(255, 255, 255, 0.78);
+            border: 1px dashed var(--tri-border-strong);
+            background: color-mix(in srgb, var(--tri-surface) 78%, transparent);
         }
         @media (max-width: 768px) {
             .trilab-topbar {
@@ -243,6 +242,10 @@ def _abrir_pagina_sidebar(destino):
 
 
 def renderizar_sidebar(usuario=None, assinatura=None):
+    secao_app = st.session_state.get("secao_app", "principal")
+    secao_atleta = st.session_state.get("secao_atleta", "visao_geral")
+    secao_treinador = st.session_state.get("secao_treinador", "visao_geral")
+
     with st.sidebar:
         st.markdown(
             """
@@ -289,24 +292,44 @@ def renderizar_sidebar(usuario=None, assinatura=None):
 
         if eh_admin(usuario):
             st.markdown('<div class="sidebar-section-title">Admin</div>', unsafe_allow_html=True)
-            if st.button("Painel Admin", key="sb_area_admin", use_container_width=True):
+            if st.button(
+                "Painel Admin",
+                key="sb_area_admin",
+                type="primary" if secao_app == "principal" else "secondary",
+                use_container_width=True,
+            ):
                 st.session_state["secao_app"] = "principal"
                 st.rerun()
             st.caption("Usuarios, financeiro, BI e auditoria centralizados no admin.")
         elif eh_atleta(usuario):
             st.markdown('<div class="sidebar-section-title">Atleta</div>', unsafe_allow_html=True)
-            if st.button("Area do Atleta", key="sb_area_atleta", use_container_width=True):
+            if st.button(
+                "Area do Atleta",
+                key="sb_area_atleta",
+                type="primary" if secao_app == "principal" and secao_atleta == "visao_geral" else "secondary",
+                use_container_width=True,
+            ):
                 st.session_state["secao_app"] = "principal"
                 st.session_state["secao_atleta"] = "visao_geral"
                 st.rerun()
-            if st.button("Treinos", key="sb_treinos_atleta", use_container_width=True):
+            if st.button(
+                "Treinos",
+                key="sb_treinos_atleta",
+                type="primary" if secao_app == "principal" and secao_atleta == "treinos" else "secondary",
+                use_container_width=True,
+            ):
                 st.session_state["secao_app"] = "principal"
                 st.session_state["secao_atleta"] = "treinos"
                 st.rerun()
             st.caption("Historico disponivel dentro da area do atleta.")
         else:
             st.markdown('<div class="sidebar-section-title">Treinador</div>', unsafe_allow_html=True)
-            if st.button("Area do Treinador", key="sb_area_treinador", use_container_width=True):
+            if st.button(
+                "Area do Treinador",
+                key="sb_area_treinador",
+                type="primary" if secao_app == "principal" and secao_treinador in {"visao_geral", "atletas", "bi"} else "secondary",
+                use_container_width=True,
+            ):
                 st.session_state["secao_app"] = "principal"
                 st.rerun()
             st.caption("Atletas, BI e relatorios ficam centralizados no painel do treinador.")
@@ -316,16 +339,21 @@ def renderizar_sidebar(usuario=None, assinatura=None):
         if chave_menu not in st.session_state:
             st.session_state[chave_menu] = False
 
-        if st.button("Financeiro", key="sb_financeiro", use_container_width=True):
+        if st.button(
+            "Financeiro",
+            key="sb_financeiro",
+            type="primary" if st.session_state.get(chave_menu) else "secondary",
+            use_container_width=True,
+        ):
             st.session_state[chave_menu] = not st.session_state[chave_menu]
             st.rerun()
 
         if st.session_state.get(chave_menu):
-            if st.button("Minha Assinatura", key="sb_minha_assinatura", use_container_width=True):
+            if st.button("Minha Assinatura", key="sb_minha_assinatura", type="secondary", use_container_width=True):
                 _abrir_pagina_sidebar("pages/minha_assinatura.py")
-            if st.button("Planos", key="sb_planos", use_container_width=True):
+            if st.button("Planos", key="sb_planos", type="secondary", use_container_width=True):
                 _abrir_pagina_sidebar("pages/planos.py")
-            if st.button("Suporte / Contato", key="sb_contato", use_container_width=True):
+            if st.button("Suporte / Contato", key="sb_contato", type="secondary", use_container_width=True):
                 _abrir_pagina_sidebar("pages/contato.py")
 def renderizar_assinatura_necessaria(assinatura):
     st.title("Assinatura necessaria")
@@ -343,6 +371,9 @@ def renderizar_assinatura_necessaria(assinatura):
 
 
 def renderizar_menu_superior(usuario):
+    secao_app = st.session_state.get("secao_app", "principal")
+    secao_atleta = st.session_state.get("secao_atleta", "visao_geral")
+
     col_titulo, col_menu = st.columns([5, 1.2])
     with col_titulo:
         nome_exibicao = usuario.get("apelido") or usuario.get("nome", "Usu\u00e1rio")
@@ -369,17 +400,32 @@ def renderizar_menu_superior(usuario):
                 st.write("Navega\u00e7\u00e3o")
                 col_area, col_treinos, col_perfil = st.columns(3)
                 with col_area:
-                    if st.button("Minha \u00e1rea", key="btn_menu_area", use_container_width=True):
+                    if st.button(
+                        "Minha \u00e1rea",
+                        key="btn_menu_area",
+                        type="primary" if secao_app == "principal" and secao_atleta == "visao_geral" else "secondary",
+                        use_container_width=True,
+                    ):
                         st.session_state["secao_app"] = "principal"
                         st.session_state["secao_atleta"] = "visao_geral"
                         st.rerun()
                 with col_treinos:
-                    if st.button("Treinos", key="btn_menu_treinos", use_container_width=True):
+                    if st.button(
+                        "Treinos",
+                        key="btn_menu_treinos",
+                        type="primary" if secao_app == "principal" and secao_atleta == "treinos" else "secondary",
+                        use_container_width=True,
+                    ):
                         st.session_state["secao_app"] = "principal"
                         st.session_state["secao_atleta"] = "treinos"
                         st.rerun()
                 with col_perfil:
-                    if st.button("Meu perfil", key="btn_menu_perfil_atleta", use_container_width=True):
+                    if st.button(
+                        "Meu perfil",
+                        key="btn_menu_perfil_atleta",
+                        type="primary" if secao_app == "perfil" else "secondary",
+                        use_container_width=True,
+                    ):
                         st.session_state["secao_app"] = "perfil"
                         st.rerun()
                 st.divider()
@@ -476,20 +522,40 @@ def renderizar_menu_superior(usuario):
                 st.write("Navega\u00e7\u00e3o")
                 col_painel, col_perfil = st.columns(2)
                 with col_painel:
-                    if st.button("Painel", key="btn_menu_painel_treinador", use_container_width=True):
+                    if st.button(
+                        "Painel",
+                        key="btn_menu_painel_treinador",
+                        type="primary" if secao_app == "principal" else "secondary",
+                        use_container_width=True,
+                    ):
                         st.session_state["secao_app"] = "principal"
                         st.rerun()
                 with col_perfil:
-                    if st.button("Meu perfil", key="btn_menu_perfil_treinador", use_container_width=True):
+                    if st.button(
+                        "Meu perfil",
+                        key="btn_menu_perfil_treinador",
+                        type="primary" if secao_app == "perfil" else "secondary",
+                        use_container_width=True,
+                    ):
                         st.session_state["secao_app"] = "perfil"
                         st.rerun()
                 st.divider()
             else:
                 st.divider()
-                if st.button("Painel admin", key="btn_menu_painel_admin", use_container_width=True):
+                if st.button(
+                    "Painel admin",
+                    key="btn_menu_painel_admin",
+                    type="primary" if secao_app == "principal" else "secondary",
+                    use_container_width=True,
+                ):
                     st.session_state["secao_app"] = "principal"
                     st.rerun()
-                if st.button("Meu perfil", key="btn_menu_perfil_admin", use_container_width=True):
+                if st.button(
+                    "Meu perfil",
+                    key="btn_menu_perfil_admin",
+                    type="primary" if secao_app == "perfil" else "secondary",
+                    use_container_width=True,
+                ):
                     st.session_state["secao_app"] = "perfil"
                     st.rerun()
                 st.divider()

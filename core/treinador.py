@@ -3,17 +3,11 @@ import os
 from pathlib import Path
 
 from core.banco import conectar
+from core.theme import TRILAB_DEFAULT_THEME, normalizar_hex
 from core.usuarios import buscar_usuario_por_email, buscar_usuario_por_id
 
 DEFAULT_PUBLIC_APP_URL = "https://trilab-treinamento.onrender.com"
-DEFAULT_TEMA_TREINADOR = {
-    "cor_primaria": "#1b6f5c",
-    "cor_secundaria": "#2f8f7a",
-    "cor_botao": "#1b6f5c",
-    "cor_cards": "#f7fbf9",
-    "cor_header": "#102f2b",
-    "logo_url": None,
-}
+DEFAULT_TEMA_TREINADOR = dict(TRILAB_DEFAULT_THEME)
 
 
 def _resolver_url_base_publica():
@@ -55,10 +49,7 @@ def gerar_link_convite(treinador_id, base_url=None):
 
 
 def _normalizar_cor(valor, fallback):
-    cor = (valor or "").strip()
-    if cor.startswith("#") and len(cor) in {4, 7}:
-        return cor
-    return fallback
+    return normalizar_hex(valor, fallback)
 
 
 def tema_padrao_treinador():

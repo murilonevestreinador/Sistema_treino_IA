@@ -186,24 +186,24 @@ def _render_ordenacao_exercicios(atleta_id, semana_numero, treino):
             itens_exibidos = [rotulo_por_id[item_id] for item_id in ordem_atual]
             custom_style = """
             .sortable-component {
-                border: 1px solid rgba(15, 23, 42, 0.08);
+                border: 1px solid var(--tri-border);
                 border-radius: 16px;
                 padding: 0.35rem;
                 margin-bottom: 0.75rem;
-                background: #f8fafc;
+                background: var(--tri-bg-soft);
             }
             .sortable-container {
                 background: transparent;
             }
             .sortable-item, .sortable-item:hover {
-                background: #ffffff;
-                border: 1px solid rgba(15, 23, 42, 0.08);
+                background: var(--tri-surface);
+                border: 1px solid var(--tri-border);
                 border-radius: 12px;
-                color: #102f2b;
+                color: var(--tri-text-strong);
                 font-weight: 600;
                 padding: 0.7rem 0.85rem;
                 margin-bottom: 0.45rem;
-                box-shadow: 0 8px 18px rgba(15, 23, 42, 0.06);
+                box-shadow: var(--tri-shadow-soft);
             }
             """
             itens_ordenados = sort_items(
@@ -222,7 +222,7 @@ def _render_ordenacao_exercicios(atleta_id, semana_numero, treino):
                 with col_rotulo:
                     st.markdown(
                         f"""
-                        <div style="padding:0.7rem 0.85rem; border:1px solid rgba(15, 23, 42, 0.08); border-radius:12px; background:#ffffff; margin-bottom:0.45rem;">
+                        <div style="padding:0.7rem 0.85rem; border:1px solid var(--tri-border); border-radius:12px; background:var(--tri-surface); margin-bottom:0.45rem; color:var(--tri-text-strong);">
                             {rotulo_por_id[item_id]}
                         </div>
                         """,
@@ -277,24 +277,24 @@ def _reordenar_exercicios_editor(atleta_id, semana_numero, nome_treino, exercici
     if _sort_component_habilitado():
         custom_style = """
         .sortable-component {
-            border: 1px dashed rgba(15, 23, 42, 0.12);
+            border: 1px dashed var(--tri-border-strong);
             border-radius: 16px;
             padding: 0.35rem;
             margin-bottom: 0.8rem;
-            background: rgba(248, 250, 252, 0.88);
+            background: color-mix(in srgb, var(--tri-bg-soft) 88%, transparent);
         }
         .sortable-container {
             background: transparent;
         }
         .sortable-item, .sortable-item:hover {
-            background: #ffffff;
-            border: 1px solid rgba(15, 23, 42, 0.08);
+            background: var(--tri-surface);
+            border: 1px solid var(--tri-border);
             border-radius: 12px;
-            color: #102f2b;
+            color: var(--tri-text-strong);
             font-weight: 600;
             padding: 0.8rem 0.9rem;
             margin-bottom: 0.45rem;
-            box-shadow: 0 8px 18px rgba(15, 23, 42, 0.06);
+            box-shadow: var(--tri-shadow-soft);
         }
         """
         itens_ordenados = sort_items(
@@ -314,7 +314,7 @@ def _reordenar_exercicios_editor(atleta_id, semana_numero, nome_treino, exercici
         with col_rotulo:
             st.markdown(
                 f"""
-                <div style="padding:0.7rem 0.85rem; border:1px solid rgba(15, 23, 42, 0.08); border-radius:12px; background:#ffffff; margin-bottom:0.45rem;">
+                <div style="padding:0.7rem 0.85rem; border:1px solid var(--tri-border); border-radius:12px; background:var(--tri-surface); margin-bottom:0.45rem; color:var(--tri-text-strong);">
                     {_rotulo_bloco_exercicio(item['dados'], posicao)}
                 </div>
                 """,
@@ -408,43 +408,43 @@ def _aplicar_estilo_editor_treino():
         .trainer-banner {
             padding: 1.15rem 1.25rem;
             border-radius: 24px;
-            background: linear-gradient(135deg, #0f172a 0%, var(--tri-primary, #003b7a) 62%, #1d4ed8 100%);
-            color: #f8fafc;
+            background: linear-gradient(135deg, var(--tri-header-start) 0%, var(--tri-primary) 62%, var(--tri-header-end) 100%);
+            color: var(--tri-text-on-header);
             margin-bottom: 1rem;
-            box-shadow: 0 24px 52px rgba(15, 23, 42, 0.14);
+            box-shadow: var(--tri-shadow-strong);
         }
         .trainer-banner h2 {
             margin: 0;
-            color: #f8fafc;
+            color: var(--tri-text-on-header);
         }
         .trainer-banner p {
             margin: 0.35rem 0 0;
-            color: rgba(248, 250, 252, 0.78);
+            color: color-mix(in srgb, var(--tri-text-on-header) 78%, transparent);
         }
         .trainer-editor-shell {
-            border: 1px solid rgba(15, 23, 42, 0.08);
+            border: 1px solid var(--tri-border);
             border-radius: 24px;
             padding: 1rem;
-            background: rgba(255, 255, 255, 0.94);
-            box-shadow: 0 18px 34px rgba(15, 23, 42, 0.06);
+            background: color-mix(in srgb, var(--tri-surface) 94%, transparent);
+            box-shadow: var(--tri-shadow-card);
             margin-bottom: 1rem;
         }
         .trainer-editor-card {
-            border: 1px solid rgba(15, 23, 42, 0.08);
+            border: 1px solid var(--tri-border);
             border-radius: 18px;
             padding: 0.9rem 0.95rem;
-            background: #ffffff;
-            box-shadow: 0 10px 22px rgba(15, 23, 42, 0.04);
+            background: var(--tri-surface);
+            box-shadow: var(--tri-shadow-soft);
             margin-bottom: 0.75rem;
         }
         .trainer-editor-card h4 {
             margin: 0;
-            color: #0f172a;
+            color: var(--tri-text-strong);
             font-size: 1rem;
         }
         .trainer-editor-card p {
             margin: 0.2rem 0 0;
-            color: #475569;
+            color: var(--tri-text-soft);
             font-size: 0.88rem;
         }
         </style>
