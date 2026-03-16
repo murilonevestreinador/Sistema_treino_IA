@@ -279,6 +279,29 @@ def _aplicar_estilo_dashboard():
             box-shadow: var(--tri-shadow-card);
             background: linear-gradient(135deg, var(--tri-bg-soft) 0%, var(--tri-surface) 100%);
         }
+        .execution-shell {
+            border-radius: 24px;
+            border: 1px solid var(--tri-border);
+            background: color-mix(in srgb, var(--tri-surface) 98%, transparent);
+            padding: 1.05rem;
+            box-shadow: var(--tri-shadow-card);
+            margin-bottom: 1rem;
+        }
+        .execution-toolbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 1rem;
+            margin-bottom: 0.95rem;
+        }
+        .execution-toolbar h3 {
+            margin: 0;
+            color: var(--tri-text-strong);
+        }
+        .execution-toolbar p {
+            margin: 0.2rem 0 0;
+            color: var(--tri-text-soft);
+        }
         .workout-card .eyebrow {
             display: inline-block;
             font-size: 0.72rem;
@@ -650,7 +673,7 @@ def _render_contexto_carga_semana(semana, avaliacoes):
         st.info("Ainda nao ha avaliacao de carga salva. As orientacoes seguem qualitativas ate existir referencia.")
 
 
-def _salvar_execucao_treino_atleta(usuario, semana, nome_treino, exercicios):
+def _salvar_execucao_treino_atleta(usuario, semana, nome_treino, exercicios, rerun_apos_salvar=True):
     prefixo = f"exec_{usuario['id']}_{semana['semana']}_{nome_treino}"
     payload = []
     avaliacoes_salvas = 0
@@ -695,7 +718,7 @@ def _salvar_execucao_treino_atleta(usuario, semana, nome_treino, exercicios):
     if erros:
         for erro in erros:
             st.error(erro)
-        return
+        return False
 
     for item in payload:
         if item.get("modo_carga") == "avaliacao":
@@ -721,7 +744,9 @@ def _salvar_execucao_treino_atleta(usuario, semana, nome_treino, exercicios):
         f"Execucao de {nome_treino} salva."
         + (f" {avaliacoes_salvas} avaliacao(oes) de carga atualizada(s)." if avaliacoes_salvas else "")
     )
-    st.rerun()
+    if rerun_apos_salvar:
+        st.rerun()
+    return True
 
 
 def _render_form_execucao_exercicios(usuario, semana, nome_treino, exercicios):
@@ -1041,23 +1066,17 @@ def _render_grade_treinos(semana, treino_semana, progresso):
     nomes_treinos = list(treino_semana.keys())
     if not nomes_treinos:
         st.info("Nenhum treino dispon\u00edvel para esta semana.")
-        return None
-
-    treino_aberto = st.session_state.get("treino_aberto_nome")
-    if treino_aberto not in treino_semana:
-        treino_aberto = nomes_treinos[0]
-        st.session_state["treino_aberto_nome"] = treino_aberto
+        return
 
     for inicio in range(0, len(nomes_treinos), 2):
         colunas = st.columns(2)
         for indice, nome_treino in enumerate(nomes_treinos[inicio:inicio + 2]):
             exercicios = treino_semana[nome_treino]
             feito = bool(progresso.get(nome_treino, {}).get("feito"))
-            ativo = nome_treino == treino_aberto
             with colunas[indice]:
                 st.markdown(
                     f"""
-                    <div class="workout-card {'active' if ativo else ''}">
+                    <div class="workout-card">
                         <span class="eyebrow">Treino da semana</span>
                         <h4>{nome_treino}</h4>
                         <p>{len(exercicios)} exerc\u00edcios planejados para este bloco.</p>
@@ -1069,23 +1088,22 @@ def _render_grade_treinos(semana, treino_semana, progresso):
                 if st.button(
                     f"Abrir {nome_treino}",
                     key=f"abrir_{nome_treino}",
-                    type="primary" if ativo else "secondary",
+                    type="secondary",
                     use_container_width=True,
                 ):
-                    st.session_state["treino_aberto_nome"] = nome_treino
+                    st.session_state["treino_aberto"] = nome_treino
                     st.rerun()
-    return st.session_state.get("treino_aberto_nome")
 
 
-def _render_detalhe_treino(usuario, semana, nome_treino, exercicios, progresso_item):
+def _render_cabecalho_execucao_treino(semana, nome_treino, progresso_item):
     feito_atual = bool(progresso_item.get("feito"))
     st.markdown(
         f"""
-        <div class="workout-detail">
-            <div class="detail-header">
+        <div class="execution-shell">
+            <div class="execution-toolbar">
                 <div>
                     <h3>{nome_treino}</h3>
-                    <p>Execute o treino, marque como conclu\u00eddo e registre seu feedback ao final.</p>
+                    <p>Fase {semana['fase'].capitalize()} | Semana {semana['semana']} | Foque apenas na execu\u00e7\u00e3o deste treino.</p>
                 </div>
                 <div>
                     <span class="status-pill {'done' if feito_atual else 'pending'}">{'Conclu\u00eddo' if feito_atual else 'Pendente'}</span>
@@ -1096,24 +1114,56 @@ def _render_detalhe_treino(usuario, semana, nome_treino, exercicios, progresso_i
         unsafe_allow_html=True,
     )
 
-    _render_guia_avaliacao_semana(semana, exercicios)
-    _render_card_exercicios(exercicios)
-    _render_form_execucao_exercicios(usuario, semana, nome_treino, exercicios)
 
-    chave_checkbox = f"feito_{usuario['id']}_{semana['semana']}_{nome_treino}"
-    if chave_checkbox not in st.session_state:
-        st.session_state[chave_checkbox] = feito_atual
+def _voltar_para_lista_treinos():
+    st.session_state["treino_aberto"] = None
+    if st.session_state.get("feedback_pendente"):
+        st.session_state.pop("feedback_pendente", None)
+    st.rerun()
 
-    novo_valor = st.checkbox("Marcar treino como conclu\u00eddo", key=chave_checkbox)
-    if novo_valor != feito_atual:
-        marcar_treino_feito(usuario["id"], semana["semana"], nome_treino, novo_valor)
-        if novo_valor:
+
+def _render_acoes_execucao_treino(usuario, semana, nome_treino, exercicios, progresso_item):
+    feito_atual = bool(progresso_item.get("feito"))
+    col_salvar, col_concluir, col_feedback = st.columns(3)
+    with col_salvar:
+        if st.button(
+            "Salvar progresso",
+            key=f"salvar_execucao_rapida_{usuario['id']}_{semana['semana']}_{nome_treino}",
+            type="secondary",
+            use_container_width=True,
+        ):
+            _salvar_execucao_treino_atleta(usuario, semana, nome_treino, exercicios)
+    with col_concluir:
+        if st.button(
+            "Concluir treino",
+            key=f"concluir_treino_{usuario['id']}_{semana['semana']}_{nome_treino}",
+            type="primary",
+            use_container_width=True,
+        ):
+            salvou = _salvar_execucao_treino_atleta(
+                usuario,
+                semana,
+                nome_treino,
+                exercicios,
+                rerun_apos_salvar=False,
+            )
+            if not salvou:
+                return
+            marcar_treino_feito(usuario["id"], semana["semana"], nome_treino, True)
+            st.session_state[f"feito_{usuario['id']}_{semana['semana']}_{nome_treino}"] = True
             _abrir_feedback_pendente(usuario["id"], semana["semana"], nome_treino, exercicios)
-        elif st.session_state.get("feedback_pendente", {}).get("nome_treino") == nome_treino:
-            st.session_state.pop("feedback_pendente", None)
-        st.rerun()
+            st.session_state["mensagem_execucao_carga"] = f"Treino {nome_treino} concluido com sucesso."
+            st.rerun()
+    with col_feedback:
+        if st.button(
+            "Voltar para treinos",
+            key=f"voltar_lista_treinos_{usuario['id']}_{semana['semana']}_{nome_treino}",
+            type="secondary",
+            use_container_width=True,
+        ):
+            _voltar_para_lista_treinos()
 
-    if bool(buscar_progresso_semana(usuario["id"], semana["semana"]).get(nome_treino, {}).get("feito")):
+    if feito_atual:
         if st.button(
             "Dar feedback deste treino",
             key=f"reabrir_feedback_{usuario['id']}_{semana['semana']}_{nome_treino}",
@@ -1122,25 +1172,58 @@ def _render_detalhe_treino(usuario, semana, nome_treino, exercicios, progresso_i
             _abrir_feedback_pendente(usuario["id"], semana["semana"], nome_treino, exercicios)
             st.rerun()
 
+
+def _render_execucao_treino(usuario, semana, nome_treino, exercicios, progresso_item):
+    col_voltar, col_video = st.columns([1.2, 5])
+    with col_voltar:
+        if st.button(
+            "\u2190 Voltar para treinos",
+            key=f"voltar_topo_treinos_{usuario['id']}_{semana['semana']}_{nome_treino}",
+            type="secondary",
+            use_container_width=True,
+        ):
+            _voltar_para_lista_treinos()
+    with col_video:
+        st.caption("Tela focada na execucao. Registre apenas o que voce precisa durante a sessao.")
+
+    _render_cabecalho_execucao_treino(semana, nome_treino, progresso_item)
+    _render_guia_avaliacao_semana(semana, exercicios)
+    _render_card_exercicios(exercicios)
+    _render_form_execucao_exercicios(usuario, semana, nome_treino, exercicios)
+    _render_acoes_execucao_treino(usuario, semana, nome_treino, exercicios, progresso_item)
     _render_feedback_pendente(nome_treino_esperado=nome_treino)
 
 
 def _render_area_treinos(usuario, semana, treino_semana, progresso):
+    treino_aberto = st.session_state.get("treino_aberto")
+    if treino_aberto and treino_aberto not in treino_semana:
+        st.session_state["treino_aberto"] = None
+        treino_aberto = None
+
+    if treino_aberto:
+        if not st.session_state.get("feedback_pendente"):
+            _render_video_exercicio()
+        _render_execucao_treino(
+            usuario,
+            semana,
+            treino_aberto,
+            treino_semana[treino_aberto],
+            progresso.get(treino_aberto, {}),
+        )
+        return
+
     _render_contexto_carga_semana(semana, listar_avaliacoes_forca(usuario["id"]))
     _render_resumo_avaliacao_concluida(usuario["id"], semana["semana"])
-    if not st.session_state.get("feedback_pendente"):
-        _render_video_exercicio()
-    treino_aberto = _render_grade_treinos(semana, treino_semana, progresso)
-    if not treino_aberto:
-        return
-    st.markdown("")
-    _render_detalhe_treino(
-        usuario,
-        semana,
-        treino_aberto,
-        treino_semana[treino_aberto],
-        progresso.get(treino_aberto, {}),
+    st.markdown(
+        """
+        <div class="section-shell">
+            <h3>Lista de treinos da semana</h3>
+            <p>Escolha um treino para abrir uma tela exclusiva de execucao.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
+    _render_grade_treinos(semana, treino_semana, progresso)
 
 
 def tela_dashboard(usuario):

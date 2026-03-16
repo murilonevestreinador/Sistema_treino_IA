@@ -171,7 +171,7 @@ def inicializar_sessao():
         "mensagem_onboarding": "",
         "secao_atleta": "visao_geral",
         "secao_app": "principal",
-        "treino_aberto_nome": None,
+        "treino_aberto": None,
     }
     for chave, valor in defaults.items():
         if chave not in st.session_state:
