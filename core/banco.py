@@ -131,6 +131,9 @@ def _criar_tabela_treinador_atleta(cursor):
             treinador_id INTEGER NOT NULL,
             atleta_id INTEGER NOT NULL,
             status TEXT DEFAULT 'pendente',
+            status_vinculo TEXT DEFAULT 'pendente',
+            data_inicio DATE NULL,
+            data_fim DATE NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(treinador_id, atleta_id),
             FOREIGN KEY (treinador_id) REFERENCES usuarios(id),
@@ -138,6 +141,15 @@ def _criar_tabela_treinador_atleta(cursor):
         )
         """
     )
+
+    colunas = {
+        "status_vinculo": "TEXT DEFAULT 'pendente'",
+        "data_inicio": "DATE NULL",
+        "data_fim": "DATE NULL",
+        "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+    }
+    for nome, definicao in colunas.items():
+        _adicionar_coluna_se_necessario(cursor, "treinador_atleta", nome, definicao)
 
 
 def _criar_tabela_convites_treinador_link(cursor):
@@ -404,12 +416,27 @@ def _criar_tabela_planos(cursor):
             codigo TEXT NOT NULL UNIQUE,
             nome TEXT NOT NULL,
             tipo TEXT NOT NULL,
+            tipo_plano TEXT,
+            periodicidade TEXT DEFAULT 'mensal',
             preco_mensal REAL NOT NULL,
+            valor_base NUMERIC(10,2),
+            taxa_por_aluno_ativo NUMERIC(10,2) DEFAULT 0,
             limite_atletas INTEGER NULL,
-            ativo INTEGER DEFAULT 1
+            ativo INTEGER DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         """
-        )
+    )
+
+    colunas = {
+        "tipo_plano": "TEXT",
+        "periodicidade": "TEXT DEFAULT 'mensal'",
+        "valor_base": "NUMERIC(10,2)",
+        "taxa_por_aluno_ativo": "NUMERIC(10,2) DEFAULT 0",
+        "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+    }
+    for nome, definicao in colunas.items():
+        _adicionar_coluna_se_necessario(cursor, "planos", nome, definicao)
 
 
 def _criar_tabela_avaliacao_forca(cursor):
@@ -510,15 +537,29 @@ def _criar_tabela_execucao_exercicio(cursor):
 
 def _seed_planos(cursor):
     planos = [
-        ("atleta_mensal", "Plano Atleta Mensal", "atleta", 49.90, None, 1),
-        ("treinador_mensal", "Plano Treinador Mensal", "treinador", 149.90, 30, 1),
+        ("atleta_mensal", "Plano Atleta Mensal", "atleta", "atleta", "mensal", 49.90, 49.90, 0, None, 1),
+        ("atleta_anual", "Plano Atleta Anual", "atleta", "atleta", "anual", 499.00, 499.00, 0, None, 1),
+        ("treinador_mensal", "Plano Treinador Mensal", "treinador", "treinador", "mensal", 149.90, 149.90, 19.90, None, 1),
+        ("treinador_anual", "Plano Treinador Anual", "treinador", "treinador", "anual", 1499.00, 1499.00, 16.90, None, 1),
     ]
     for plano in planos:
         cursor.execute(
             """
-            INSERT INTO planos (codigo, nome, tipo, preco_mensal, limite_atletas, ativo)
-            VALUES (%s, %s, %s, %s, %s, %s)
-            ON CONFLICT (codigo) DO NOTHING
+            INSERT INTO planos (
+                codigo, nome, tipo, tipo_plano, periodicidade, preco_mensal,
+                valor_base, taxa_por_aluno_ativo, limite_atletas, ativo, created_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+            ON CONFLICT (codigo) DO UPDATE SET
+                nome = EXCLUDED.nome,
+                tipo = EXCLUDED.tipo,
+                tipo_plano = EXCLUDED.tipo_plano,
+                periodicidade = EXCLUDED.periodicidade,
+                preco_mensal = EXCLUDED.preco_mensal,
+                valor_base = EXCLUDED.valor_base,
+                taxa_por_aluno_ativo = EXCLUDED.taxa_por_aluno_ativo,
+                limite_atletas = EXCLUDED.limite_atletas,
+                ativo = EXCLUDED.ativo
             """,
             plano,
         )
@@ -536,6 +577,11 @@ def _criar_tabela_assinaturas(cursor):
             valor REAL,
             data_inicio TEXT NOT NULL,
             data_fim TEXT,
+            data_renovacao DATE NULL,
+            valor_base_cobrado NUMERIC(10,2),
+            quantidade_alunos_ativos_fechamento INTEGER DEFAULT 0,
+            valor_taxa_alunos NUMERIC(10,2) DEFAULT 0,
+            valor_total_cobrado NUMERIC(10,2),
             renovacao_automatica INTEGER DEFAULT 1,
             gateway TEXT DEFAULT 'manual',
             gateway_reference TEXT,
@@ -555,6 +601,11 @@ def _criar_tabela_assinaturas(cursor):
         "valor": "REAL",
         "data_inicio": "TEXT NOT NULL",
         "data_fim": "TEXT",
+        "data_renovacao": "DATE NULL",
+        "valor_base_cobrado": "NUMERIC(10,2)",
+        "quantidade_alunos_ativos_fechamento": "INTEGER DEFAULT 0",
+        "valor_taxa_alunos": "NUMERIC(10,2) DEFAULT 0",
+        "valor_total_cobrado": "NUMERIC(10,2)",
         "renovacao_automatica": "INTEGER DEFAULT 1",
         "gateway": "TEXT DEFAULT 'manual'",
         "gateway_reference": "TEXT",
@@ -573,6 +624,9 @@ def _criar_tabela_pagamentos(cursor):
             usuario_id INTEGER NOT NULL,
             assinatura_id INTEGER NULL,
             valor REAL NOT NULL,
+            valor_bruto NUMERIC(10,2),
+            valor_desconto NUMERIC(10,2) DEFAULT 0,
+            valor_final NUMERIC(10,2),
             status TEXT NOT NULL,
             metodo_pagamento TEXT,
             data_pagamento TEXT,
@@ -581,6 +635,83 @@ def _criar_tabela_pagamentos(cursor):
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (usuario_id) REFERENCES usuarios(id),
             FOREIGN KEY (assinatura_id) REFERENCES assinaturas(id)
+        )
+        """
+    )
+
+    colunas = {
+        "valor_bruto": "NUMERIC(10,2)",
+        "valor_desconto": "NUMERIC(10,2) DEFAULT 0",
+        "valor_final": "NUMERIC(10,2)",
+    }
+    for nome, definicao in colunas.items():
+        _adicionar_coluna_se_necessario(cursor, "pagamentos", nome, definicao)
+
+
+def _criar_tabela_cupons_desconto(cursor):
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS cupons_desconto (
+            id SERIAL PRIMARY KEY,
+            codigo TEXT UNIQUE,
+            descricao TEXT,
+            tipo_desconto TEXT,
+            valor_desconto NUMERIC(10,2) DEFAULT 0,
+            percentual_desconto NUMERIC(5,2) DEFAULT 0,
+            aplicavel_para TEXT DEFAULT 'todos',
+            periodicidade_aplicavel TEXT DEFAULT 'todos',
+            quantidade_max_uso INTEGER,
+            quantidade_usada INTEGER DEFAULT 0,
+            ativo BOOLEAN DEFAULT TRUE,
+            data_inicio DATE NULL,
+            data_fim DATE NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+
+
+def _criar_tabela_descontos_aplicados(cursor):
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS descontos_aplicados (
+            id SERIAL PRIMARY KEY,
+            cupom_id INTEGER NULL,
+            usuario_id INTEGER NOT NULL,
+            assinatura_id INTEGER NULL,
+            pagamento_id INTEGER NULL,
+            valor_bruto NUMERIC(10,2),
+            valor_desconto NUMERIC(10,2),
+            valor_final NUMERIC(10,2),
+            aplicado_por TEXT DEFAULT 'manual',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (cupom_id) REFERENCES cupons_desconto(id),
+            FOREIGN KEY (usuario_id) REFERENCES usuarios(id),
+            FOREIGN KEY (assinatura_id) REFERENCES assinaturas(id),
+            FOREIGN KEY (pagamento_id) REFERENCES pagamentos(id)
+        )
+        """
+    )
+
+
+def _criar_tabela_cobrancas_alunos_treinador(cursor):
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS cobrancas_alunos_treinador (
+            id SERIAL PRIMARY KEY,
+            treinador_id INTEGER NOT NULL,
+            atleta_id INTEGER NOT NULL,
+            descricao TEXT,
+            valor NUMERIC(10,2) NOT NULL,
+            periodicidade TEXT NOT NULL,
+            status TEXT DEFAULT 'pendente',
+            data_vencimento DATE NULL,
+            data_pagamento DATE NULL,
+            gateway TEXT DEFAULT 'asaas',
+            gateway_reference TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (treinador_id) REFERENCES usuarios(id),
+            FOREIGN KEY (atleta_id) REFERENCES usuarios(id)
         )
         """
     )
@@ -603,7 +734,27 @@ def _criar_tabela_admin_logs(cursor):
     )
 
 
+def _criar_tabela_configuracoes_sistema(cursor):
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS configuracoes_sistema (
+            chave TEXT PRIMARY KEY,
+            valor TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+
+
 def _sincronizar_papeis_legados(cursor):
+    cursor.execute(
+        """
+        UPDATE treinador_atleta
+        SET status_vinculo = COALESCE(NULLIF(status_vinculo, ''), NULLIF(status, ''), 'pendente'),
+            data_inicio = COALESCE(data_inicio, DATE(created_at))
+        """
+    )
     cursor.execute(
         """
         UPDATE usuarios
@@ -623,13 +774,57 @@ def _sincronizar_papeis_legados(cursor):
         """
         UPDATE assinaturas a
         SET tipo_plano = COALESCE(NULLIF(a.tipo_plano, ''), p.tipo),
-            valor = COALESCE(a.valor, p.preco_mensal)
+            valor = COALESCE(a.valor, p.preco_mensal, p.valor_base::float),
+            data_renovacao = COALESCE(
+                a.data_renovacao,
+                CASE
+                    WHEN COALESCE(p.periodicidade, 'mensal') = 'anual' THEN CURRENT_DATE + INTERVAL '1 year'
+                    ELSE CURRENT_DATE + INTERVAL '1 month'
+                END
+            ),
+            valor_base_cobrado = COALESCE(a.valor_base_cobrado, p.valor_base, p.preco_mensal),
+            quantidade_alunos_ativos_fechamento = COALESCE(a.quantidade_alunos_ativos_fechamento, 0),
+            valor_taxa_alunos = COALESCE(a.valor_taxa_alunos, 0),
+            valor_total_cobrado = COALESCE(a.valor_total_cobrado, a.valor, p.valor_base, p.preco_mensal)
         FROM planos p
         WHERE p.id = a.plano_id
           AND (
               a.tipo_plano IS NULL OR btrim(COALESCE(a.tipo_plano, '')) = ''
               OR a.valor IS NULL
+              OR a.valor_total_cobrado IS NULL
           )
+        """
+    )
+    cursor.execute(
+        """
+        UPDATE planos
+        SET tipo_plano = COALESCE(NULLIF(tipo_plano, ''), tipo),
+            periodicidade = COALESCE(NULLIF(periodicidade, ''), 'mensal'),
+            valor_base = COALESCE(valor_base, preco_mensal),
+            taxa_por_aluno_ativo = COALESCE(taxa_por_aluno_ativo, 0)
+        """
+    )
+    cursor.execute(
+        """
+        UPDATE pagamentos
+        SET valor_bruto = COALESCE(valor_bruto, valor),
+            valor_desconto = COALESCE(valor_desconto, 0),
+            valor_final = COALESCE(valor_final, valor)
+        """
+    )
+    cursor.execute(
+        """
+        INSERT INTO configuracoes_sistema (chave, valor, updated_at)
+        SELECT 'admin_bootstrap_consumed', 'true', CURRENT_TIMESTAMP
+        WHERE EXISTS (
+            SELECT 1
+            FROM usuarios
+            WHERE COALESCE(is_admin, 0) = 1
+               OR LOWER(COALESCE(tipo_usuario, '')) = 'admin'
+        )
+        ON CONFLICT (chave) DO UPDATE
+        SET valor = EXCLUDED.valor,
+            updated_at = CURRENT_TIMESTAMP
         """
     )
 
@@ -693,6 +888,36 @@ def _criar_indices_bi(cursor):
     )
     cursor.execute(
         """
+        CREATE INDEX IF NOT EXISTS idx_treinador_atleta_snapshot
+        ON treinador_atleta (treinador_id, status_vinculo, data_inicio, data_fim)
+        """
+    )
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_assinaturas_renovacao
+        ON assinaturas (usuario_id, status, data_renovacao, created_at)
+        """
+    )
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_cupons_codigo_ativo
+        ON cupons_desconto (codigo, ativo, data_inicio, data_fim)
+        """
+    )
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_descontos_usuario_assinatura
+        ON descontos_aplicados (usuario_id, assinatura_id, pagamento_id, created_at)
+        """
+    )
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_cobrancas_treinador_status
+        ON cobrancas_alunos_treinador (treinador_id, atleta_id, status, data_vencimento, created_at)
+        """
+    )
+    cursor.execute(
+        """
         CREATE INDEX IF NOT EXISTS idx_admin_logs_admin_data
         ON admin_logs (admin_id, created_at DESC)
         """
@@ -736,7 +961,11 @@ def garantir_colunas_e_tabelas():
     _seed_planos(cursor)
     _criar_tabela_assinaturas(cursor)
     _criar_tabela_pagamentos(cursor)
+    _criar_tabela_cupons_desconto(cursor)
+    _criar_tabela_descontos_aplicados(cursor)
+    _criar_tabela_cobrancas_alunos_treinador(cursor)
     _criar_tabela_admin_logs(cursor)
+    _criar_tabela_configuracoes_sistema(cursor)
     _criar_tabela_avaliacao_forca(cursor)
     _criar_tabela_execucao_exercicio(cursor)
     _sincronizar_papeis_legados(cursor)

@@ -1,5 +1,6 @@
 import bcrypt
 import hashlib
+import os
 import secrets
 from datetime import datetime, timedelta
 
@@ -365,6 +366,90 @@ def atualizar_tipo_usuario(usuario_id, tipo_usuario):
     return buscar_usuario_por_id(usuario_id)
 
 
+def _bootstrap_admin_habilitado():
+    return (os.getenv("ALLOW_ADMIN_BOOTSTRAP") or "").strip().lower() == "true"
+
+
+def _bootstrap_admin_email():
+    return (os.getenv("ADMIN_BOOTSTRAP_EMAIL") or "").strip().lower()
+
+
+def tentar_bootstrap_primeiro_admin(usuario_id, email):
+    email_normalizado = (email or "").strip().lower()
+    email_autorizado = _bootstrap_admin_email()
+
+    if not _bootstrap_admin_habilitado() or not email_autorizado or email_normalizado != email_autorizado:
+        return buscar_usuario_por_id(usuario_id)
+
+    conn = conectar()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute(
+            """
+            SELECT valor
+            FROM configuracoes_sistema
+            WHERE chave = 'admin_bootstrap_consumed'
+            FOR UPDATE
+            """
+        )
+        flag = _linha_para_dict(cursor.fetchone())
+        if flag and (flag.get("valor") or "").strip().lower() == "true":
+            conn.commit()
+            return buscar_usuario_por_id(usuario_id)
+
+        cursor.execute(
+            """
+            SELECT id
+            FROM usuarios
+            WHERE COALESCE(is_admin, 0) = 1
+               OR LOWER(COALESCE(tipo_usuario, '')) = 'admin'
+            LIMIT 1
+            FOR UPDATE
+            """
+        )
+        admin_existente = _linha_para_dict(cursor.fetchone())
+        if admin_existente:
+            cursor.execute(
+                """
+                INSERT INTO configuracoes_sistema (chave, valor, updated_at)
+                VALUES ('admin_bootstrap_consumed', 'true', CURRENT_TIMESTAMP)
+                ON CONFLICT (chave) DO UPDATE
+                SET valor = EXCLUDED.valor,
+                    updated_at = CURRENT_TIMESTAMP
+                """
+            )
+            conn.commit()
+            return buscar_usuario_por_id(usuario_id)
+
+        cursor.execute(
+            """
+            UPDATE usuarios
+            SET tipo_usuario = 'admin',
+                is_admin = 1
+            WHERE id = %s
+              AND LOWER(COALESCE(email, '')) = %s
+            """,
+            (usuario_id, email_autorizado),
+        )
+        if cursor.rowcount:
+            cursor.execute(
+                """
+                INSERT INTO configuracoes_sistema (chave, valor, updated_at)
+                VALUES ('admin_bootstrap_consumed', 'true', CURRENT_TIMESTAMP)
+                ON CONFLICT (chave) DO UPDATE
+                SET valor = EXCLUDED.valor,
+                    updated_at = CURRENT_TIMESTAMP
+                """
+            )
+
+        conn.commit()
+    finally:
+        conn.close()
+
+    return buscar_usuario_por_id(usuario_id)
+
+
 def atualizar_status_conta(usuario_id, status_conta):
     status_normalizado = normalizar_status_conta(status_conta)
     conn = conectar()
@@ -433,7 +518,7 @@ def listar_usuarios(
             a.status AS assinatura_status,
             a.data_inicio AS assinatura_data_inicio,
             a.data_fim AS assinatura_data_fim,
-            a.valor AS assinatura_valor,
+            COALESCE(a.valor_total_cobrado, a.valor) AS assinatura_valor,
             p.nome AS plano_nome,
             p.codigo AS plano_codigo
         FROM usuarios u

@@ -13,6 +13,7 @@ from core.usuarios import (
     autenticar_usuario,
     buscar_usuario_por_email,
     criar_usuario,
+    tentar_bootstrap_primeiro_admin,
 )
 
 
@@ -115,6 +116,8 @@ def _tela_login_tab():
         if not conta_ativa(usuario):
             st.warning("Sua conta esta inativa, suspensa ou cancelada. Fale com o suporte.")
             return
+
+        usuario = tentar_bootstrap_primeiro_admin(usuario["id"], usuario["email"])
 
         convite_token = (st.session_state.get("convite_treinador_token") or "").strip()
         if convite_token and usuario.get("tipo_usuario") != "atleta":
