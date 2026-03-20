@@ -5,7 +5,7 @@ import secrets
 from datetime import datetime, timedelta
 
 from core.banco import conectar
-from core.permissoes import normalizar_status_conta, normalizar_tipo_usuario
+from core.permissoes import eh_admin, normalizar_status_conta, normalizar_tipo_usuario
 
 
 def _linha_para_dict(linha):
@@ -364,6 +364,63 @@ def atualizar_tipo_usuario(usuario_id, tipo_usuario):
     conn.commit()
     conn.close()
     return buscar_usuario_por_id(usuario_id)
+
+
+def alterar_papel_usuario_por_admin(admin_id, usuario_id, tipo_usuario):
+    tipo_normalizado = normalizar_tipo_usuario(tipo_usuario)
+    conn = conectar()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("SELECT * FROM usuarios WHERE id = %s FOR UPDATE", (admin_id,))
+        admin = _linha_para_dict(cursor.fetchone())
+        if not eh_admin(admin):
+            raise PermissionError("Apenas administradores podem alterar papeis.")
+
+        cursor.execute("SELECT * FROM usuarios WHERE id = %s FOR UPDATE", (usuario_id,))
+        usuario = _linha_para_dict(cursor.fetchone())
+        if not usuario:
+            conn.rollback()
+            return False, "Usuario nao encontrado.", None
+
+        tipo_atual = normalizar_tipo_usuario(usuario.get("tipo_usuario"), usuario.get("is_admin"))
+        if tipo_atual == tipo_normalizado:
+            conn.rollback()
+            return True, "Nenhuma alteracao foi necessaria.", _usuario_sem_senha(usuario)
+
+        if tipo_atual == "admin" and tipo_normalizado != "admin":
+            cursor.execute(
+                """
+                SELECT COUNT(*) AS total
+                FROM usuarios
+                WHERE COALESCE(is_admin, 0) = 1
+                   OR LOWER(COALESCE(tipo_usuario, '')) = 'admin'
+                """
+            )
+            total_admins = int((cursor.fetchone() or {}).get("total") or 0)
+            if total_admins <= 1:
+                conn.rollback()
+                return False, "Nao e possivel remover o privilegio do ultimo admin do sistema.", _usuario_sem_senha(usuario)
+
+        cursor.execute(
+            """
+            UPDATE usuarios
+            SET tipo_usuario = %s,
+                is_admin = %s
+            WHERE id = %s
+            """,
+            (tipo_normalizado, int(tipo_normalizado == "admin"), usuario_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    usuario_atualizado = buscar_usuario_por_id(usuario_id)
+    if tipo_atual != "admin" and tipo_normalizado == "admin":
+        return True, "Usuario promovido para admin com sucesso.", usuario_atualizado
+    if tipo_atual == "admin" and tipo_normalizado != "admin":
+        return True, "Privilegio de admin removido com sucesso.", usuario_atualizado
+    return True, "Papel atualizado com sucesso.", usuario_atualizado
 
 
 def _bootstrap_admin_habilitado():

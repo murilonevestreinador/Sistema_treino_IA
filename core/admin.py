@@ -5,8 +5,22 @@ import pandas as pd
 import streamlit as st
 
 from core.banco import conectar
+from core.financeiro import (
+    atualizar_status_pagamento as financeiro_atualizar_status_pagamento,
+    listar_cupons_desconto,
+    listar_historico_financeiro_usuario,
+    listar_pagamentos_admin as financeiro_listar_pagamentos_admin,
+    listar_planos_ativos,
+    resumo_financeiro_admin as financeiro_resumo_financeiro_admin,
+    salvar_cupom_desconto,
+)
 from core.permissoes import validar_admin
-from core.usuarios import atualizar_status_conta, atualizar_tipo_usuario, listar_usuarios, redefinir_senha_usuario
+from core.usuarios import (
+    alterar_papel_usuario_por_admin,
+    atualizar_status_conta,
+    listar_usuarios,
+    redefinir_senha_usuario,
+)
 
 
 def _fetch_all(sql, params=()):
@@ -333,80 +347,17 @@ def _listar_vinculos_admin():
 
 
 def _resumo_financeiro_admin():
-    return _fetch_one(
-        """
-        SELECT COALESCE(SUM(valor) FILTER (WHERE status = 'ativa'), 0) AS receita_mensal_estimada,
-               COUNT(*) FILTER (WHERE status = 'ativa') AS assinaturas_ativas,
-               COUNT(*) FILTER (WHERE status = 'inadimplente') AS atrasos,
-               COUNT(*) FILTER (WHERE status = 'cancelada') AS cancelamentos,
-               COUNT(*) FILTER (WHERE status = 'trial') AS trials
-        FROM assinaturas
-        """
-    ) or {}
+    return financeiro_resumo_financeiro_admin()
 
 
 def _listar_pagamentos_admin(status=None, tipo_usuario=None, plano=None, data_inicio=None, data_fim=None):
-    filtros = []
-    params = []
-    if status:
-        filtros.append(
-            "COALESCE(pg.status, CASE WHEN a.status = 'ativa' THEN 'pago' WHEN a.status = 'inadimplente' THEN 'atrasado' WHEN a.status = 'cancelada' THEN 'cancelado' ELSE 'pendente' END) = %s"
-        )
-        params.append(status)
-    if tipo_usuario:
-        filtros.append("u.tipo_usuario = %s")
-        params.append(tipo_usuario)
-    if plano:
-        filtros.append("COALESCE(a.tipo_plano, p.tipo) = %s")
-        params.append(plano)
-    if data_inicio:
-        filtros.append("COALESCE(pg.data_vencimento, a.data_fim, a.data_inicio, a.criado_em) >= %s")
-        params.append(data_inicio)
-    if data_fim:
-        filtros.append("COALESCE(pg.data_vencimento, a.data_fim, a.data_inicio, a.criado_em) <= %s")
-        params.append(data_fim)
-    where_sql = f"WHERE {' AND '.join(filtros)}" if filtros else ""
-    return _fetch_all(
-        f"""
-        SELECT COALESCE(pg.id, -a.id) AS id, pg.id AS pagamento_id, a.usuario_id, u.nome AS usuario_nome, u.tipo_usuario,
-               COALESCE(p.nome, a.tipo_plano, '-') AS plano_nome,
-               COALESCE(pg.valor, a.valor, 0) AS valor,
-               COALESCE(pg.status, CASE
-                   WHEN a.status = 'ativa' THEN 'pago'
-                   WHEN a.status = 'inadimplente' THEN 'atrasado'
-                   WHEN a.status = 'cancelada' THEN 'cancelado'
-                   ELSE 'pendente'
-               END) AS status,
-               pg.metodo_pagamento, pg.data_pagamento,
-               COALESCE(pg.data_vencimento, a.data_fim) AS data_vencimento,
-               a.id AS assinatura_id, a.status AS assinatura_status
-        FROM assinaturas a
-        JOIN usuarios u ON u.id = a.usuario_id
-        LEFT JOIN LATERAL (
-            SELECT *
-            FROM pagamentos px
-            WHERE px.assinatura_id = a.id
-            ORDER BY COALESCE(px.created_at, CURRENT_TIMESTAMP) DESC, px.id DESC
-            LIMIT 1
-        ) pg ON TRUE
-        LEFT JOIN planos p ON p.id = a.plano_id
-        {where_sql}
-        ORDER BY COALESCE(pg.created_at, a.created_at, CURRENT_TIMESTAMP) DESC, a.id DESC
-        """,
-        tuple(params),
-    )
+    planos = {item["tipo_plano"]: item["id"] for item in listar_planos_ativos()}
+    plano_id = planos.get(plano) if plano else None
+    return financeiro_listar_pagamentos_admin(status, tipo_usuario, data_inicio, data_fim, plano_id)
 
 
 def _historico_financeiro_usuario(usuario_id):
-    return _fetch_all(
-        """
-        SELECT id, valor, status, metodo_pagamento, data_pagamento, data_vencimento, referencia_externa
-        FROM pagamentos
-        WHERE usuario_id = %s
-        ORDER BY COALESCE(created_at, CURRENT_TIMESTAMP) DESC, id DESC
-        """,
-        (usuario_id,),
-    )
+    return listar_historico_financeiro_usuario(usuario_id)
 
 
 def _listar_logs_admin(limite=50):
@@ -423,48 +374,10 @@ def _listar_logs_admin(limite=50):
 
 
 def _atualizar_pagamento_status(admin_id, pagamento_id, novo_status):
-    if int(pagamento_id) < 0:
-        assinatura_id = abs(int(pagamento_id))
-        assinatura = _fetch_one(
-            "SELECT id, usuario_id, valor, gateway_reference, data_fim, status FROM assinaturas WHERE id = %s",
-            (assinatura_id,),
-        )
-        if not assinatura:
-            return False, "Assinatura nao encontrada."
-        _execute(
-            """
-            INSERT INTO pagamentos (
-                usuario_id, assinatura_id, valor, status, metodo_pagamento,
-                data_pagamento, data_vencimento, referencia_externa
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            """,
-            (
-                assinatura["usuario_id"],
-                assinatura_id,
-                float(assinatura.get("valor") or 0),
-                novo_status,
-                "manual",
-                datetime.now().isoformat(timespec="seconds") if novo_status == "pago" else None,
-                assinatura.get("data_fim"),
-                assinatura.get("gateway_reference"),
-            ),
-        )
-        mapa = {"pago": "ativa", "cancelado": "cancelada", "atrasado": "inadimplente", "pendente": "trial", "estornado": "cancelada"}
-        _execute("UPDATE assinaturas SET status = %s WHERE id = %s", (mapa.get(novo_status, "inadimplente"), assinatura_id))
-        registrar_log_admin(admin_id, f"lancou pagamento como {novo_status}", "assinatura", assinatura_id, f"assinatura {assinatura_id}")
-        return True, "Pagamento criado e atualizado."
-
-    pagamento = _fetch_one("SELECT id, usuario_id, assinatura_id, status FROM pagamentos WHERE id = %s", (pagamento_id,))
+    pagamento = _fetch_one("SELECT id, status FROM pagamentos WHERE id = %s", (pagamento_id,))
     if not pagamento:
         return False, "Pagamento nao encontrado."
-    data_pagamento = datetime.now().isoformat(timespec="seconds") if novo_status == "pago" else None
-    _execute(
-        "UPDATE pagamentos SET status = %s, data_pagamento = COALESCE(%s, data_pagamento) WHERE id = %s",
-        (novo_status, data_pagamento, pagamento_id),
-    )
-    if pagamento.get("assinatura_id"):
-        mapa = {"pago": "ativa", "cancelado": "cancelada", "atrasado": "inadimplente", "pendente": "trial", "estornado": "cancelada"}
-        _execute("UPDATE assinaturas SET status = %s WHERE id = %s", (mapa.get(novo_status, "inadimplente"), pagamento["assinatura_id"]))
+    financeiro_atualizar_status_pagamento(pagamento_id, novo_status)
     registrar_log_admin(admin_id, f"alterou pagamento para {novo_status}", "pagamento", pagamento_id, f"status anterior: {pagamento['status']}")
     return True, "Pagamento atualizado."
 
@@ -545,10 +458,29 @@ def _render_usuarios(admin):
             st.rerun()
     with col2:
         novo_tipo = st.selectbox("Novo papel", ["atleta", "treinador", "admin"], index=["atleta", "treinador", "admin"].index(usuario["tipo_usuario"]))
-        if st.button("Salvar papel", key=f"admin_tipo_{usuario_id}", use_container_width=True):
-            atualizar_tipo_usuario(usuario_id, novo_tipo)
-            registrar_log_admin(admin["id"], f"alterou papel para {novo_tipo}", "usuario", usuario_id, usuario["email"])
-            st.rerun()
+        mudanca_envuelve_admin = usuario["tipo_usuario"] == "admin" or novo_tipo == "admin"
+        if mudanca_envuelve_admin:
+            st.caption("Alteracao de privilegio administrativo: disponivel apenas para admins autenticados.")
+        acao_papel = "Salvar papel"
+        if usuario["tipo_usuario"] != "admin" and novo_tipo == "admin":
+            acao_papel = "Promover para admin"
+        elif usuario["tipo_usuario"] == "admin" and novo_tipo != "admin":
+            acao_papel = "Remover privilegio admin"
+        if st.button(acao_papel, key=f"admin_tipo_{usuario_id}", use_container_width=True):
+            ok, mensagem, usuario_atualizado = alterar_papel_usuario_por_admin(admin["id"], usuario_id, novo_tipo)
+            if ok:
+                if usuario["tipo_usuario"] != "admin" and novo_tipo == "admin":
+                    log_acao = "promoveu usuario para admin"
+                elif usuario["tipo_usuario"] == "admin" and novo_tipo != "admin":
+                    log_acao = f"removeu privilegio admin e definiu papel {novo_tipo}"
+                else:
+                    log_acao = f"alterou papel para {novo_tipo}"
+                registrar_log_admin(admin["id"], log_acao, "usuario", usuario_id, usuario["email"])
+                st.success(mensagem)
+                if int(admin.get("id") or 0) == int(usuario_id) and usuario_atualizado:
+                    st.session_state["usuario"] = usuario_atualizado
+                st.rerun()
+            st.error(mensagem)
     with col3:
         if st.button("Gerar senha temporaria", key=f"admin_pwd_{usuario_id}", use_container_width=True):
             senha = secrets.token_urlsafe(8)
@@ -610,40 +542,111 @@ def _render_vinculos(admin):
 def _render_financeiro(admin):
     resumo = _resumo_financeiro_admin()
     _cards_metricas([
-        {"titulo": "Receita mensal estimada", "valor": _formatar_moeda(resumo.get("receita_mensal_estimada"))},
-        {"titulo": "Assinaturas ativas", "valor": int(resumo.get("assinaturas_ativas") or 0)},
-        {"titulo": "Atrasos", "valor": int(resumo.get("atrasos") or 0)},
-        {"titulo": "Cancelamentos", "valor": int(resumo.get("cancelamentos") or 0)},
-        {"titulo": "Trials", "valor": int(resumo.get("trials") or 0)},
+        {"titulo": "Receita total do mes", "valor": _formatar_moeda(resumo.get("receita_total_mes"))},
+        {"titulo": "Receita recorrente prevista", "valor": _formatar_moeda(resumo.get("receita_recorrente_prevista"))},
+        {"titulo": "Atletas solo ativos", "valor": int(resumo.get("quantidade_atletas_solo_ativos") or 0)},
+        {"titulo": "Treinadores ativos", "valor": int(resumo.get("quantidade_treinadores_ativos") or 0)},
+        {"titulo": "Alunos ativos vinculados", "valor": int(resumo.get("total_alunos_ativos_vinculados") or 0)},
+        {"titulo": "Descontos aplicados", "valor": _formatar_moeda(resumo.get("total_descontos_aplicados"))},
+        {"titulo": "Inadimplencia", "valor": _formatar_moeda(resumo.get("total_inadimplencia"))},
+        {"titulo": "Pagamentos pendentes", "valor": int(resumo.get("total_pagamentos_pendentes") or 0)},
+        {"titulo": "Pagamentos bonificados", "valor": int(resumo.get("total_pagamentos_bonificados") or 0)},
     ])
-    col1, col2, col3, col4, col5 = st.columns(5)
-    with col1:
-        status = st.selectbox("Status pagamento", ["", "pago", "pendente", "atrasado", "cancelado", "estornado"], format_func=lambda x: x or "Todos")
-    with col2:
-        tipo = st.selectbox("Tipo usuario", ["", "atleta", "treinador"], format_func=lambda x: x or "Todos")
-    with col3:
-        plano = st.selectbox("Tipo plano", ["", "atleta", "treinador"], format_func=lambda x: x or "Todos")
-    with col4:
-        data_inicio = st.date_input("Periodo inicial", value=date.today() - timedelta(days=90))
-    with col5:
-        data_fim = st.date_input("Periodo final", value=date.today())
-    pagamentos = _listar_pagamentos_admin(status or None, tipo or None, plano or None, data_inicio.isoformat(), data_fim.isoformat())
-    st.dataframe(pd.DataFrame(pagamentos), use_container_width=True, hide_index=True)
-    if not pagamentos:
-        return
-    pagamento_id = st.selectbox("Selecionar pagamento", [p["id"] for p in pagamentos], format_func=lambda valor: next(f"{p['usuario_nome']} | {p['plano_nome']} | {p['status']}" for p in pagamentos if p["id"] == valor))
-    novo_status = st.selectbox("Nova acao financeira", ["pago", "cancelado", "atrasado", "pendente", "estornado"])
-    if st.button("Aplicar acao financeira", use_container_width=True):
-        ok, mensagem = _atualizar_pagamento_status(admin["id"], pagamento_id, novo_status)
-        if ok:
-            st.success(mensagem)
-            st.rerun()
-        st.error(mensagem)
-    usuario_id = next(p["usuario_id"] for p in pagamentos if p["id"] == pagamento_id)
-    historico = _historico_financeiro_usuario(usuario_id)
-    if historico:
-        st.markdown("#### Historico financeiro do usuario")
-        st.dataframe(pd.DataFrame(historico), use_container_width=True, hide_index=True)
+    aba_pagamentos, aba_cupons = st.tabs(["Pagamentos", "Cupons"])
+
+    with aba_pagamentos:
+        col1, col2, col3, col4, col5 = st.columns(5)
+        with col1:
+            status = st.selectbox("Status pagamento", ["", "pago", "pendente", "atrasado", "cancelado", "estornado", "bonificado"], format_func=lambda x: x or "Todos")
+        with col2:
+            tipo = st.selectbox("Tipo usuario", ["", "atleta", "treinador"], format_func=lambda x: x or "Todos")
+        with col3:
+            plano = st.selectbox("Tipo plano", ["", "atleta", "treinador"], format_func=lambda x: x or "Todos")
+        with col4:
+            data_inicio = st.date_input("Periodo inicial", value=date.today() - timedelta(days=90), key="financeiro_inicio")
+        with col5:
+            data_fim = st.date_input("Periodo final", value=date.today(), key="financeiro_fim")
+
+        pagamentos = _listar_pagamentos_admin(status or None, tipo or None, plano or None, data_inicio.isoformat(), data_fim.isoformat())
+        if pagamentos:
+            tabela = pd.DataFrame([{
+                "ID": p["id"],
+                "Usuario": p.get("usuario_nome"),
+                "Tipo": p.get("tipo_usuario"),
+                "Plano": p.get("plano_nome"),
+                "Valor bruto": _formatar_moeda(p.get("valor_bruto")),
+                "Desconto": _formatar_moeda(p.get("valor_desconto")),
+                "Valor final": _formatar_moeda(p.get("valor_final")),
+                "Status": p.get("status"),
+                "Vencimento": p.get("data_vencimento"),
+                "Pagamento": p.get("data_pagamento"),
+            } for p in pagamentos])
+            st.dataframe(tabela, use_container_width=True, hide_index=True)
+
+            pagamento_id = st.selectbox("Selecionar pagamento", [p["id"] for p in pagamentos], format_func=lambda valor: next(f"{p['usuario_nome']} | {p.get('plano_nome') or '-'} | {p['status']}" for p in pagamentos if p["id"] == valor))
+            novo_status = st.selectbox("Nova acao financeira", ["pago", "cancelado", "atrasado", "pendente", "estornado", "bonificado"])
+            if st.button("Aplicar acao financeira", use_container_width=True):
+                ok, mensagem = _atualizar_pagamento_status(admin["id"], pagamento_id, novo_status)
+                if ok:
+                    st.success(mensagem)
+                    st.rerun()
+                st.error(mensagem)
+
+            usuario_id = next(p["usuario_id"] for p in pagamentos if p["id"] == pagamento_id)
+            historico = _historico_financeiro_usuario(usuario_id)
+            if historico:
+                st.markdown("#### Historico financeiro do usuario")
+                st.dataframe(pd.DataFrame(historico), use_container_width=True, hide_index=True)
+        else:
+            st.info("Nenhum pagamento encontrado para os filtros atuais.")
+
+    with aba_cupons:
+        filtro_ativo = st.selectbox("Filtrar cupons", ["todos", "ativos", "inativos"])
+        cupons = listar_cupons_desconto(None if filtro_ativo == "todos" else filtro_ativo == "ativos")
+        if cupons:
+            st.dataframe(pd.DataFrame(cupons), use_container_width=True, hide_index=True)
+        else:
+            st.caption("Nenhum cupom cadastrado.")
+
+        st.markdown("#### Criar ou editar cupom")
+        with st.form("form_cupom_admin"):
+            col_a, col_b, col_c = st.columns(3)
+            with col_a:
+                codigo = st.text_input("Codigo")
+                tipo_desconto = st.selectbox("Tipo desconto", ["percentual", "valor_fixo", "gratuidade"])
+                aplicavel_para = st.selectbox("Aplicavel para", ["todos", "atleta", "treinador"])
+            with col_b:
+                descricao = st.text_input("Descricao")
+                percentual_desconto = st.number_input("Percentual desconto", min_value=0.0, max_value=100.0, value=0.0, step=5.0)
+                periodicidade_aplicavel = st.selectbox("Periodicidade", ["todos", "mensal", "anual"])
+            with col_c:
+                valor_desconto = st.number_input("Valor desconto", min_value=0.0, value=0.0, step=10.0)
+                quantidade_max_uso = st.number_input("Maximo de usos", min_value=0, value=0, step=1)
+                ativo = st.checkbox("Ativo", value=True)
+            data_inicio_cupom = st.date_input("Data inicio", value=date.today(), key="cupom_inicio")
+            data_fim_cupom = st.date_input("Data fim", value=date.today() + timedelta(days=90), key="cupom_fim")
+            salvar = st.form_submit_button("Salvar cupom", use_container_width=True)
+
+        if salvar:
+            try:
+                salvar_cupom_desconto({
+                    "codigo": codigo,
+                    "descricao": descricao,
+                    "tipo_desconto": tipo_desconto,
+                    "valor_desconto": valor_desconto,
+                    "percentual_desconto": percentual_desconto,
+                    "aplicavel_para": aplicavel_para,
+                    "periodicidade_aplicavel": periodicidade_aplicavel,
+                    "quantidade_max_uso": quantidade_max_uso or None,
+                    "ativo": ativo,
+                    "data_inicio": data_inicio_cupom,
+                    "data_fim": data_fim_cupom,
+                })
+                registrar_log_admin(admin["id"], "salvou cupom financeiro", "cupom", None, codigo)
+                st.success("Cupom salvo com sucesso.")
+                st.rerun()
+            except ValueError as exc:
+                st.error(str(exc))
 
 
 def _render_bi():
