@@ -85,6 +85,9 @@ def _normalizar_plano(plano):
     item["preco_mensal"] = item["valor_base"]
     item["taxa_por_aluno_ativo"] = _decimal_para_float(item.get("taxa_por_aluno_ativo") or 0)
     item["ativo"] = int(bool(item.get("ativo", 1)))
+    item["descricao"] = item.get("descricao") or ""
+    item["beneficios"] = item.get("beneficios") or ""
+    item["ordem_exibicao"] = int(item.get("ordem_exibicao") or 0)
     return item
 
 
@@ -177,7 +180,7 @@ def listar_planos_ativos(tipo_plano=None):
         SELECT *
         FROM planos
         WHERE {' AND '.join(filtros)}
-        ORDER BY COALESCE(tipo_plano, tipo), periodicidade, COALESCE(valor_base, preco_mensal)
+        ORDER BY COALESCE(ordem_exibicao, 0), COALESCE(tipo_plano, tipo), periodicidade, COALESCE(valor_base, preco_mensal)
         """,
         tuple(params),
     )
@@ -202,6 +205,113 @@ def buscar_plano_por_id(plano_id):
     plano = _normalizar_plano(cursor.fetchone())
     conn.close()
     return plano
+
+
+def listar_planos_admin(incluir_inativos=True):
+    conn = conectar()
+    cursor = conn.cursor()
+    filtros = []
+    params = []
+    if not incluir_inativos:
+        filtros.append("COALESCE(ativo, 1) = 1")
+    where_sql = f"WHERE {' AND '.join(filtros)}" if filtros else ""
+    cursor.execute(
+        f"""
+        SELECT *
+        FROM planos
+        {where_sql}
+        ORDER BY COALESCE(ordem_exibicao, 0), COALESCE(tipo_plano, tipo), periodicidade, id
+        """,
+        tuple(params),
+    )
+    itens = [_normalizar_plano(item) for item in cursor.fetchall()]
+    conn.close()
+    return itens
+
+
+def salvar_plano_admin(dados):
+    codigo = (dados.get("codigo") or "").strip().lower()
+    nome = (dados.get("nome") or "").strip()
+    tipo_plano = (dados.get("tipo_plano") or "").strip().lower()
+    periodicidade = (dados.get("periodicidade") or "mensal").strip().lower()
+    if not codigo or not nome or tipo_plano not in {"atleta", "treinador"}:
+        raise ValueError("Codigo, nome e tipo do plano sao obrigatorios.")
+
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT INTO planos (
+            codigo, nome, tipo, tipo_plano, periodicidade, preco_mensal, valor_base,
+            taxa_por_aluno_ativo, descricao, beneficios, ordem_exibicao, limite_atletas, ativo
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (codigo) DO UPDATE SET
+            nome = EXCLUDED.nome,
+            tipo = EXCLUDED.tipo,
+            tipo_plano = EXCLUDED.tipo_plano,
+            periodicidade = EXCLUDED.periodicidade,
+            preco_mensal = EXCLUDED.preco_mensal,
+            valor_base = EXCLUDED.valor_base,
+            taxa_por_aluno_ativo = EXCLUDED.taxa_por_aluno_ativo,
+            descricao = EXCLUDED.descricao,
+            beneficios = EXCLUDED.beneficios,
+            ordem_exibicao = EXCLUDED.ordem_exibicao,
+            limite_atletas = EXCLUDED.limite_atletas,
+            ativo = EXCLUDED.ativo
+        """,
+        (
+            codigo,
+            nome,
+            tipo_plano,
+            tipo_plano,
+            periodicidade,
+            float(_to_decimal(dados.get("valor_base"))),
+            float(_to_decimal(dados.get("valor_base"))),
+            float(_to_decimal(dados.get("taxa_por_aluno_ativo"))),
+            (dados.get("descricao") or "").strip() or None,
+            (dados.get("beneficios") or "").strip() or None,
+            int(dados.get("ordem_exibicao") or 0),
+            dados.get("limite_atletas"),
+            bool(dados.get("ativo", True)),
+        ),
+    )
+    conn.commit()
+    conn.close()
+    return buscar_plano_por_codigo(codigo)
+
+
+def alterar_status_plano(plano_id, ativo):
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE planos SET ativo = %s WHERE id = %s", (bool(ativo), plano_id))
+    conn.commit()
+    conn.close()
+    return buscar_plano_por_id(plano_id)
+
+
+def duplicar_plano(plano_id):
+    plano = buscar_plano_por_id(plano_id)
+    if not plano:
+        raise ValueError("Plano nao encontrado.")
+    base_codigo = f"{plano['codigo']}_copy"
+    codigo = base_codigo
+    contador = 2
+    while buscar_plano_por_codigo(codigo):
+        codigo = f"{base_codigo}_{contador}"
+        contador += 1
+    return salvar_plano_admin({
+        "codigo": codigo,
+        "nome": f"{plano['nome']} (Copia)",
+        "tipo_plano": plano["tipo_plano"],
+        "periodicidade": plano["periodicidade"],
+        "valor_base": plano["valor_base"],
+        "taxa_por_aluno_ativo": plano["taxa_por_aluno_ativo"],
+        "descricao": plano.get("descricao"),
+        "beneficios": plano.get("beneficios"),
+        "ordem_exibicao": plano.get("ordem_exibicao", 0) + 1,
+        "limite_atletas": plano.get("limite_atletas"),
+        "ativo": False,
+    })
 
 
 def buscar_plano_padrao_por_tipo(tipo_usuario, periodicidade="mensal"):
@@ -782,6 +892,41 @@ def listar_pagamentos_admin(status=None, tipo_usuario=None, periodo_inicio=None,
     return itens
 
 
+def listar_descontos_aplicados_admin(periodo_inicio=None, periodo_fim=None):
+    filtros = []
+    params = []
+    if periodo_inicio:
+        filtros.append("d.created_at::date >= %s")
+        params.append(_date_to_iso(periodo_inicio))
+    if periodo_fim:
+        filtros.append("d.created_at::date <= %s")
+        params.append(_date_to_iso(periodo_fim))
+    where_sql = f"WHERE {' AND '.join(filtros)}" if filtros else ""
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        f"""
+        SELECT
+            d.*,
+            u.nome AS usuario_nome,
+            u.tipo_usuario,
+            c.codigo AS cupom_codigo,
+            p.nome AS plano_nome
+        FROM descontos_aplicados d
+        JOIN usuarios u ON u.id = d.usuario_id
+        LEFT JOIN cupons_desconto c ON c.id = d.cupom_id
+        LEFT JOIN assinaturas a ON a.id = d.assinatura_id
+        LEFT JOIN planos p ON p.id = a.plano_id
+        {where_sql}
+        ORDER BY d.created_at DESC, d.id DESC
+        """,
+        tuple(params),
+    )
+    itens = [dict(item) for item in cursor.fetchall()]
+    conn.close()
+    return itens
+
+
 def listar_pagamentos_treinador(treinador_id):
     conn = conectar()
     cursor = conn.cursor()
@@ -807,6 +952,101 @@ def listar_assinaturas_admin():
     itens = [_normalizar_assinatura(item) for item in cursor.fetchall()]
     conn.close()
     return itens
+
+
+def listar_assinaturas_admin_filtradas(tipo_usuario=None, status=None, plano_id=None, periodo_inicio=None, periodo_fim=None, com_desconto=None, somente_trial=None):
+    filtros = []
+    params = []
+    if tipo_usuario:
+        filtros.append("u.tipo_usuario = %s")
+        params.append(tipo_usuario)
+    if status:
+        filtros.append("a.status = %s")
+        params.append(status)
+    if plano_id:
+        filtros.append("a.plano_id = %s")
+        params.append(plano_id)
+    if periodo_inicio:
+        filtros.append("a.data_inicio >= %s")
+        params.append(_date_to_iso(periodo_inicio))
+    if periodo_fim:
+        filtros.append("COALESCE(a.data_renovacao::text, a.data_fim, a.data_inicio) <= %s")
+        params.append(_date_to_iso(periodo_fim))
+    if com_desconto is True:
+        filtros.append("EXISTS (SELECT 1 FROM descontos_aplicados d WHERE d.assinatura_id = a.id)")
+    if somente_trial:
+        filtros.append("a.status = 'trial'")
+    where_sql = f"WHERE {' AND '.join(filtros)}" if filtros else ""
+
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        f"""
+        SELECT
+            a.*,
+            u.nome AS usuario_nome,
+            u.email AS usuario_email,
+            u.tipo_usuario,
+            p.codigo AS plano_codigo,
+            p.nome AS plano_nome,
+            COALESCE(p.periodicidade, 'mensal') AS periodicidade,
+            COALESCE(p.valor_base, p.preco_mensal) AS valor_base,
+            COALESCE((
+                SELECT SUM(d.valor_desconto)
+                FROM descontos_aplicados d
+                WHERE d.assinatura_id = a.id
+            ), 0) AS desconto_total
+        FROM assinaturas a
+        JOIN usuarios u ON u.id = a.usuario_id
+        JOIN planos p ON p.id = a.plano_id
+        {where_sql}
+        ORDER BY COALESCE(a.created_at, CURRENT_TIMESTAMP) DESC, a.id DESC
+        """,
+        tuple(params),
+    )
+    itens = []
+    for item in cursor.fetchall():
+        assinatura = _normalizar_assinatura(item)
+        assinatura["usuario_nome"] = item.get("usuario_nome")
+        assinatura["usuario_email"] = item.get("usuario_email")
+        assinatura["tipo_usuario"] = item.get("tipo_usuario")
+        assinatura["plano_codigo"] = item.get("plano_codigo")
+        assinatura["desconto_total"] = _decimal_para_float(item.get("desconto_total") or 0)
+        assinatura["valor_final"] = max(0.0, assinatura["valor_total_cobrado"] - assinatura["desconto_total"])
+        itens.append(assinatura)
+    conn.close()
+    return itens
+
+
+def atualizar_status_assinatura_admin(assinatura_id, novo_status):
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE assinaturas SET status = %s WHERE id = %s", (novo_status, assinatura_id))
+    conn.commit()
+    conn.close()
+    return buscar_assinatura_por_id(assinatura_id)
+
+
+def trocar_plano_assinatura_admin(assinatura_id, novo_plano_id):
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        UPDATE assinaturas
+        SET plano_id = %s,
+            tipo_plano = (SELECT COALESCE(tipo_plano, tipo) FROM planos WHERE id = %s),
+            valor_base_cobrado = (SELECT COALESCE(valor_base, preco_mensal) FROM planos WHERE id = %s),
+            valor_total_cobrado = (
+                SELECT COALESCE(valor_base, preco_mensal) + COALESCE(taxa_por_aluno_ativo, 0) * COALESCE(assinaturas.quantidade_alunos_ativos_fechamento, 0)
+                FROM planos WHERE id = %s
+            )
+        WHERE id = %s
+        """,
+        (novo_plano_id, novo_plano_id, novo_plano_id, novo_plano_id, assinatura_id),
+    )
+    conn.commit()
+    conn.close()
+    return buscar_assinatura_por_id(assinatura_id)
 
 
 def listar_historico_financeiro_usuario(usuario_id):
@@ -965,6 +1205,107 @@ def resumo_financeiro_admin():
     return item
 
 
+def gerar_resumo_financeiro_admin():
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        WITH pagamentos_base AS (
+            SELECT pg.*, u.tipo_usuario
+            FROM pagamentos pg
+            JOIN usuarios u ON u.id = pg.usuario_id
+        ),
+        atletas_solo AS (
+            SELECT COUNT(*) AS total
+            FROM usuarios u
+            WHERE u.tipo_usuario = 'atleta'
+              AND COALESCE(u.status_conta, 'ativo') = 'ativo'
+              AND NOT EXISTS (
+                  SELECT 1 FROM treinador_atleta ta
+                  WHERE ta.atleta_id = u.id
+                    AND COALESCE(ta.status_vinculo, ta.status, 'pendente') = 'ativo'
+              )
+        ),
+        treinadores_ativos AS (
+            SELECT COUNT(*) AS total
+            FROM usuarios u
+            WHERE u.tipo_usuario = 'treinador'
+              AND COALESCE(u.status_conta, 'ativo') = 'ativo'
+        ),
+        alunos_vinculados AS (
+            SELECT COUNT(*) AS total
+            FROM treinador_atleta ta
+            WHERE COALESCE(ta.status_vinculo, ta.status, 'pendente') = 'ativo'
+        )
+        SELECT
+            (SELECT COALESCE(SUM(valor_final), 0) FROM pagamentos_base WHERE status = 'pago' AND DATE_TRUNC('month', COALESCE(created_at, CURRENT_TIMESTAMP)) = DATE_TRUNC('month', CURRENT_DATE)) AS receita_mes,
+            (SELECT COALESCE(SUM(valor_total_cobrado), 0) FROM assinaturas WHERE status IN ('ativa', 'trial', 'pendente', 'inadimplente') AND renovacao_automatica = 1) AS receita_recorrente_prevista,
+            (SELECT COUNT(*) FROM assinaturas WHERE status = 'ativa') AS assinaturas_ativas,
+            (SELECT COUNT(*) FROM assinaturas WHERE status = 'inadimplente') AS assinaturas_inadimplentes,
+            (SELECT COUNT(*) FROM assinaturas WHERE status = 'trial') AS assinaturas_trial,
+            (SELECT COUNT(*) FROM pagamentos WHERE status = 'bonificado') AS total_bonificacoes,
+            (SELECT COALESCE(SUM(valor_desconto), 0) FROM descontos_aplicados) AS total_descontos_aplicados,
+            (SELECT total FROM treinadores_ativos) AS total_treinadores_ativos,
+            (SELECT total FROM atletas_solo) AS total_atletas_solo_ativos,
+            (SELECT total FROM alunos_vinculados) AS total_alunos_ativos_vinculados,
+            (SELECT COALESCE(AVG(valor_total_cobrado), 0) FROM assinaturas a JOIN usuarios u ON u.id = a.usuario_id WHERE u.tipo_usuario = 'treinador' AND a.status IN ('ativa', 'inadimplente', 'pendente')) AS ticket_medio_treinador,
+            (SELECT COALESCE(AVG(valor_total_cobrado), 0) FROM assinaturas a JOIN usuarios u ON u.id = a.usuario_id WHERE u.tipo_usuario = 'atleta' AND a.status IN ('ativa', 'inadimplente', 'pendente')) AS ticket_medio_atleta,
+            (SELECT COALESCE(SUM(valor_final), 0) FROM pagamentos WHERE status = 'atrasado') AS total_inadimplencia,
+            (SELECT COUNT(*) FROM pagamentos WHERE status = 'pendente') AS total_pagamentos_pendentes
+        """
+    )
+    resumo = _linha_para_dict(cursor.fetchone()) or {}
+    conn.close()
+    return resumo
+
+
+def serie_financeira_admin():
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        WITH receita AS (
+            SELECT TO_CHAR(DATE_TRUNC('month', COALESCE(created_at, CURRENT_TIMESTAMP)), 'YYYY-MM') AS periodo,
+                   COALESCE(SUM(CASE WHEN status = 'pago' THEN valor_final ELSE 0 END), 0) AS receita,
+                   COALESCE(SUM(valor_desconto), 0) AS descontos,
+                   COUNT(*) FILTER (WHERE status = 'atrasado') AS inadimplentes
+            FROM pagamentos
+            GROUP BY 1
+        ),
+        assinaturas_mes AS (
+            SELECT TO_CHAR(DATE_TRUNC('month', COALESCE(created_at, CURRENT_TIMESTAMP)), 'YYYY-MM') AS periodo,
+                   COUNT(*) AS novas_assinaturas,
+                   COUNT(*) FILTER (WHERE status = 'cancelada') AS cancelamentos
+            FROM assinaturas
+            GROUP BY 1
+        ),
+        usuarios_mes AS (
+            SELECT TO_CHAR(DATE_TRUNC('month', data_criacao), 'YYYY-MM') AS periodo,
+                   COUNT(*) FILTER (WHERE tipo_usuario = 'treinador') AS novos_treinadores,
+                   COUNT(*) FILTER (WHERE tipo_usuario = 'atleta') AS novos_atletas
+            FROM usuarios
+            GROUP BY 1
+        )
+        SELECT
+            COALESCE(r.periodo, a.periodo, u.periodo) AS periodo,
+            COALESCE(r.receita, 0) AS receita,
+            COALESCE(a.novas_assinaturas, 0) AS novas_assinaturas,
+            COALESCE(a.cancelamentos, 0) AS cancelamentos,
+            COALESCE(r.inadimplentes, 0) AS inadimplentes,
+            COALESCE(r.descontos, 0) AS descontos_aplicados,
+            COALESCE(u.novos_treinadores, 0) AS crescimento_treinadores,
+            COALESCE(u.novos_atletas, 0) AS crescimento_atletas
+        FROM receita r
+        FULL JOIN assinaturas_mes a ON a.periodo = r.periodo
+        FULL JOIN usuarios_mes u ON u.periodo = COALESCE(r.periodo, a.periodo)
+        ORDER BY 1
+        """
+    )
+    itens = [dict(item) for item in cursor.fetchall()]
+    conn.close()
+    return itens
+
+
 def resumo_financeiro_treinador(treinador_id):
     assinatura = buscar_assinatura_atual(treinador_id)
     alunos_ativos = contar_alunos_ativos_treinador(treinador_id, _hoje())
@@ -979,6 +1320,123 @@ def resumo_financeiro_treinador(treinador_id):
         },
         "cobrancas_alunos": listar_pagamentos_treinador(treinador_id),
     }
+
+
+def listar_treinadores_financeiro_admin():
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT
+            u.id AS treinador_id,
+            u.nome AS treinador_nome,
+            u.email AS treinador_email,
+            a.id AS assinatura_id,
+            a.status AS assinatura_status,
+            p.nome AS plano_nome,
+            COALESCE(a.valor_base_cobrado, p.valor_base, p.preco_mensal, 0) AS valor_base,
+            COALESCE(p.taxa_por_aluno_ativo, 0) AS taxa_por_aluno_ativo,
+            COALESCE(a.quantidade_alunos_ativos_fechamento, 0) AS alunos_fechamento,
+            COALESCE(a.valor_total_cobrado, a.valor, 0) AS valor_total_cobrado,
+            a.data_renovacao,
+            (
+                SELECT COUNT(*)
+                FROM treinador_atleta ta
+                WHERE ta.treinador_id = u.id
+                  AND COALESCE(ta.status_vinculo, ta.status, 'pendente') = 'ativo'
+            ) AS alunos_ativos_atualmente
+        FROM usuarios u
+        LEFT JOIN LATERAL (
+            SELECT *
+            FROM assinaturas ax
+            WHERE ax.usuario_id = u.id
+            ORDER BY COALESCE(ax.created_at, CURRENT_TIMESTAMP) DESC, ax.id DESC
+            LIMIT 1
+        ) a ON TRUE
+        LEFT JOIN planos p ON p.id = a.plano_id
+        WHERE u.tipo_usuario = 'treinador'
+        ORDER BY u.nome
+        """
+    )
+    itens = [dict(item) for item in cursor.fetchall()]
+    conn.close()
+    for item in itens:
+        item["valor_previsto_proximo_ciclo"] = _decimal_para_float(item.get("valor_base") or 0) + (
+            _decimal_para_float(item.get("taxa_por_aluno_ativo") or 0) * int(item.get("alunos_ativos_atualmente") or 0)
+        )
+    return itens
+
+
+def listar_cobrancas_alunos_admin(status=None, treinador_id=None):
+    filtros = []
+    params = []
+    if status:
+        filtros.append("c.status = %s")
+        params.append(status)
+    if treinador_id:
+        filtros.append("c.treinador_id = %s")
+        params.append(treinador_id)
+    where_sql = f"WHERE {' AND '.join(filtros)}" if filtros else ""
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        f"""
+        SELECT
+            c.*,
+            t.nome AS treinador_nome,
+            a.nome AS atleta_nome
+        FROM cobrancas_alunos_treinador c
+        JOIN usuarios t ON t.id = c.treinador_id
+        JOIN usuarios a ON a.id = c.atleta_id
+        {where_sql}
+        ORDER BY COALESCE(c.created_at, CURRENT_TIMESTAMP) DESC, c.id DESC
+        """,
+        tuple(params),
+    )
+    itens = [dict(item) for item in cursor.fetchall()]
+    conn.close()
+    return itens
+
+
+def listar_fechamentos_treinadores():
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT
+            a.id AS assinatura_id,
+            u.id AS treinador_id,
+            u.nome AS treinador_nome,
+            u.email AS treinador_email,
+            a.data_renovacao,
+            p.nome AS plano_nome,
+            COALESCE(a.valor_base_cobrado, p.valor_base, p.preco_mensal, 0) AS valor_base_cobrado,
+            COALESCE(a.quantidade_alunos_ativos_fechamento, 0) AS quantidade_alunos_ativos_fechamento,
+            COALESCE(a.valor_taxa_alunos, 0) AS valor_taxa_alunos,
+            COALESCE(a.valor_total_cobrado, a.valor, 0) AS valor_total_cobrado,
+            COALESCE((
+                SELECT SUM(d.valor_desconto)
+                FROM descontos_aplicados d
+                WHERE d.assinatura_id = a.id
+            ), 0) AS desconto_aplicado,
+            GREATEST(
+                COALESCE(a.valor_total_cobrado, a.valor, 0) - COALESCE((
+                    SELECT SUM(d.valor_desconto)
+                    FROM descontos_aplicados d
+                    WHERE d.assinatura_id = a.id
+                ), 0),
+                0
+            ) AS valor_final_cobrado
+        FROM assinaturas a
+        JOIN usuarios u ON u.id = a.usuario_id
+        JOIN planos p ON p.id = a.plano_id
+        WHERE u.tipo_usuario = 'treinador'
+        ORDER BY COALESCE(a.data_renovacao, CURRENT_DATE) DESC, a.id DESC
+        """
+    )
+    itens = [dict(item) for item in cursor.fetchall()]
+    conn.close()
+    return itens
 
 
 def listar_cupons_desconto(ativo=None):
@@ -1038,3 +1496,80 @@ def salvar_cupom_desconto(dados):
     conn.commit()
     conn.close()
     return buscar_cupom_por_codigo(codigo)
+
+
+def aplicar_desconto_manual_admin(usuario_id, assinatura_id=None, pagamento_id=None, tipo_desconto="valor_fixo", valor_desconto=0, percentual_desconto=0, aplicado_por="admin", descricao=None):
+    if pagamento_id:
+        pagamento = buscar_pagamento_por_id(pagamento_id)
+        if not pagamento:
+            raise ValueError("Pagamento nao encontrado.")
+        base = pagamento["valor_bruto"]
+        assinatura_id = pagamento.get("assinatura_id")
+    elif assinatura_id:
+        assinatura = buscar_assinatura_por_id(assinatura_id)
+        if not assinatura:
+            raise ValueError("Assinatura nao encontrada.")
+        base = assinatura["valor_total_cobrado"]
+    else:
+        raise ValueError("Assinatura ou pagamento obrigatorio para aplicar desconto.")
+
+    regra = {
+        "tipo_desconto": tipo_desconto,
+        "valor_desconto": valor_desconto,
+        "percentual_desconto": percentual_desconto,
+        "descricao": descricao,
+    }
+    desconto_info = aplicar_desconto(base, regra)
+    conn = conectar()
+    cursor = conn.cursor()
+    alvo_pagamento_id = pagamento_id
+    if pagamento_id:
+        status_pagamento = "bonificado" if desconto_info["bonificado"] else "pendente"
+        cursor.execute(
+            """
+            UPDATE pagamentos
+            SET valor_desconto = COALESCE(valor_desconto, 0) + %s,
+                valor_final = %s,
+                status = CASE WHEN %s THEN 'bonificado' ELSE status END
+            WHERE id = %s
+            """,
+            (
+                desconto_info["valor_desconto"],
+                desconto_info["valor_final"],
+                desconto_info["bonificado"],
+                pagamento_id,
+            ),
+        )
+        if assinatura_id:
+            cursor.execute(
+                "UPDATE assinaturas SET status = %s WHERE id = %s",
+                (_status_pagamento_para_assinatura(status_pagamento), assinatura_id),
+            )
+    cursor.execute(
+        """
+        INSERT INTO descontos_aplicados (
+            cupom_id, usuario_id, assinatura_id, pagamento_id, valor_bruto,
+            valor_desconto, valor_final, aplicado_por
+        ) VALUES (NULL, %s, %s, %s, %s, %s, %s, %s)
+        RETURNING id
+        """,
+        (
+            usuario_id,
+            assinatura_id,
+            alvo_pagamento_id,
+            desconto_info["valor_bruto"],
+            desconto_info["valor_desconto"],
+            desconto_info["valor_final"],
+            aplicado_por,
+        ),
+    )
+    desconto_id = int(cursor.fetchone()["id"])
+    conn.commit()
+    conn.close()
+    return {
+        "id": desconto_id,
+        "usuario_id": usuario_id,
+        "assinatura_id": assinatura_id,
+        "pagamento_id": alvo_pagamento_id,
+        **desconto_info,
+    }

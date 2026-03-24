@@ -422,6 +422,9 @@ def _criar_tabela_planos(cursor):
             preco_mensal REAL NOT NULL,
             valor_base NUMERIC(10,2),
             taxa_por_aluno_ativo NUMERIC(10,2) DEFAULT 0,
+            descricao TEXT,
+            beneficios TEXT,
+            ordem_exibicao INTEGER DEFAULT 0,
             limite_atletas INTEGER NULL,
             ativo INTEGER DEFAULT 1,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -434,6 +437,9 @@ def _criar_tabela_planos(cursor):
         "periodicidade": "TEXT DEFAULT 'mensal'",
         "valor_base": "NUMERIC(10,2)",
         "taxa_por_aluno_ativo": "NUMERIC(10,2) DEFAULT 0",
+        "descricao": "TEXT",
+        "beneficios": "TEXT",
+        "ordem_exibicao": "INTEGER DEFAULT 0",
         "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
     }
     for nome, definicao in colunas.items():
@@ -538,19 +544,36 @@ def _criar_tabela_execucao_exercicio(cursor):
 
 def _seed_planos(cursor):
     planos = [
-        ("atleta_mensal", "Plano Atleta Mensal", "atleta", "atleta", "mensal", 49.90, 49.90, 0, None, 1),
-        ("atleta_anual", "Plano Atleta Anual", "atleta", "atleta", "anual", 499.00, 499.00, 0, None, 1),
-        ("treinador_mensal", "Plano Treinador Mensal", "treinador", "treinador", "mensal", 149.90, 149.90, 19.90, None, 1),
-        ("treinador_anual", "Plano Treinador Anual", "treinador", "treinador", "anual", 1499.00, 1499.00, 16.90, None, 1),
+        (
+            "atleta_mensal", "Plano Atleta Mensal", "atleta", "atleta", "mensal",
+            49.90, 49.90, 0, "Assinatura mensal para atleta solo.",
+            "Treinos, historico, acompanhamento e periodizacao.", 1, None, 1,
+        ),
+        (
+            "atleta_anual", "Plano Atleta Anual", "atleta", "atleta", "anual",
+            499.00, 499.00, 0, "Assinatura anual para atleta solo.",
+            "Acesso anual com melhor custo e continuidade de treino.", 2, None, 1,
+        ),
+        (
+            "treinador_mensal", "Plano Treinador Mensal", "treinador", "treinador", "mensal",
+            149.90, 149.90, 19.90, "Assinatura mensal para treinador.",
+            "Base da plataforma mais taxa fixa por aluno ativo vinculado.", 3, None, 1,
+        ),
+        (
+            "treinador_anual", "Plano Treinador Anual", "treinador", "treinador", "anual",
+            1499.00, 1499.00, 16.90, "Assinatura anual para treinador.",
+            "Ciclo anual com taxa reduzida por aluno ativo vinculado.", 4, None, 1,
+        ),
     ]
     for plano in planos:
         cursor.execute(
             """
             INSERT INTO planos (
                 codigo, nome, tipo, tipo_plano, periodicidade, preco_mensal,
-                valor_base, taxa_por_aluno_ativo, limite_atletas, ativo, created_at
+                valor_base, taxa_por_aluno_ativo, descricao, beneficios,
+                ordem_exibicao, limite_atletas, ativo, created_at
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
             ON CONFLICT (codigo) DO UPDATE SET
                 nome = EXCLUDED.nome,
                 tipo = EXCLUDED.tipo,
@@ -559,6 +582,9 @@ def _seed_planos(cursor):
                 preco_mensal = EXCLUDED.preco_mensal,
                 valor_base = EXCLUDED.valor_base,
                 taxa_por_aluno_ativo = EXCLUDED.taxa_por_aluno_ativo,
+                descricao = EXCLUDED.descricao,
+                beneficios = EXCLUDED.beneficios,
+                ordem_exibicao = EXCLUDED.ordem_exibicao,
                 limite_atletas = EXCLUDED.limite_atletas,
                 ativo = EXCLUDED.ativo
             """,
