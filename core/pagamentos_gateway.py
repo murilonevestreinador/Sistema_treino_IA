@@ -1,5 +1,6 @@
 import hashlib
 import json
+import logging
 import os
 from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
@@ -9,6 +10,7 @@ import requests
 from core.banco import conectar
 
 
+LOGGER = logging.getLogger("trilab.asaas.gateway")
 DEFAULT_GATEWAY = "asaas"
 STATUS_QUITADOS = {"pago", "bonificado"}
 CENTAVOS = Decimal("0.01")
@@ -389,6 +391,16 @@ def _dedupe_key(payload):
     return hashlib.sha256(bruto.encode("utf-8")).hexdigest()
 
 
+def _eh_payload_teste_manual(payload, payment):
+    if not isinstance(payload, dict):
+        return False
+    if bool(payload.get("manual_test")):
+        return True
+    payment_id = str((payment or {}).get("id") or "")
+    customer_id = str((payment or {}).get("customer") or "")
+    return payment_id.startswith("pay_test_") or customer_id.startswith("cus_test_")
+
+
 def _registrar_evento_recebido(cursor, payload, headers, dedupe_key):
     payment = _extrair_pagamento_payload(payload)
     cursor.execute(
@@ -587,14 +599,30 @@ def processar_webhook_asaas(payload, headers):
     headers_normalizados = _normalizar_headers(headers)
     token_recebido = (headers_normalizados.get("asaas-access-token") or "").strip()
     token_esperado = validar_configuracao_asaas()["config"].get("webhook_token")
-
-    if not token_esperado:
-        return {"ok": False, "status_code": 500, "mensagem": "ASAAS_WEBHOOK_TOKEN nao configurado."}
-    if token_recebido != token_esperado:
-        return {"ok": False, "status_code": 403, "mensagem": "Token do webhook invalido."}
-
     evento = (payload or {}).get("event") or ""
     payment = _extrair_pagamento_payload(payload)
+
+    if not token_esperado:
+        LOGGER.error("Webhook Asaas rejeitado: ASAAS_WEBHOOK_TOKEN nao configurado.")
+        return {"ok": False, "status_code": 500, "mensagem": "ASAAS_WEBHOOK_TOKEN nao configurado."}
+    if token_recebido != token_esperado:
+        LOGGER.warning(
+            "Webhook Asaas rejeitado por token invalido: evento=%s payment_id=%s",
+            evento,
+            payment.get("id"),
+        )
+        return {"ok": False, "status_code": 403, "mensagem": "Token do webhook invalido."}
+
+    LOGGER.info("Processando webhook Asaas: evento=%s payment_id=%s", evento, payment.get("id"))
+    if _eh_payload_teste_manual(payload, payment):
+        LOGGER.info("Webhook Asaas identificado como teste manual: evento=%s payment_id=%s", evento, payment.get("id"))
+        return {
+            "ok": True,
+            "status_code": 200,
+            "mensagem": "Webhook de teste recebido com sucesso.",
+            "evento": evento,
+            "teste_manual": True,
+        }
     payment["_evento"] = evento
     dedupe_key = _dedupe_key(payload)
 
@@ -604,6 +632,7 @@ def processar_webhook_asaas(payload, headers):
         evento_id = _registrar_evento_recebido(cursor, payload, headers_normalizados, dedupe_key)
         if not evento_id:
             conn.commit()
+            LOGGER.info("Webhook Asaas idempotente: evento=%s dedupe_key=%s", evento, dedupe_key)
             return {
                 "ok": True,
                 "status_code": 200,
@@ -623,6 +652,12 @@ def processar_webhook_asaas(payload, headers):
 
         _atualizar_evento_processamento(cursor, evento_id, "processado")
         conn.commit()
+        LOGGER.info(
+            "Webhook Asaas processado com sucesso: evento=%s pagamento_id=%s status=%s",
+            evento,
+            pagamento_id,
+            status_pagamento,
+        )
         return {
             "ok": True,
             "status_code": 200,
@@ -649,6 +684,7 @@ def processar_webhook_asaas(payload, headers):
             conn.commit()
         except Exception:
             conn.rollback()
+        LOGGER.exception("Erro ao processar webhook Asaas: evento=%s dedupe_key=%s", evento, dedupe_key)
         return {"ok": False, "status_code": 500, "mensagem": str(exc), "evento": evento, "dedupe_key": dedupe_key}
     finally:
         conn.close()
