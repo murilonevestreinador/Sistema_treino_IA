@@ -272,7 +272,7 @@ def salvar_plano_admin(dados):
             (dados.get("beneficios") or "").strip() or None,
             int(dados.get("ordem_exibicao") or 0),
             dados.get("limite_atletas"),
-            bool(dados.get("ativo", True)),
+            int(bool(dados.get("ativo", True))),
         ),
     )
     conn.commit()
@@ -283,7 +283,7 @@ def salvar_plano_admin(dados):
 def alterar_status_plano(plano_id, ativo):
     conn = conectar()
     cursor = conn.cursor()
-    cursor.execute("UPDATE planos SET ativo = %s WHERE id = %s", (bool(ativo), plano_id))
+    cursor.execute("UPDATE planos SET ativo = %s WHERE id = %s", (int(bool(ativo)), plano_id))
     conn.commit()
     conn.close()
     return buscar_plano_por_id(plano_id)
