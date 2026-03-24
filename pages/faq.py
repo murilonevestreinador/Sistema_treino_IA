@@ -13,7 +13,7 @@ with st.expander("Existe diferenca entre atleta e treinador?"):
     st.write("Sim. Atletas usam a plataforma para executar e acompanhar os treinos. Treinadores acompanham atletas vinculados e podem ajustar os treinos.")
 
 with st.expander("Como funciona o periodo de teste?"):
-    st.write("Todo novo cadastro recebe 7 dias de teste. Depois disso, e necessario ter uma assinatura ativa para acessar as areas internas.")
+    st.write("Todo novo cadastro recebe 14 dias de teste. Depois disso, o acesso continua para quem tiver assinatura ativa e, no caso do atleta, tambem para quem estiver vinculado a um treinador ativo.")
 
 with st.expander("Ja existe integracao com gateway?"):
     st.write("Ainda nao. O MVP usa ativacao manual de assinatura e ja deixa a base pronta para futura integracao via webhook.")

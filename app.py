@@ -6,9 +6,10 @@ from core.area_treinador import tela_area_treinador
 from core.admin import tela_area_admin
 from core.auth import tela_login
 from core.banco import garantir_colunas_e_tabelas
+from core.bloqueio_acesso import render_bloqueio_atleta, render_bloqueio_treinador
 from core.cronograma import gerar_cronograma, gerar_mensagem_usuario
 from core.dashboard import tela_dashboard
-from core.financeiro import garantir_assinatura_inicial, resumo_status_assinatura, usuario_tem_acesso
+from core.financeiro import avaliar_acesso_usuario, garantir_assinatura_inicial, resumo_status_assinatura
 from core.perfil import tela_meu_perfil
 from core.permissoes import conta_ativa, eh_admin, eh_atleta, eh_treinador
 from core.questionario import tela_questionario
@@ -695,9 +696,13 @@ def main():
         renderizar_rodape()
         return
 
-    tem_acesso, assinatura = usuario_tem_acesso(usuario)
-    if not tem_acesso:
-        renderizar_assinatura_necessaria(assinatura)
+    avaliacao_acesso = avaliar_acesso_usuario(usuario)
+    assinatura = avaliacao_acesso["assinatura"]
+    if not avaliacao_acesso["tem_acesso"]:
+        if eh_treinador(usuario):
+            render_bloqueio_treinador(fazer_logout)
+        else:
+            render_bloqueio_atleta(usuario, fazer_logout)
         renderizar_rodape()
         return
 

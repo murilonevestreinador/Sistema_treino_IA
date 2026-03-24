@@ -11,7 +11,7 @@ from core.pagamentos_gateway import (
 )
 
 
-TRIAL_DIAS = 7
+TRIAL_DIAS = 14
 STATUS_COM_ACESSO = {"ativa", "trial"}
 STATUS_FINANCEIROS_QUITADOS = {"pago", "bonificado"}
 CENTAVOS = Decimal("0.01")
@@ -637,9 +637,80 @@ def garantir_assinatura_inicial(usuario):
     return criar_trial_assinatura(usuario["id"], usuario.get("tipo_usuario"))
 
 
-def usuario_tem_acesso(usuario):
+def atleta_tem_treinador_ativo(atleta_id):
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT 1
+        FROM treinador_atleta ta
+        JOIN usuarios u ON u.id = ta.treinador_id
+        LEFT JOIN LATERAL (
+            SELECT status
+            FROM assinaturas a
+            WHERE a.usuario_id = u.id
+            ORDER BY CASE a.status
+                WHEN 'ativa' THEN 0
+                WHEN 'trial' THEN 1
+                WHEN 'pendente' THEN 2
+                WHEN 'inadimplente' THEN 3
+                ELSE 4
+            END,
+            COALESCE(a.created_at, CURRENT_TIMESTAMP) DESC,
+            a.id DESC
+            LIMIT 1
+        ) assinatura ON TRUE
+        WHERE ta.atleta_id = %s
+          AND COALESCE(ta.status_vinculo, ta.status, 'pendente') = 'ativo'
+          AND COALESCE(u.status_conta, 'ativo') = 'ativo'
+          AND COALESCE(assinatura.status, '') IN ('ativa', 'trial')
+        LIMIT 1
+        """,
+        (atleta_id,),
+    )
+    ativo = cursor.fetchone() is not None
+    conn.close()
+    return ativo
+
+
+def avaliar_acesso_usuario(usuario):
     assinatura = garantir_assinatura_inicial(usuario)
-    return bool(assinatura and assinatura.get("status") in STATUS_COM_ACESSO), assinatura
+    tipo_usuario = (usuario.get("tipo_usuario") or "atleta").strip().lower()
+    status_assinatura = (assinatura or {}).get("status")
+
+    if tipo_usuario == "treinador":
+        tem_acesso = status_assinatura in STATUS_COM_ACESSO
+        return {
+            "tem_acesso": tem_acesso,
+            "assinatura": assinatura,
+            "motivo": None if tem_acesso else "treinador_trial_expirado",
+            "tipo_usuario": tipo_usuario,
+            "tem_treinador_ativo": False,
+        }
+
+    if tipo_usuario == "atleta":
+        tem_treinador_ativo = atleta_tem_treinador_ativo(usuario["id"])
+        tem_acesso = status_assinatura in STATUS_COM_ACESSO or tem_treinador_ativo
+        return {
+            "tem_acesso": tem_acesso,
+            "assinatura": assinatura,
+            "motivo": None if tem_acesso else "atleta_trial_expirado",
+            "tipo_usuario": tipo_usuario,
+            "tem_treinador_ativo": tem_treinador_ativo,
+        }
+
+    return {
+        "tem_acesso": status_assinatura in STATUS_COM_ACESSO,
+        "assinatura": assinatura,
+        "motivo": None,
+        "tipo_usuario": tipo_usuario,
+        "tem_treinador_ativo": False,
+    }
+
+
+def usuario_tem_acesso(usuario):
+    avaliacao = avaliar_acesso_usuario(usuario)
+    return bool(avaliacao["tem_acesso"]), avaliacao["assinatura"]
 
 
 def buscar_pagamento_por_id(pagamento_id):
