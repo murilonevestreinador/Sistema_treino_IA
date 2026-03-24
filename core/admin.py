@@ -14,6 +14,7 @@ from core.financeiro import (
     resumo_financeiro_admin as financeiro_resumo_financeiro_admin,
     salvar_cupom_desconto,
 )
+from core.pagamentos_gateway import resumo_operacional_asaas, testar_conexao_asaas, validar_configuracao_asaas
 from core.permissoes import validar_admin
 from core.usuarios import (
     alterar_papel_usuario_por_admin,
@@ -552,7 +553,7 @@ def _render_financeiro(admin):
         {"titulo": "Pagamentos pendentes", "valor": int(resumo.get("total_pagamentos_pendentes") or 0)},
         {"titulo": "Pagamentos bonificados", "valor": int(resumo.get("total_pagamentos_bonificados") or 0)},
     ])
-    aba_pagamentos, aba_cupons = st.tabs(["Pagamentos", "Cupons"])
+    aba_pagamentos, aba_cupons, aba_asaas = st.tabs(["Pagamentos", "Cupons", "Asaas Sandbox"])
 
     with aba_pagamentos:
         col1, col2, col3, col4, col5 = st.columns(5)
@@ -647,6 +648,61 @@ def _render_financeiro(admin):
                 st.rerun()
             except ValueError as exc:
                 st.error(str(exc))
+
+    with aba_asaas:
+        config = validar_configuracao_asaas()
+        conexao = testar_conexao_asaas() if config.get("ok") else {
+            "sucesso": False,
+            "mensagem": config.get("mensagem"),
+        }
+        resumo_asaas = resumo_operacional_asaas() if config.get("ok") else {
+            "conexao": conexao,
+            "total_customers": 0,
+            "total_assinaturas": 0,
+            "total_webhooks": 0,
+            "total_webhooks_com_erro": 0,
+            "ultimo_customer": {},
+            "ultima_assinatura": {},
+            "ultimos_webhooks": [],
+        }
+
+        col_a, col_b, col_c, col_d = st.columns(4)
+        with col_a:
+            st.metric("Configuracao", "OK" if config.get("ok") else "Pendente")
+        with col_b:
+            st.metric("Conexao", "Online" if conexao.get("sucesso") else "Erro")
+        with col_c:
+            st.metric("Customers Asaas", int(resumo_asaas.get("total_customers") or 0))
+        with col_d:
+            st.metric("Assinaturas Asaas", int(resumo_asaas.get("total_assinaturas") or 0))
+
+        st.caption(conexao.get("mensagem") or "")
+        st.code(
+            f"APP_ENV={config.get('config', {}).get('app_env') or '-'} | "
+            f"ASAAS_BASE_URL={config.get('config', {}).get('base_url') or '-'}",
+            language="text",
+        )
+
+        col_resumo_1, col_resumo_2 = st.columns(2)
+        with col_resumo_1:
+            st.markdown("#### Ultimo customer criado")
+            if resumo_asaas.get("ultimo_customer"):
+                st.json(resumo_asaas["ultimo_customer"])
+            else:
+                st.info("Nenhum customer Asaas salvo ainda.")
+        with col_resumo_2:
+            st.markdown("#### Ultima assinatura criada")
+            if resumo_asaas.get("ultima_assinatura"):
+                st.json(resumo_asaas["ultima_assinatura"])
+            else:
+                st.info("Nenhuma assinatura Asaas salva ainda.")
+
+        st.markdown("#### Ultimos eventos de webhook")
+        eventos = resumo_asaas.get("ultimos_webhooks") or []
+        if eventos:
+            st.dataframe(pd.DataFrame(eventos), use_container_width=True, hide_index=True)
+        else:
+            st.info("Nenhum webhook Asaas recebido ainda.")
 
 
 def _render_bi():

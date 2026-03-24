@@ -118,6 +118,7 @@ def _criar_tabela_usuarios(cursor):
         "aceitou_termos": "INTEGER DEFAULT 0",
         "aceitou_privacidade": "INTEGER DEFAULT 0",
         "data_consentimento": "TEXT",
+        "asaas_customer_id": "TEXT",
     }
     for nome, definicao in colunas.items():
         _adicionar_coluna_se_necessario(cursor, "usuarios", nome, definicao)
@@ -585,6 +586,7 @@ def _criar_tabela_assinaturas(cursor):
             renovacao_automatica INTEGER DEFAULT 1,
             gateway TEXT DEFAULT 'manual',
             gateway_reference TEXT,
+            asaas_subscription_id TEXT,
             criado_em TEXT NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (usuario_id) REFERENCES usuarios(id),
@@ -609,6 +611,7 @@ def _criar_tabela_assinaturas(cursor):
         "renovacao_automatica": "INTEGER DEFAULT 1",
         "gateway": "TEXT DEFAULT 'manual'",
         "gateway_reference": "TEXT",
+        "asaas_subscription_id": "TEXT",
         "criado_em": "TEXT",
         "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
     }
@@ -632,6 +635,9 @@ def _criar_tabela_pagamentos(cursor):
             data_pagamento TEXT,
             data_vencimento TEXT,
             referencia_externa TEXT,
+            asaas_payment_id TEXT,
+            gateway TEXT DEFAULT 'manual',
+            gateway_reference TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (usuario_id) REFERENCES usuarios(id),
             FOREIGN KEY (assinatura_id) REFERENCES assinaturas(id)
@@ -643,9 +649,33 @@ def _criar_tabela_pagamentos(cursor):
         "valor_bruto": "NUMERIC(10,2)",
         "valor_desconto": "NUMERIC(10,2) DEFAULT 0",
         "valor_final": "NUMERIC(10,2)",
+        "asaas_payment_id": "TEXT",
+        "gateway": "TEXT DEFAULT 'manual'",
+        "gateway_reference": "TEXT",
     }
     for nome, definicao in colunas.items():
         _adicionar_coluna_se_necessario(cursor, "pagamentos", nome, definicao)
+
+
+def _criar_tabela_webhook_eventos_asaas(cursor):
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS webhook_eventos_asaas (
+            id SERIAL PRIMARY KEY,
+            dedupe_key TEXT NOT NULL UNIQUE,
+            evento TEXT,
+            asaas_event_id TEXT,
+            asaas_payment_id TEXT,
+            asaas_subscription_id TEXT,
+            status_processamento TEXT DEFAULT 'recebido',
+            erro TEXT,
+            payload TEXT,
+            headers TEXT,
+            recebido_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            processado_em TIMESTAMP NULL
+        )
+        """
+    )
 
 
 def _criar_tabela_cupons_desconto(cursor):
@@ -809,7 +839,10 @@ def _sincronizar_papeis_legados(cursor):
         UPDATE pagamentos
         SET valor_bruto = COALESCE(valor_bruto, valor),
             valor_desconto = COALESCE(valor_desconto, 0),
-            valor_final = COALESCE(valor_final, valor)
+            valor_final = COALESCE(valor_final, valor),
+            gateway = COALESCE(NULLIF(gateway, ''), 'manual'),
+            gateway_reference = COALESCE(gateway_reference, referencia_externa),
+            asaas_payment_id = COALESCE(asaas_payment_id, referencia_externa)
         """
     )
     cursor.execute(
@@ -900,6 +933,30 @@ def _criar_indices_bi(cursor):
     )
     cursor.execute(
         """
+        CREATE INDEX IF NOT EXISTS idx_usuarios_asaas_customer
+        ON usuarios (asaas_customer_id)
+        """
+    )
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_assinaturas_asaas_subscription
+        ON assinaturas (asaas_subscription_id, gateway_reference)
+        """
+    )
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_pagamentos_asaas_payment
+        ON pagamentos (asaas_payment_id, referencia_externa, gateway_reference)
+        """
+    )
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_webhooks_asaas_recebido
+        ON webhook_eventos_asaas (evento, asaas_payment_id, recebido_em DESC)
+        """
+    )
+    cursor.execute(
+        """
         CREATE INDEX IF NOT EXISTS idx_cupons_codigo_ativo
         ON cupons_desconto (codigo, ativo, data_inicio, data_fim)
         """
@@ -961,6 +1018,7 @@ def garantir_colunas_e_tabelas():
     _seed_planos(cursor)
     _criar_tabela_assinaturas(cursor)
     _criar_tabela_pagamentos(cursor)
+    _criar_tabela_webhook_eventos_asaas(cursor)
     _criar_tabela_cupons_desconto(cursor)
     _criar_tabela_descontos_aplicados(cursor)
     _criar_tabela_cobrancas_alunos_treinador(cursor)

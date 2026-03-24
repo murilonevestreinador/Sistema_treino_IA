@@ -57,9 +57,9 @@ else:
                 f"""
                 <div style="border:1px solid rgba(18,58,52,0.08); border-radius:18px; padding:1rem; background:white; min-height:280px;">
                     <h3 style="margin-top:0;">{plano['nome']}</h3>
-                    <p><strong>R$ {plano['preco_mensal']:.2f}/mes</strong></p>
-                    <p>Perfil: {plano['tipo'].capitalize()}</p>
-                    <p>{'Limite de ' + str(plano['limite_atletas']) + ' atletas' if plano['limite_atletas'] else 'Uso individual com acesso total ao app'}</p>
+                    <p><strong>R$ {plano['valor_base']:.2f}/{plano['periodicidade']}</strong></p>
+                    <p>Perfil: {plano['tipo_plano'].capitalize()}</p>
+                    <p>{'Taxa adicional por aluno ativo: R$ ' + f"{plano['taxa_por_aluno_ativo']:.2f}" if plano['tipo_plano'] == 'treinador' else 'Uso individual com acesso total ao app'}</p>
                     <p>Inclui periodizacao, ajustes por feedback e base pronta para evolucao do treinamento.</p>
                 </div>
                 """,
@@ -68,7 +68,7 @@ else:
 
             if usuario:
                 if st.button("Assinar", key=f"assinar_{plano['codigo']}", use_container_width=True):
-                    if usuario.get("tipo_usuario") == plano["tipo"]:
+                    if usuario.get("tipo_usuario") == plano["tipo_plano"]:
                         _ir_para_pagamento(plano["codigo"])
                     else:
                         st.error("Este plano nao corresponde ao perfil da sua conta.")

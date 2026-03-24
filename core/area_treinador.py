@@ -10,6 +10,7 @@ from core.carga import rotulo_categoria_movimento
 from core.bi import BIValidationError, TrainerBIService
 from core.cronograma import buscar_semana_por_numero, gerar_cronograma, obter_semana_atual
 from core.exercicios import carregar_exercicios
+from core.financeiro import gerar_cobranca_aluno_treinador, resumo_financeiro_treinador
 from core.progresso import (
     buscar_progresso_semana,
     calcular_progresso_semanal,
@@ -548,8 +549,8 @@ def _render_painel_cargas_atleta(atleta):
 
 def _render_menu_local_treinador():
     secao = st.session_state.get("secao_treinador", "visao_geral")
-    st.caption("Use o menu abaixo para alternar entre gestão dos atletas e BI.")
-    col_geral, col_atletas, col_bi = st.columns(3)
+    st.caption("Use o menu abaixo para alternar entre gestão dos atletas, financeiro e BI.")
+    col_geral, col_atletas, col_financeiro, col_bi = st.columns(4)
     with col_geral:
         if st.button(
             "Visao geral",
@@ -568,6 +569,15 @@ def _render_menu_local_treinador():
         ):
             st.session_state["secao_treinador"] = "atletas"
             st.rerun()
+    with col_financeiro:
+        if st.button(
+            "Financeiro",
+            key="btn_secao_treinador_financeiro",
+            type="primary" if secao == "financeiro" else "secondary",
+            use_container_width=True,
+        ):
+            st.session_state["secao_treinador"] = "financeiro"
+            st.rerun()
     with col_bi:
         if st.button(
             "BI",
@@ -577,6 +587,7 @@ def _render_menu_local_treinador():
         ):
             st.session_state["secao_treinador"] = "bi"
             st.rerun()
+
 def _render_convite(treinador):
     st.subheader("Convidar atleta")
     base_url = (
@@ -1094,6 +1105,73 @@ def _render_bi_treinador(treinador):
         st.write(f"Dia da semana pico: {picos['dia_semana_pico'] or '-'}")
 
 
+def _render_financeiro_treinador(treinador):
+    st.subheader("Financeiro")
+    resumo = resumo_financeiro_treinador(treinador["id"])
+    assinatura = resumo["assinatura_plataforma"]
+    cobrancas = resumo["cobrancas_alunos"]
+
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Plano atual", assinatura.get("plano_atual") or "-")
+    with col2:
+        st.metric("Valor base", f"R$ {float(assinatura.get('valor_base') or 0):.2f}")
+    with col3:
+        st.metric("Taxa por aluno", f"R$ {float(assinatura.get('taxa_por_aluno_ativo') or 0):.2f}")
+    with col4:
+        st.metric("Alunos ativos", int(assinatura.get("numero_alunos_ativos_momento") or 0))
+
+    st.caption(f"Proximo fechamento previsto: {assinatura.get('previsao_proximo_fechamento') or '-'}")
+
+    historico_plataforma = assinatura.get("historico_cobrancas_plataforma") or []
+    if historico_plataforma:
+        st.markdown("### Historico de cobrancas da plataforma")
+        st.dataframe(pd.DataFrame(historico_plataforma), use_container_width=True, hide_index=True)
+    else:
+        st.caption("Sem cobrancas da plataforma registradas ainda.")
+
+    st.markdown("### Cobrar aluno pela plataforma")
+    atletas = listar_atletas_do_treinador(treinador["id"])
+    if atletas:
+        with st.form("form_cobranca_aluno_treinador"):
+            atleta_id = st.selectbox(
+                "Aluno",
+                options=[item["atleta_id"] for item in atletas],
+                format_func=lambda valor: next(
+                    (item.get("atleta_apelido") or item["atleta_nome"])
+                    for item in atletas
+                    if item["atleta_id"] == valor
+                ),
+            )
+            col_a, col_b = st.columns(2)
+            with col_a:
+                descricao = st.text_input("Descricao", value="Mensalidade do acompanhamento")
+                valor = st.number_input("Valor", min_value=0.0, value=0.0, step=10.0)
+            with col_b:
+                periodicidade = st.selectbox("Periodicidade", ["mensal", "anual", "avulsa"])
+                data_vencimento = st.date_input("Data vencimento", value=date.today() + timedelta(days=7))
+            gerar = st.form_submit_button("Gerar cobranca", use_container_width=True)
+        if gerar:
+            gerar_cobranca_aluno_treinador(
+                treinador["id"],
+                atleta_id,
+                valor,
+                periodicidade,
+                descricao=descricao,
+                data_vencimento=data_vencimento,
+            )
+            st.success("Cobranca criada com sucesso.")
+            st.rerun()
+    else:
+        st.info("Nao ha alunos ativos para cobrar.")
+
+    st.markdown("### Cobrancas dos proprios alunos")
+    if cobrancas:
+        st.dataframe(pd.DataFrame(cobrancas), use_container_width=True, hide_index=True)
+    else:
+        st.caption("Nenhuma cobranca de aluno registrada ainda.")
+
+
 def tela_area_treinador(treinador):
     if "secao_treinador" not in st.session_state:
         st.session_state["secao_treinador"] = "visao_geral"
@@ -1114,6 +1192,9 @@ def tela_area_treinador(treinador):
     secao = st.session_state.get("secao_treinador", "visao_geral")
     if secao == "atletas":
         _render_visualizacao_atleta(treinador)
+        return
+    if secao == "financeiro":
+        _render_financeiro_treinador(treinador)
         return
     if secao == "bi":
         _render_bi_treinador(treinador)

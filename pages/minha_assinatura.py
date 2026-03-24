@@ -47,6 +47,12 @@ else:
             st.metric("Fim", assinatura.get("data_fim") or "Sem data")
 
         st.write(f"Plano: {assinatura['plano_nome']}")
+        st.write(f"Periodicidade: {assinatura.get('periodicidade') or '-'}")
+        st.write(f"Valor base cobrado: R$ {float(assinatura.get('valor_base_cobrado') or 0):.2f}")
+        if assinatura.get("plano_tipo") == "treinador":
+            st.write(f"Alunos ativos no fechamento: {int(assinatura.get('quantidade_alunos_ativos_fechamento') or 0)}")
+            st.write(f"Taxa por alunos no fechamento: R$ {float(assinatura.get('valor_taxa_alunos') or 0):.2f}")
+        st.write(f"Valor total cobrado: R$ {float(assinatura.get('valor_total_cobrado') or 0):.2f}")
         st.write(f"Gateway: {assinatura.get('gateway') or 'manual'}")
         st.write(
             "Renovacao automatica: "

@@ -215,7 +215,7 @@ def buscar_status_vinculo(treinador_id, atleta_id):
     cursor = conn.cursor()
     cursor.execute(
         """
-        SELECT id, status
+        SELECT id, status, status_vinculo, data_inicio, data_fim
         FROM treinador_atleta
         WHERE treinador_id = %s AND atleta_id = %s
         LIMIT 1
@@ -236,18 +236,32 @@ def definir_vinculo_treinador_atleta(treinador_id, atleta_id, status="ativo"):
         cursor.execute(
             """
             UPDATE treinador_atleta
-            SET status = %s
+            SET status = %s,
+                status_vinculo = %s,
+                data_inicio = CASE
+                    WHEN %s = 'ativo' AND data_inicio IS NULL THEN CURRENT_DATE
+                    ELSE data_inicio
+                END,
+                data_fim = CASE
+                    WHEN %s IN ('removido', 'cancelado', 'encerrado', 'recusado') THEN CURRENT_DATE
+                    WHEN %s = 'ativo' THEN NULL
+                    ELSE data_fim
+                END
             WHERE id = %s
             """,
-            (status, vinculo["id"]),
+            (status, status, status, status, status, vinculo["id"]),
         )
     else:
         cursor.execute(
             """
-            INSERT INTO treinador_atleta (treinador_id, atleta_id, status)
-            VALUES (%s, %s, %s)
+            INSERT INTO treinador_atleta (treinador_id, atleta_id, status, status_vinculo, data_inicio, data_fim)
+            VALUES (
+                %s, %s, %s, %s,
+                CASE WHEN %s = 'ativo' THEN CURRENT_DATE ELSE NULL END,
+                CASE WHEN %s IN ('removido', 'cancelado', 'encerrado', 'recusado') THEN CURRENT_DATE ELSE NULL END
+            )
             """,
-            (treinador_id, atleta_id, status),
+            (treinador_id, atleta_id, status, status, status, status),
         )
 
     conn.commit()
