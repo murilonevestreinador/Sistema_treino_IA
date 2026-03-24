@@ -1,6 +1,13 @@
 import streamlit as st
 
-from core.financeiro import assinar_plano_manual, buscar_plano_por_codigo, listar_planos_ativos
+from core.financeiro import (
+    aplicar_desconto,
+    assinar_plano_manual,
+    buscar_cupom_por_codigo,
+    buscar_plano_por_codigo,
+    listar_planos_ativos,
+    validar_cupom_para_plano,
+)
 from core.ui import inject_app_icons
 
 
@@ -14,7 +21,7 @@ def _ir_para(nome_pagina):
 st.set_page_config(page_title="Pagamento Manual", layout="wide")
 inject_app_icons()
 st.title("Checkout")
-st.write("Fluxo inicial de assinatura. Para atleta solo, a assinatura sera criada no Asaas Sandbox e o status sera atualizado via webhook.")
+st.write("Revise o plano escolhido, aplique um cupom se quiser e siga com a contratacao.")
 
 usuario = st.session_state.get("usuario")
 if not usuario:
@@ -27,31 +34,58 @@ else:
     plano = buscar_plano_por_codigo(plano_codigo) if plano_codigo else None
     planos_validos = [p for p in listar_planos_ativos() if p["tipo_plano"] == usuario.get("tipo_usuario")]
 
-    if not plano and planos_validos:
-        plano = planos_validos[0]
-
     if not plano:
-        st.error("Nenhum plano disponivel para este perfil.")
+        st.error("Nenhum plano selecionado para checkout.")
+        if planos_validos and st.button("Escolher plano", use_container_width=True):
+            _ir_para("pages/planos.py")
     else:
-        st.subheader("Resumo do pagamento")
-        st.write(f"Usuario: {usuario.get('nome', 'Usuario')}")
-        st.write(f"Perfil: {usuario.get('tipo_usuario', 'atleta').capitalize()}")
-        st.write(f"Plano: {plano['nome']}")
-        st.write(f"Valor base: R$ {plano['valor_base']:.2f}")
-        st.write(f"Periodicidade: {plano['periodicidade']}")
+        st.subheader("Resumo do checkout")
+        col_resumo, col_precos = st.columns([1.15, 0.85])
+        with col_resumo:
+            st.write(f"Usuario: {usuario.get('nome', 'Usuario')}")
+            st.write(f"Perfil: {usuario.get('tipo_usuario', 'atleta').capitalize()}")
+            st.write(f"Plano: {plano['nome']}")
+            st.write(f"Periodicidade: {plano['periodicidade']}")
+            st.write(f"Codigo do plano: {plano['codigo']}")
+        with col_precos:
+            st.metric("Valor base", f"R$ {plano['valor_base']:.2f}")
         if plano["tipo_plano"] == "treinador":
             st.write(f"Taxa por aluno ativo: R$ {plano['taxa_por_aluno_ativo']:.2f}")
             st.caption("Na renovacao, o valor final usa snapshot dos alunos ativos vinculados na data de fechamento.")
         cupom_codigo = st.text_input("Cupom de desconto (opcional)").strip().upper()
+        cupom = buscar_cupom_por_codigo(cupom_codigo) if cupom_codigo else None
+        desconto_info = aplicar_desconto(plano["valor_base"], cupom) if cupom else aplicar_desconto(plano["valor_base"], None)
+        cupom_valido = False
+        mensagem_cupom = ""
+        if cupom_codigo:
+            if not cupom:
+                mensagem_cupom = "Cupom nao encontrado."
+            else:
+                cupom_valido, mensagem_cupom = validar_cupom_para_plano(cupom, plano)
+                if cupom_valido:
+                    desconto_info = aplicar_desconto(plano["valor_base"], cupom)
+        if cupom_codigo and mensagem_cupom and not cupom_valido:
+            st.warning(mensagem_cupom)
+        elif cupom_codigo and cupom_valido:
+            st.success(f"Cupom aplicado. Desconto de R$ {desconto_info['valor_desconto']:.2f}.")
+
+        st.markdown("#### Valor final")
+        col_v1, col_v2, col_v3 = st.columns(3)
+        with col_v1:
+            st.metric("Valor bruto", f"R$ {desconto_info['valor_bruto']:.2f}")
+        with col_v2:
+            st.metric("Desconto", f"R$ {desconto_info['valor_desconto']:.2f}")
+        with col_v3:
+            st.metric("Valor final", f"R$ {desconto_info['valor_final']:.2f}")
 
         if plano["tipo_plano"] == "atleta":
-            st.info("Ao confirmar, vamos criar o customer e a assinatura no Asaas Sandbox. O acesso sera liberado quando o webhook confirmar o pagamento.")
+            st.info("Ao continuar, vamos criar o customer e a assinatura no Asaas Sandbox. O acesso sera liberado quando o webhook confirmar o pagamento.")
         else:
-            st.info("Ao confirmar, a assinatura sera ativada manualmente para testes internos.")
+            st.info("Ao continuar, a assinatura sera ativada no fluxo atual e seguira a politica do plano do treinador.")
 
         col_confirmar, col_voltar = st.columns(2)
         with col_confirmar:
-            if st.button("Confirmar assinatura", use_container_width=True):
+            if st.button("Continuar para pagamento", type="primary", use_container_width=True):
                 assinatura, mensagem = assinar_plano_manual(usuario, plano["codigo"], cupom_codigo=cupom_codigo or None)
                 if assinatura:
                     st.success(mensagem)

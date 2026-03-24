@@ -4,6 +4,9 @@ from core.financeiro import listar_planos_ativos
 from core.ui import inject_app_icons
 
 
+CHECKOUT_PAGE = "pages/pagamento_manual.py"
+
+
 def _ir_para_app(modo=None):
     if modo:
         st.session_state["auth_modo"] = modo
@@ -16,7 +19,7 @@ def _ir_para_app(modo=None):
 def _ir_para_pagamento(plano_codigo):
     st.session_state["plano_checkout"] = plano_codigo
     try:
-        st.switch_page("pages/pagamento_manual.py")
+        st.switch_page(CHECKOUT_PAGE)
     except Exception:
         st.info("Abra a pagina Pagamento Manual no menu lateral para continuar.")
 
@@ -74,6 +77,7 @@ else:
                         st.error("Este plano nao corresponde ao perfil da sua conta.")
             else:
                 if st.button("Assinar", key=f"assinar_publico_{plano['codigo']}", use_container_width=True):
+                    st.session_state["plano_checkout"] = plano["codigo"]
                     _ir_para_app("Cadastro")
 
 if usuario:

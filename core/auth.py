@@ -20,6 +20,7 @@ from core.usuarios import (
 ASSETS_DIR = Path.cwd() / "assets"
 LOGO_TRILAB_LADO = ASSETS_DIR / "logo_trilab_lado.png"
 LOGO_TRILAB_CIMA = ASSETS_DIR / "logo_trilab_cima.png"
+CHECKOUT_PAGE = "pages/pagamento_manual.py"
 
 
 def _token_convite_da_url():
@@ -75,10 +76,33 @@ def _logo_auth_html():
     """
 
 
+def _tem_checkout_pendente():
+    return bool((st.session_state.get("plano_checkout") or "").strip())
+
+
+def _ir_para_checkout_se_pendente():
+    if not _tem_checkout_pendente():
+        return False
+    try:
+        st.switch_page(CHECKOUT_PAGE)
+    except Exception:
+        st.info("Abra a pagina de checkout no menu lateral para continuar sua assinatura.")
+    return True
+
+
+def _aplicar_auth_mode():
+    auth_modo = (st.session_state.get("auth_modo") or "").strip().lower()
+    if auth_modo == "cadastro":
+        st.caption("Finalize seu cadastro para continuar para o checkout.")
+    elif auth_modo == "login":
+        st.caption("Entre na sua conta para continuar para o checkout.")
+
+
 def tela_login():
     _capturar_convite_em_sessao()
     apply_global_styles()
     st.markdown(_logo_auth_html(), unsafe_allow_html=True)
+    _aplicar_auth_mode()
 
     aba_entrar, aba_cadastro, aba_recuperar = st.tabs(["Entrar", "Criar conta", "Esqueci a senha"])
 
@@ -130,6 +154,8 @@ def _tela_login_tab():
         st.session_state["usuario"] = usuario
         registrar_sessao_persistente(usuario["id"])
         st.session_state.setdefault("mostrar_overview", False)
+        if _ir_para_checkout_se_pendente():
+            return
         st.rerun()
 
 def _tela_cadastro_tab():
@@ -193,6 +219,7 @@ def _tela_cadastro_tab():
         st.warning(f"Erro ao criar usuario: {exc}")
         return
 
+    usuario = autenticar_usuario(email, senha)
     convite_token = (st.session_state.get("convite_treinador_token") or "").strip()
     convite = buscar_convite_por_token(convite_token) if convite_token and tipo_usuario == "atleta" else None
     if convite:
@@ -204,7 +231,13 @@ def _tela_cadastro_tab():
     else:
         st.success("Conta criada com sucesso.")
 
-    st.info("Use a aba 'Entrar' para acessar.")
+    if usuario:
+        st.session_state["usuario"] = usuario
+        registrar_sessao_persistente(usuario["id"])
+        st.session_state.setdefault("mostrar_overview", False)
+        if _ir_para_checkout_se_pendente():
+            return
+    st.info("Sua conta foi criada. Continue para o checkout ou use a aba 'Entrar' se preferir.")
 
 
 def _tela_recuperacao_tab():
