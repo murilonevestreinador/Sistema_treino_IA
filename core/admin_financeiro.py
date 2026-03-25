@@ -45,7 +45,9 @@ def _formatar_percentual(valor):
 
 
 def _sincronizar_editor_plano():
-    st.session_state["financeiro_plano_editor_alvo_id"] = st.session_state["financeiro_plano_editor_id"]
+    plano_selecionado = st.session_state["financeiro_plano_editor_id"]
+    st.session_state["financeiro_plano_editor_alvo_id"] = plano_selecionado
+    st.session_state["financeiro_plano_editor_plano_id"] = None if plano_selecionado == "novo" else int(plano_selecionado)
 
 
 def _render_cards(metricas):
@@ -153,9 +155,12 @@ def _render_planos(admin, registrar_log_admin):
             key="financeiro_plano_editor_id",
             on_change=_sincronizar_editor_plano,
         )
-        plano = next((p for p in planos if p["id"] == plano_selecionado), None)
+        plano_id_em_edicao = None if plano_selecionado == "novo" else int(plano_selecionado)
+        st.session_state["financeiro_plano_editor_alvo_id"] = plano_selecionado
+        st.session_state["financeiro_plano_editor_plano_id"] = plano_id_em_edicao
+        plano = next((p for p in planos if p["id"] == plano_id_em_edicao), None)
         sufixo_form = str(plano_selecionado)
-        with st.form("form_plano_admin"):
+        with st.form(f"form_plano_admin_{sufixo_form}"):
             col1, col2, col3 = st.columns(3)
             with col1:
                 codigo = st.text_input("Codigo", value=plano.get("codigo") if plano else "", key=f"financeiro_plano_codigo_{sufixo_form}")
@@ -221,13 +226,21 @@ def _render_planos(admin, registrar_log_admin):
                 "ativo": ativo,
             }
             try:
-                plano_salvo = atualizar_plano_admin(plano["id"], payload) if plano else salvar_plano_admin(payload)
+                plano_id_para_salvar = st.session_state.get("financeiro_plano_editor_plano_id")
+                if plano_id_para_salvar is not None:
+                    if not buscar_plano_por_id(plano_id_para_salvar):
+                        raise ValueError("Plano selecionado nao foi encontrado para edicao.")
+                    plano_salvo = atualizar_plano_admin(plano_id_para_salvar, payload)
+                else:
+                    plano_salvo = salvar_plano_admin(payload)
             except ValueError as exc:
                 st.error(str(exc))
             except Exception as exc:
                 st.error(f"Nao foi possivel salvar o plano: {exc}")
             else:
                 st.session_state["financeiro_plano_editor_alvo_id"] = plano_salvo["id"]
+                st.session_state["financeiro_plano_editor_id"] = plano_salvo["id"]
+                st.session_state["financeiro_plano_editor_plano_id"] = plano_salvo["id"]
                 registrar_log_admin(admin["id"], "salvou plano financeiro", "plano", plano_salvo["id"], plano_salvo["codigo"])
                 st.success("Plano salvo com sucesso.")
                 st.rerun()

@@ -254,6 +254,7 @@ def _validar_payload_plano_admin(dados):
 
 
 def atualizar_plano_admin(plano_id, dados):
+    plano_id = int(plano_id)
     payload = _validar_payload_plano_admin(dados)
     plano_atual = buscar_plano_por_id(plano_id)
     if not plano_atual:
@@ -301,6 +302,8 @@ def atualizar_plano_admin(plano_id, dados):
                 plano_id,
             ),
         )
+        if cursor.rowcount == 0:
+            raise ValueError("Nenhum plano foi atualizado.")
         conn.commit()
     finally:
         conn.close()
