@@ -6,6 +6,7 @@ import streamlit as st
 from core.financeiro import (
     alterar_status_plano,
     aplicar_desconto_manual_admin,
+    atualizar_plano_admin,
     atualizar_status_assinatura_admin,
     atualizar_status_pagamento,
     buscar_plano_por_id,
@@ -138,27 +139,63 @@ def _render_planos(admin, registrar_log_admin):
             "Plano para editar",
             ["novo"] + [p["id"] for p in planos],
             format_func=lambda valor: "Novo plano" if valor == "novo" else next(f"{p['nome']} ({p['codigo']})" for p in planos if p["id"] == valor),
+            key="financeiro_plano_editor_id",
         )
         plano = next((p for p in planos if p["id"] == plano_selecionado), None)
+        sufixo_form = str(plano_selecionado)
         with st.form("form_plano_admin"):
             col1, col2, col3 = st.columns(3)
             with col1:
-                codigo = st.text_input("Codigo", value=plano.get("codigo") if plano else "")
-                nome = st.text_input("Nome", value=plano.get("nome") if plano else "")
-                tipo_plano = st.selectbox("Tipo", ["atleta", "treinador"], index=["atleta", "treinador"].index(plano.get("tipo_plano", "atleta") if plano else "atleta"))
+                codigo = st.text_input("Codigo", value=plano.get("codigo") if plano else "", key=f"financeiro_plano_codigo_{sufixo_form}")
+                nome = st.text_input("Nome", value=plano.get("nome") if plano else "", key=f"financeiro_plano_nome_{sufixo_form}")
+                tipo_plano = st.selectbox(
+                    "Tipo",
+                    ["atleta", "treinador"],
+                    index=["atleta", "treinador"].index(plano.get("tipo_plano", "atleta") if plano else "atleta"),
+                    key=f"financeiro_plano_tipo_{sufixo_form}",
+                )
             with col2:
-                periodicidade = st.selectbox("Periodicidade", ["mensal", "anual"], index=["mensal", "anual"].index(plano.get("periodicidade", "mensal") if plano else "mensal"))
-                valor_base = st.number_input("Valor base", min_value=0.0, value=float(plano.get("valor_base") or 0.0) if plano else 0.0, step=10.0)
-                taxa_por_aluno = st.number_input("Taxa por aluno ativo", min_value=0.0, value=float(plano.get("taxa_por_aluno_ativo") or 0.0) if plano else 0.0, step=5.0)
+                periodicidade = st.selectbox(
+                    "Periodicidade",
+                    ["mensal", "anual"],
+                    index=["mensal", "anual"].index(plano.get("periodicidade", "mensal") if plano else "mensal"),
+                    key=f"financeiro_plano_periodicidade_{sufixo_form}",
+                )
+                valor_base = st.number_input(
+                    "Valor base",
+                    min_value=0.0,
+                    value=float(plano.get("valor_base") or 0.0) if plano else 0.0,
+                    step=10.0,
+                    key=f"financeiro_plano_valor_{sufixo_form}",
+                )
+                taxa_por_aluno = st.number_input(
+                    "Taxa por aluno ativo",
+                    min_value=0.0,
+                    value=float(plano.get("taxa_por_aluno_ativo") or 0.0) if plano else 0.0,
+                    step=5.0,
+                    key=f"financeiro_plano_taxa_{sufixo_form}",
+                )
             with col3:
-                ordem_exibicao = st.number_input("Ordem de exibicao", min_value=0, value=int(plano.get("ordem_exibicao") or 0) if plano else 0, step=1)
-                limite_atletas = st.number_input("Limite atletas (0 sem limite)", min_value=0, value=int(plano.get("limite_atletas") or 0) if plano and plano.get("limite_atletas") else 0, step=1)
-                ativo = st.checkbox("Ativo", value=bool(plano.get("ativo", 1)) if plano else True)
-            descricao = st.text_area("Descricao", value=plano.get("descricao") if plano else "")
-            beneficios = st.text_area("Beneficios", value=plano.get("beneficios") if plano else "")
+                ordem_exibicao = st.number_input(
+                    "Ordem de exibicao",
+                    min_value=0,
+                    value=int(plano.get("ordem_exibicao") or 0) if plano else 0,
+                    step=1,
+                    key=f"financeiro_plano_ordem_{sufixo_form}",
+                )
+                limite_atletas = st.number_input(
+                    "Limite atletas (0 sem limite)",
+                    min_value=0,
+                    value=int(plano.get("limite_atletas") or 0) if plano and plano.get("limite_atletas") else 0,
+                    step=1,
+                    key=f"financeiro_plano_limite_{sufixo_form}",
+                )
+                ativo = st.checkbox("Ativo", value=bool(plano.get("ativo", 1)) if plano else True, key=f"financeiro_plano_ativo_{sufixo_form}")
+            descricao = st.text_area("Descricao", value=plano.get("descricao") if plano else "", key=f"financeiro_plano_descricao_{sufixo_form}")
+            beneficios = st.text_area("Beneficios", value=plano.get("beneficios") if plano else "", key=f"financeiro_plano_beneficios_{sufixo_form}")
             salvar = st.form_submit_button("Salvar plano", use_container_width=True)
         if salvar:
-            plano_salvo = salvar_plano_admin({
+            payload = {
                 "codigo": codigo,
                 "nome": nome,
                 "tipo_plano": tipo_plano,
@@ -170,10 +207,18 @@ def _render_planos(admin, registrar_log_admin):
                 "ordem_exibicao": ordem_exibicao,
                 "limite_atletas": limite_atletas or None,
                 "ativo": ativo,
-            })
-            registrar_log_admin(admin["id"], "salvou plano financeiro", "plano", plano_salvo["id"], plano_salvo["codigo"])
-            st.success("Plano salvo com sucesso.")
-            st.rerun()
+            }
+            try:
+                plano_salvo = atualizar_plano_admin(plano["id"], payload) if plano else salvar_plano_admin(payload)
+            except ValueError as exc:
+                st.error(str(exc))
+            except Exception as exc:
+                st.error(f"Nao foi possivel salvar o plano: {exc}")
+            else:
+                st.session_state["financeiro_plano_editor_id"] = plano_salvo["id"]
+                registrar_log_admin(admin["id"], "salvou plano financeiro", "plano", plano_salvo["id"], plano_salvo["codigo"])
+                st.success("Plano salvo com sucesso.")
+                st.rerun()
 
     if planos:
         col_a, col_b = st.columns(2)

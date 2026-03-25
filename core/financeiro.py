@@ -229,7 +229,7 @@ def listar_planos_admin(incluir_inativos=True):
     return itens
 
 
-def salvar_plano_admin(dados):
+def _validar_payload_plano_admin(dados):
     codigo = (dados.get("codigo") or "").strip().lower()
     nome = (dados.get("nome") or "").strip()
     tipo_plano = (dados.get("tipo_plano") or "").strip().lower()
@@ -237,47 +237,111 @@ def salvar_plano_admin(dados):
     if not codigo or not nome or tipo_plano not in {"atleta", "treinador"}:
         raise ValueError("Codigo, nome e tipo do plano sao obrigatorios.")
 
+    return {
+        "codigo": codigo,
+        "nome": nome,
+        "tipo_plano": tipo_plano,
+        "periodicidade": periodicidade,
+        "valor_base": float(_to_decimal(dados.get("valor_base"))),
+        "taxa_por_aluno_ativo": float(_to_decimal(dados.get("taxa_por_aluno_ativo"))),
+        "descricao": (dados.get("descricao") or "").strip() or None,
+        "beneficios": (dados.get("beneficios") or "").strip() or None,
+        "ordem_exibicao": int(dados.get("ordem_exibicao") or 0),
+        "limite_atletas": dados.get("limite_atletas"),
+        "ativo": int(bool(dados.get("ativo", True))),
+    }
+
+
+def atualizar_plano_admin(plano_id, dados):
+    payload = _validar_payload_plano_admin(dados)
+    plano_atual = buscar_plano_por_id(plano_id)
+    if not plano_atual:
+        raise ValueError("Plano nao encontrado.")
+
+    plano_com_mesmo_codigo = buscar_plano_por_codigo(payload["codigo"])
+    if plano_com_mesmo_codigo and int(plano_com_mesmo_codigo["id"]) != int(plano_id):
+        raise ValueError("Ja existe outro plano com este codigo.")
+
     conn = conectar()
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-        INSERT INTO planos (
-            codigo, nome, tipo, tipo_plano, periodicidade, preco_mensal, valor_base,
-            taxa_por_aluno_ativo, descricao, beneficios, ordem_exibicao, limite_atletas, ativo
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (codigo) DO UPDATE SET
-            nome = EXCLUDED.nome,
-            tipo = EXCLUDED.tipo,
-            tipo_plano = EXCLUDED.tipo_plano,
-            periodicidade = EXCLUDED.periodicidade,
-            preco_mensal = EXCLUDED.preco_mensal,
-            valor_base = EXCLUDED.valor_base,
-            taxa_por_aluno_ativo = EXCLUDED.taxa_por_aluno_ativo,
-            descricao = EXCLUDED.descricao,
-            beneficios = EXCLUDED.beneficios,
-            ordem_exibicao = EXCLUDED.ordem_exibicao,
-            limite_atletas = EXCLUDED.limite_atletas,
-            ativo = EXCLUDED.ativo
-        """,
-        (
-            codigo,
-            nome,
-            tipo_plano,
-            tipo_plano,
-            periodicidade,
-            float(_to_decimal(dados.get("valor_base"))),
-            float(_to_decimal(dados.get("valor_base"))),
-            float(_to_decimal(dados.get("taxa_por_aluno_ativo"))),
-            (dados.get("descricao") or "").strip() or None,
-            (dados.get("beneficios") or "").strip() or None,
-            int(dados.get("ordem_exibicao") or 0),
-            dados.get("limite_atletas"),
-            int(bool(dados.get("ativo", True))),
-        ),
-    )
-    conn.commit()
-    conn.close()
-    return buscar_plano_por_codigo(codigo)
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            UPDATE planos
+            SET codigo = %s,
+                nome = %s,
+                tipo = %s,
+                tipo_plano = %s,
+                periodicidade = %s,
+                preco_mensal = %s,
+                valor_base = %s,
+                taxa_por_aluno_ativo = %s,
+                descricao = %s,
+                beneficios = %s,
+                ordem_exibicao = %s,
+                limite_atletas = %s,
+                ativo = %s
+            WHERE id = %s
+            """,
+            (
+                payload["codigo"],
+                payload["nome"],
+                payload["tipo_plano"],
+                payload["tipo_plano"],
+                payload["periodicidade"],
+                payload["valor_base"],
+                payload["valor_base"],
+                payload["taxa_por_aluno_ativo"],
+                payload["descricao"],
+                payload["beneficios"],
+                payload["ordem_exibicao"],
+                payload["limite_atletas"],
+                payload["ativo"],
+                plano_id,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return buscar_plano_por_id(plano_id)
+
+
+def salvar_plano_admin(dados):
+    payload = _validar_payload_plano_admin(dados)
+    plano_com_mesmo_codigo = buscar_plano_por_codigo(payload["codigo"])
+    if plano_com_mesmo_codigo:
+        raise ValueError("Ja existe um plano com este codigo.")
+
+    conn = conectar()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO planos (
+                codigo, nome, tipo, tipo_plano, periodicidade, preco_mensal, valor_base,
+                taxa_por_aluno_ativo, descricao, beneficios, ordem_exibicao, limite_atletas, ativo
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                payload["codigo"],
+                payload["nome"],
+                payload["tipo_plano"],
+                payload["tipo_plano"],
+                payload["periodicidade"],
+                payload["valor_base"],
+                payload["valor_base"],
+                payload["taxa_por_aluno_ativo"],
+                payload["descricao"],
+                payload["beneficios"],
+                payload["ordem_exibicao"],
+                payload["limite_atletas"],
+                payload["ativo"],
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return buscar_plano_por_codigo(payload["codigo"])
 
 
 def alterar_status_plano(plano_id, ativo):
