@@ -66,6 +66,7 @@ def _criar_tabela_usuarios(cursor):
             email TEXT UNIQUE,
             cpf TEXT,
             telefone TEXT,
+            cref TEXT,
             senha TEXT,
             sexo TEXT,
             tipo_usuario TEXT DEFAULT 'atleta',
@@ -100,6 +101,7 @@ def _criar_tabela_usuarios(cursor):
         "foto_perfil": "TEXT",
         "cpf": "TEXT",
         "telefone": "TEXT",
+        "cref": "TEXT",
         "tipo_usuario": "TEXT DEFAULT 'atleta'",
         "status_conta": "TEXT DEFAULT 'ativo'",
         "onboarding_completo": "INTEGER DEFAULT 0",
@@ -969,8 +971,13 @@ def _criar_indices_bi(cursor):
     )
     cursor.execute(
         """
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_usuarios_cpf_unico
-        ON usuarios (cpf)
+        DROP INDEX IF EXISTS idx_usuarios_cpf_unico
+        """
+    )
+    cursor.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_usuarios_cpf_tipo_unico
+        ON usuarios (cpf, tipo_usuario)
         WHERE cpf IS NOT NULL AND btrim(cpf) <> ''
         """
     )

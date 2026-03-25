@@ -13,12 +13,14 @@ from core.treinador import (
     vincular_atleta_ao_treinador_por_email,
 )
 from core.usuarios import (
+    alterar_senha_usuario_autenticado,
     atualizar_perfil_usuario,
     diagnosticar_dados_checkout,
     excluir_usuario,
     formatar_cpf,
     formatar_telefone,
     validar_cpf,
+    validar_cref,
     validar_telefone,
 )
 
@@ -59,6 +61,9 @@ def _render_form_perfil(usuario):
             apelido = st.text_input("Apelido", value=usuario.get("apelido") or "")
             cpf = st.text_input("CPF", value=formatar_cpf(usuario.get("cpf")), placeholder="123.456.789-09")
             telefone = st.text_input("Telefone", value=formatar_telefone(usuario.get("telefone")), placeholder="(16) 99999-9999")
+            cref = None
+            if usuario.get("tipo_usuario") == "treinador":
+                cref = st.text_input("CREF", value=usuario.get("cref") or "", placeholder="Ex.: 123456-G/SP")
             foto_upload = st.file_uploader(
                 "Foto de perfil",
                 type=["png", "jpg", "jpeg", "webp"],
@@ -98,6 +103,13 @@ def _render_form_perfil(usuario):
         else:
             telefone_msg = None
 
+        cref_msg = None
+        if usuario.get("tipo_usuario") == "treinador":
+            cref_ok, cref_msg = validar_cref(cref, obrigatorio=False)
+            if not cref_ok:
+                st.error(cref_msg)
+                return
+
         try:
             usuario_atualizado = atualizar_perfil_usuario(
                 usuario["id"],
@@ -107,6 +119,7 @@ def _render_form_perfil(usuario):
                     "foto_perfil": foto_perfil,
                     "cpf": cpf_msg,
                     "telefone": telefone_msg,
+                    "cref": cref_msg,
                 },
             )
         except ValueError as exc:
@@ -257,6 +270,31 @@ def _render_exclusao_conta(usuario):
     return True
 
 
+def _render_alterar_senha(usuario):
+    st.subheader("Alterar senha")
+    st.caption("Confirme sua senha atual e defina uma nova senha para esta conta.")
+
+    with st.form(f"form_alterar_senha_{usuario['id']}"):
+        senha_atual = st.text_input("Senha atual", type="password")
+        nova_senha = st.text_input("Nova senha", type="password")
+        confirmar_nova_senha = st.text_input("Confirmar nova senha", type="password")
+        salvar_senha = st.form_submit_button("Salvar nova senha", use_container_width=True)
+
+    if not salvar_senha:
+        return
+
+    ok, mensagem = alterar_senha_usuario_autenticado(
+        usuario["id"],
+        senha_atual,
+        nova_senha,
+        confirmar_nova_senha,
+    )
+    if ok:
+        st.session_state["mensagem_perfil"] = mensagem
+        st.rerun()
+    st.error(mensagem)
+
+
 def tela_meu_perfil(usuario):
     st.title("Meu perfil")
 
@@ -265,6 +303,7 @@ def tela_meu_perfil(usuario):
         st.success(mensagem)
 
     _render_form_perfil(usuario)
+    _render_alterar_senha(usuario)
     _render_personalizacao_treinador(usuario)
     _render_vinculo_atleta(usuario)
     return _render_exclusao_conta(usuario)

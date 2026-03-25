@@ -77,6 +77,19 @@ def validar_telefone(telefone):
     return True, telefone_normalizado
 
 
+def normalizar_cref(cref):
+    return (cref or "").strip().upper()
+
+
+def validar_cref(cref, obrigatorio=False):
+    cref_normalizado = normalizar_cref(cref)
+    if obrigatorio and not cref_normalizado:
+        return False, "Informe o CREF."
+    if cref and len(cref_normalizado) < 4:
+        return False, "Informe um CREF valido."
+    return True, cref_normalizado or None
+
+
 def diagnosticar_dados_checkout(usuario):
     usuario = usuario or {}
     faltantes = []
@@ -98,9 +111,10 @@ def diagnosticar_dados_checkout(usuario):
     }
 
 
-def _validar_dados_contato_usuario(dados, exigir_preenchimento=False, usuario_id=None):
+def _validar_dados_contato_usuario(dados, exigir_preenchimento=False, usuario_id=None, tipo_usuario=None):
     cpf_informado = dados.get("cpf") if "cpf" in dados else dados.get("cpf_cnpj")
     telefone_informado = dados.get("telefone") if "telefone" in dados else dados.get("mobilePhone")
+    tipo_normalizado = normalizar_tipo_usuario(tipo_usuario or dados.get("tipo_usuario"), dados.get("is_admin"))
 
     cpf_normalizado = normalizar_cpf(cpf_informado)
     telefone_normalizado = normalizar_telefone(telefone_informado)
@@ -127,9 +141,9 @@ def _validar_dados_contato_usuario(dados, exigir_preenchimento=False, usuario_id
         raise ValueError("Informe um telefone valido com DDD.")
 
     if cpf_normalizado:
-        usuario_existente = buscar_usuario_por_cpf(cpf_normalizado)
+        usuario_existente = buscar_usuario_por_cpf(cpf_normalizado, tipo_usuario=tipo_normalizado)
         if usuario_existente and int(usuario_existente["id"]) != int(usuario_id or 0):
-            raise ValueError("Este CPF ja esta vinculado a outra conta.")
+            raise ValueError(f"Ja existe uma conta {tipo_normalizado} com este CPF.")
 
     return {
         "cpf": cpf_normalizado or None,
@@ -158,6 +172,7 @@ def _usuario_sem_senha(usuario):
     usuario_limpo["mobilePhone"] = usuario_limpo["telefone"]
     usuario_limpo["cpf_formatado"] = formatar_cpf(usuario_limpo["cpf"])
     usuario_limpo["telefone_formatado"] = formatar_telefone(usuario_limpo["telefone"])
+    usuario_limpo["cref"] = normalizar_cref(usuario_limpo.get("cref")) or None
     return usuario_limpo
 
 
@@ -187,11 +202,22 @@ def buscar_usuario_por_email(email):
     return _buscar_usuario_por_coluna("email", (email or "").strip().lower())
 
 
-def buscar_usuario_por_cpf(cpf):
+def buscar_usuario_por_cpf(cpf, tipo_usuario=None):
     cpf_normalizado = normalizar_cpf(cpf)
     if not cpf_normalizado:
         return None
-    return _buscar_usuario_por_coluna("cpf", cpf_normalizado)
+    conn = conectar()
+    cursor = conn.cursor()
+    if tipo_usuario:
+        cursor.execute(
+            "SELECT * FROM usuarios WHERE cpf = %s AND tipo_usuario = %s ORDER BY id ASC LIMIT 1",
+            (cpf_normalizado, normalizar_tipo_usuario(tipo_usuario)),
+        )
+    else:
+        cursor.execute("SELECT * FROM usuarios WHERE cpf = %s ORDER BY id ASC LIMIT 1", (cpf_normalizado,))
+    usuario = _linha_para_dict(cursor.fetchone())
+    conn.close()
+    return _usuario_sem_senha(usuario)
 
 
 def buscar_usuario_por_id(usuario_id):
@@ -202,19 +228,24 @@ def criar_usuario(dados):
     data_consentimento = dados.get("data_consentimento")
     if not data_consentimento and (dados.get("aceitou_termos") or dados.get("aceitou_privacidade")):
         data_consentimento = datetime.now().isoformat(timespec="seconds")
-    contato = _validar_dados_contato_usuario(dados, exigir_preenchimento=True)
+    tipo_usuario = normalizar_tipo_usuario(dados.get("tipo_usuario"), dados.get("is_admin"))
+    contato = _validar_dados_contato_usuario(dados, exigir_preenchimento=True, tipo_usuario=tipo_usuario)
+    cref_obrigatorio = tipo_usuario == "treinador"
+    cref_ok, cref_msg = validar_cref(dados.get("cref"), obrigatorio=cref_obrigatorio)
+    if not cref_ok:
+        raise ValueError(cref_msg)
 
     conn = conectar()
     cursor = conn.cursor()
     cursor.execute(
         """
         INSERT INTO usuarios (
-            nome, apelido, foto_perfil, email, cpf, telefone, senha, sexo, tipo_usuario, status_conta, onboarding_completo, is_admin,
+            nome, apelido, foto_perfil, email, cpf, telefone, cref, senha, sexo, tipo_usuario, status_conta, onboarding_completo, is_admin,
             idade, peso, altura, objetivo, distancia_principal, tempo_pratica,
             treinos_corrida_semana, tem_prova, data_prova, distancia_prova,
             treinos_musculacao_semana, local_treino, experiencia_musculacao,
             historico_lesao, dor_atual, aceitou_termos, aceitou_privacidade, data_consentimento
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING id
         """,
         (
@@ -224,12 +255,13 @@ def criar_usuario(dados):
             (dados.get("email") or "").strip().lower(),
             contato["cpf"],
             contato["telefone"],
+            cref_msg,
             hash_senha(dados.get("senha") or ""),
             _normalizar_sexo(dados.get("sexo")),
-            normalizar_tipo_usuario(dados.get("tipo_usuario"), dados.get("is_admin")),
+            tipo_usuario,
             normalizar_status_conta(dados.get("status_conta")),
             int(dados.get("onboarding_completo", 0)),
-            int(normalizar_tipo_usuario(dados.get("tipo_usuario"), dados.get("is_admin")) == "admin"),
+            int(tipo_usuario == "admin"),
             dados.get("idade"),
             dados.get("peso"),
             dados.get("altura"),
@@ -460,7 +492,23 @@ def redefinir_objetivo_atleta(usuario_id, dados_objetivo):
 
 
 def atualizar_perfil_usuario(usuario_id, dados_perfil):
-    contato = _validar_dados_contato_usuario(dados_perfil, exigir_preenchimento=False, usuario_id=usuario_id)
+    usuario_atual = buscar_usuario_por_id(usuario_id)
+    tipo_usuario = normalizar_tipo_usuario(
+        dados_perfil.get("tipo_usuario") or (usuario_atual or {}).get("tipo_usuario"),
+        dados_perfil.get("is_admin") or (usuario_atual or {}).get("is_admin"),
+    )
+    contato = _validar_dados_contato_usuario(
+        dados_perfil,
+        exigir_preenchimento=False,
+        usuario_id=usuario_id,
+        tipo_usuario=tipo_usuario,
+    )
+    cref_valor = (usuario_atual or {}).get("cref")
+    if "cref" in dados_perfil:
+        cref_ok, cref_msg = validar_cref(dados_perfil.get("cref"), obrigatorio=False)
+        if not cref_ok:
+            raise ValueError(cref_msg)
+        cref_valor = cref_msg
     conn = conectar()
     cursor = conn.cursor()
     cursor.execute(
@@ -470,7 +518,8 @@ def atualizar_perfil_usuario(usuario_id, dados_perfil):
             apelido = %s,
             foto_perfil = %s,
             cpf = %s,
-            telefone = %s
+            telefone = %s,
+            cref = %s
         WHERE id = %s
         """,
         (
@@ -479,6 +528,7 @@ def atualizar_perfil_usuario(usuario_id, dados_perfil):
             dados_perfil.get("foto_perfil"),
             contato["cpf"],
             contato["telefone"],
+            cref_valor,
             usuario_id,
         ),
     )
@@ -677,6 +727,50 @@ def redefinir_senha_usuario(usuario_id, nova_senha):
     conn.commit()
     conn.close()
     return buscar_usuario_por_id(usuario_id)
+
+
+def alterar_senha_usuario_autenticado(usuario_id, senha_atual, nova_senha, confirmacao_nova_senha):
+    senha_atual = senha_atual or ""
+    nova_senha = nova_senha or ""
+    confirmacao_nova_senha = confirmacao_nova_senha or ""
+
+    if not senha_atual.strip():
+        return False, "Informe sua senha atual."
+    if not nova_senha:
+        return False, "Informe a nova senha."
+    if not confirmacao_nova_senha:
+        return False, "Confirme a nova senha."
+    if nova_senha != confirmacao_nova_senha:
+        return False, "A confirmacao da nova senha nao confere."
+    if len(nova_senha) < 8:
+        return False, "A nova senha deve ter pelo menos 8 caracteres."
+
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, senha FROM usuarios WHERE id = %s", (usuario_id,))
+    usuario = _linha_para_dict(cursor.fetchone())
+
+    if not usuario:
+        conn.close()
+        return False, "Usuario nao encontrado."
+    if not verificar_senha(senha_atual, usuario.get("senha")):
+        conn.close()
+        return False, "A senha atual informada esta incorreta."
+    if verificar_senha(nova_senha, usuario.get("senha")):
+        conn.close()
+        return False, "A nova senha deve ser diferente da senha atual."
+
+    cursor.execute(
+        """
+        UPDATE usuarios
+        SET senha = %s
+        WHERE id = %s
+        """,
+        (hash_senha(nova_senha), usuario_id),
+    )
+    conn.commit()
+    conn.close()
+    return True, "Senha alterada com sucesso."
 
 
 def listar_usuarios(

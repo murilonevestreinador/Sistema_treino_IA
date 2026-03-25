@@ -14,6 +14,7 @@ from core.usuarios import (
     buscar_usuario_por_email,
     criar_usuario,
     validar_cpf,
+    validar_cref,
     validar_telefone,
     tentar_bootstrap_primeiro_admin,
 )
@@ -168,6 +169,9 @@ def _tela_cadastro_tab():
         email = st.text_input("Email", key="cad_email", placeholder="voce@exemplo.com")
         cpf = st.text_input("CPF", key="cad_cpf", placeholder="123.456.789-09")
         telefone = st.text_input("Telefone", key="cad_telefone", placeholder="(16) 99999-9999")
+        cref = ""
+        if tipo_usuario == "treinador":
+            cref = st.text_input("CREF", key="cad_cref", placeholder="Ex.: 123456-G/SP")
         senha = st.text_input("Senha", type="password", key="cad_senha", placeholder="Crie uma senha")
         sexo = st.selectbox("Sexo", ["masculino", "feminino", "outro"], key="cad_sexo")
         objetivo = "performance"
@@ -188,8 +192,11 @@ def _tela_cadastro_tab():
     if not enviar:
         return
 
-    if not nome.strip() or not email.strip() or not senha.strip() or not cpf.strip() or not telefone.strip():
-        st.warning("Preencha nome, e-mail, CPF, telefone e senha.")
+    campos_obrigatorios = [nome.strip(), email.strip(), senha.strip(), cpf.strip(), telefone.strip()]
+    if tipo_usuario == "treinador":
+        campos_obrigatorios.append(cref.strip())
+    if not all(campos_obrigatorios):
+        st.warning("Preencha nome, e-mail, CPF, telefone e senha." + (" O CREF e obrigatorio para treinador." if tipo_usuario == "treinador" else ""))
         return
 
     if not aceitou_termos or not aceitou_privacidade:
@@ -206,6 +213,14 @@ def _tela_cadastro_tab():
         st.warning(telefone_msg)
         return
 
+    if tipo_usuario == "treinador":
+        cref_ok, cref_msg = validar_cref(cref, obrigatorio=True)
+        if not cref_ok:
+            st.warning(cref_msg)
+            return
+    else:
+        cref_msg = None
+
     if buscar_usuario_por_email(email):
         if st.session_state.get("convite_treinador_token"):
             st.warning("Ja existe um usuario com este e-mail. Faca login por este link para decidir sobre o vinculo.")
@@ -220,6 +235,7 @@ def _tela_cadastro_tab():
                 "email": email,
                 "cpf": cpf_msg,
                 "telefone": telefone_msg,
+                "cref": cref_msg,
                 "senha": senha,
                 "sexo": sexo,
                 "tipo_usuario": tipo_usuario,
