@@ -12,7 +12,15 @@ from core.treinador import (
     salvar_tema_treinador,
     vincular_atleta_ao_treinador_por_email,
 )
-from core.usuarios import atualizar_perfil_usuario, excluir_usuario
+from core.usuarios import (
+    atualizar_perfil_usuario,
+    diagnosticar_dados_checkout,
+    excluir_usuario,
+    formatar_cpf,
+    formatar_telefone,
+    validar_cpf,
+    validar_telefone,
+)
 
 
 def _foto_perfil_bytes(usuario):
@@ -37,6 +45,9 @@ def _render_foto_atual(usuario):
 
 def _render_form_perfil(usuario):
     st.subheader("Dados pessoais")
+    diagnostico_checkout = diagnosticar_dados_checkout(usuario)
+    if not diagnostico_checkout["ok"]:
+        st.warning("Complete CPF e telefone para liberar o checkout e o pagamento.")
     col_form, col_preview = st.columns([2, 1])
 
     with col_preview:
@@ -46,6 +57,8 @@ def _render_form_perfil(usuario):
         with st.form(f"form_perfil_{usuario['id']}"):
             nome = st.text_input("Nome", value=usuario.get("nome", ""))
             apelido = st.text_input("Apelido", value=usuario.get("apelido") or "")
+            cpf = st.text_input("CPF", value=formatar_cpf(usuario.get("cpf")), placeholder="123.456.789-09")
+            telefone = st.text_input("Telefone", value=formatar_telefone(usuario.get("telefone")), placeholder="(16) 99999-9999")
             foto_upload = st.file_uploader(
                 "Foto de perfil",
                 type=["png", "jpg", "jpeg", "webp"],
@@ -69,14 +82,36 @@ def _render_form_perfil(usuario):
         elif foto_upload is not None:
             foto_perfil = base64.b64encode(foto_upload.getvalue()).decode("ascii")
 
-        usuario_atualizado = atualizar_perfil_usuario(
-            usuario["id"],
-            {
-                "nome": nome,
-                "apelido": apelido,
-                "foto_perfil": foto_perfil,
-            },
-        )
+        if cpf.strip():
+            cpf_ok, cpf_msg = validar_cpf(cpf)
+            if not cpf_ok:
+                st.error(cpf_msg)
+                return
+        else:
+            cpf_msg = None
+
+        if telefone.strip():
+            telefone_ok, telefone_msg = validar_telefone(telefone)
+            if not telefone_ok:
+                st.error(telefone_msg)
+                return
+        else:
+            telefone_msg = None
+
+        try:
+            usuario_atualizado = atualizar_perfil_usuario(
+                usuario["id"],
+                {
+                    "nome": nome,
+                    "apelido": apelido,
+                    "foto_perfil": foto_perfil,
+                    "cpf": cpf_msg,
+                    "telefone": telefone_msg,
+                },
+            )
+        except ValueError as exc:
+            st.error(str(exc))
+            return
         st.session_state["usuario"] = usuario_atualizado
         st.session_state["mensagem_perfil"] = "Perfil atualizado com sucesso."
         st.rerun()

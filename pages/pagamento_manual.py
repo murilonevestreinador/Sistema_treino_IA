@@ -10,6 +10,7 @@ from core.financeiro import (
     validar_cupom_para_plano,
 )
 from core.ui import inject_app_icons
+from core.usuarios import diagnosticar_dados_checkout, formatar_cpf, formatar_telefone
 
 
 def _ir_para(nome_pagina):
@@ -17,6 +18,11 @@ def _ir_para(nome_pagina):
         st.switch_page(nome_pagina)
     except Exception:
         st.info("Use o menu lateral para continuar.")
+
+
+def _ir_para_perfil():
+    st.session_state["secao_app"] = "perfil"
+    _ir_para("app.py")
 
 
 st.set_page_config(page_title="Pagamento Manual", layout="wide")
@@ -31,6 +37,7 @@ if not usuario:
         st.session_state["auth_modo"] = "Login"
         _ir_para("app.py")
 else:
+    diagnostico_checkout = diagnosticar_dados_checkout(usuario)
     plano_codigo = st.session_state.get("plano_checkout")
     plano = buscar_plano_por_codigo(plano_codigo) if plano_codigo else None
     planos_validos = [p for p in listar_planos_ativos() if p["tipo_plano"] == usuario.get("tipo_usuario")]
@@ -53,6 +60,8 @@ else:
         with col_resumo:
             st.write(f"Usuario: {usuario.get('nome', 'Usuario')}")
             st.write(f"Perfil: {usuario.get('tipo_usuario', 'atleta').capitalize()}")
+            st.write(f"CPF: {formatar_cpf(usuario.get('cpf')) or 'Nao informado'}")
+            st.write(f"Telefone: {formatar_telefone(usuario.get('telefone')) or 'Nao informado'}")
             st.write(f"Plano: {plano['nome']}")
             st.write(f"Periodicidade: {plano['periodicidade']}")
             st.write(f"Codigo do plano: {plano['codigo']}")
@@ -91,6 +100,12 @@ else:
             st.info("Ao continuar, vamos criar o customer e a assinatura no Asaas Sandbox. O acesso sera liberado quando o webhook confirmar o pagamento.")
         else:
             st.info("Ao continuar, a assinatura sera ativada no fluxo atual e seguira a politica do plano do treinador.")
+
+        if not diagnostico_checkout["ok"]:
+            st.warning(diagnostico_checkout["mensagem"])
+            if st.button("Completar cadastro no perfil", type="primary", use_container_width=True):
+                _ir_para_perfil()
+            st.stop()
 
         col_confirmar, col_voltar = st.columns(2)
         with col_confirmar:

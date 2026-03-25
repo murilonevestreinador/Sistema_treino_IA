@@ -10,6 +10,7 @@ from core.pagamentos_gateway import (
     criar_cobranca_gateway,
 )
 from core.treinador import atleta_possui_vinculo_ativo
+from core.usuarios import buscar_usuario_por_id, diagnosticar_dados_checkout
 
 
 TRIAL_DIAS = 14
@@ -1120,15 +1121,20 @@ def criar_assinatura_manual(usuario, plano, cupom_codigo=None):
 
 
 def assinar_plano_manual(usuario, plano_codigo, cupom_codigo=None):
+    usuario_atual = buscar_usuario_por_id(usuario["id"]) if usuario and usuario.get("id") else usuario
+    diagnostico_checkout = diagnosticar_dados_checkout(usuario_atual)
+    if not diagnostico_checkout["ok"]:
+        return None, diagnostico_checkout["mensagem"]
+
     plano = buscar_plano_por_codigo(plano_codigo)
     if not plano or not int(plano.get("ativo", 0)):
         return None, "Plano indisponivel."
-    if plano["tipo_plano"] != usuario.get("tipo_usuario"):
+    if plano["tipo_plano"] != usuario_atual.get("tipo_usuario"):
         return None, "Este plano nao corresponde ao perfil da sua conta."
-    if plano["tipo_plano"] == "atleta" and atleta_tem_treinador_ativo(usuario["id"]):
+    if plano["tipo_plano"] == "atleta" and atleta_tem_treinador_ativo(usuario_atual["id"]):
         return None, "Seu acesso ja esta coberto por um treinador ativo. Nao ha cobranca individual para este perfil vinculado."
     try:
-        assinatura = criar_assinatura_manual(usuario, plano, cupom_codigo=cupom_codigo)
+        assinatura = criar_assinatura_manual(usuario_atual, plano, cupom_codigo=cupom_codigo)
     except ValueError as exc:
         return None, str(exc)
     if assinatura.get("gateway") == "asaas" and plano.get("tipo_plano") == "atleta":

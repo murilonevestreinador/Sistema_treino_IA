@@ -13,6 +13,8 @@ from core.usuarios import (
     autenticar_usuario,
     buscar_usuario_por_email,
     criar_usuario,
+    validar_cpf,
+    validar_telefone,
     tentar_bootstrap_primeiro_admin,
 )
 
@@ -164,6 +166,8 @@ def _tela_cadastro_tab():
     with st.form("form_cadastro_auth"):
         nome = st.text_input("Nome", key="cad_nome", placeholder="Seu nome completo")
         email = st.text_input("Email", key="cad_email", placeholder="voce@exemplo.com")
+        cpf = st.text_input("CPF", key="cad_cpf", placeholder="123.456.789-09")
+        telefone = st.text_input("Telefone", key="cad_telefone", placeholder="(16) 99999-9999")
         senha = st.text_input("Senha", type="password", key="cad_senha", placeholder="Crie uma senha")
         sexo = st.selectbox("Sexo", ["masculino", "feminino", "outro"], key="cad_sexo")
         objetivo = "performance"
@@ -184,12 +188,22 @@ def _tela_cadastro_tab():
     if not enviar:
         return
 
-    if not nome.strip() or not email.strip() or not senha.strip():
-        st.warning("Preencha nome, e-mail e senha.")
+    if not nome.strip() or not email.strip() or not senha.strip() or not cpf.strip() or not telefone.strip():
+        st.warning("Preencha nome, e-mail, CPF, telefone e senha.")
         return
 
     if not aceitou_termos or not aceitou_privacidade:
         st.warning("Aceite os termos e a politica para continuar.")
+        return
+
+    cpf_ok, cpf_msg = validar_cpf(cpf)
+    if not cpf_ok:
+        st.warning(cpf_msg)
+        return
+
+    telefone_ok, telefone_msg = validar_telefone(telefone)
+    if not telefone_ok:
+        st.warning(telefone_msg)
         return
 
     if buscar_usuario_por_email(email):
@@ -204,6 +218,8 @@ def _tela_cadastro_tab():
             {
                 "nome": nome,
                 "email": email,
+                "cpf": cpf_msg,
+                "telefone": telefone_msg,
                 "senha": senha,
                 "sexo": sexo,
                 "tipo_usuario": tipo_usuario,

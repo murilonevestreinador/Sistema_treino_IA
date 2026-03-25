@@ -19,6 +19,124 @@ def _normalizar_sexo(sexo):
     return "outro"
 
 
+def _somente_digitos(valor):
+    return "".join(char for char in str(valor or "") if char.isdigit())
+
+
+def normalizar_cpf(cpf):
+    return _somente_digitos(cpf)
+
+
+def formatar_cpf(cpf):
+    cpf_normalizado = normalizar_cpf(cpf)
+    if len(cpf_normalizado) != 11:
+        return cpf_normalizado
+    return f"{cpf_normalizado[:3]}.{cpf_normalizado[3:6]}.{cpf_normalizado[6:9]}-{cpf_normalizado[9:]}"
+
+
+def validar_cpf(cpf):
+    cpf_normalizado = normalizar_cpf(cpf)
+    if not cpf_normalizado:
+        return False, "Informe o CPF."
+    if len(cpf_normalizado) != 11:
+        return False, "Informe um CPF com 11 digitos."
+    if cpf_normalizado == cpf_normalizado[0] * 11:
+        return False, "Informe um CPF valido."
+
+    soma = sum(int(digito) * peso for digito, peso in zip(cpf_normalizado[:9], range(10, 1, -1)))
+    digito_1 = ((soma * 10) % 11) % 10
+    soma = sum(int(digito) * peso for digito, peso in zip(cpf_normalizado[:10], range(11, 1, -1)))
+    digito_2 = ((soma * 10) % 11) % 10
+    if cpf_normalizado[-2:] != f"{digito_1}{digito_2}":
+        return False, "Informe um CPF valido."
+    return True, cpf_normalizado
+
+
+def normalizar_telefone(telefone):
+    telefone_normalizado = _somente_digitos(telefone)
+    if telefone_normalizado.startswith("55") and len(telefone_normalizado) in {12, 13}:
+        telefone_normalizado = telefone_normalizado[2:]
+    return telefone_normalizado
+
+
+def formatar_telefone(telefone):
+    telefone_normalizado = normalizar_telefone(telefone)
+    if len(telefone_normalizado) == 11:
+        return f"({telefone_normalizado[:2]}) {telefone_normalizado[2:7]}-{telefone_normalizado[7:]}"
+    if len(telefone_normalizado) == 10:
+        return f"({telefone_normalizado[:2]}) {telefone_normalizado[2:6]}-{telefone_normalizado[6:]}"
+    return telefone_normalizado
+
+
+def validar_telefone(telefone):
+    telefone_normalizado = normalizar_telefone(telefone)
+    if not telefone_normalizado:
+        return False, "Informe o telefone."
+    if len(telefone_normalizado) not in {10, 11}:
+        return False, "Informe um telefone valido com DDD."
+    return True, telefone_normalizado
+
+
+def diagnosticar_dados_checkout(usuario):
+    usuario = usuario or {}
+    faltantes = []
+    cpf_ok, _ = validar_cpf(usuario.get("cpf") or usuario.get("cpf_cnpj"))
+    telefone_ok, _ = validar_telefone(usuario.get("telefone") or usuario.get("mobilePhone"))
+    if not cpf_ok:
+        faltantes.append("CPF")
+    if not telefone_ok:
+        faltantes.append("telefone")
+
+    if not faltantes:
+        return {"ok": True, "faltantes": [], "mensagem": None}
+
+    campos = " e ".join(faltantes) if len(faltantes) == 2 else faltantes[0]
+    return {
+        "ok": False,
+        "faltantes": faltantes,
+        "mensagem": f"Complete {campos} no seu perfil antes de seguir para o pagamento.",
+    }
+
+
+def _validar_dados_contato_usuario(dados, exigir_preenchimento=False, usuario_id=None):
+    cpf_informado = dados.get("cpf") if "cpf" in dados else dados.get("cpf_cnpj")
+    telefone_informado = dados.get("telefone") if "telefone" in dados else dados.get("mobilePhone")
+
+    cpf_normalizado = normalizar_cpf(cpf_informado)
+    telefone_normalizado = normalizar_telefone(telefone_informado)
+
+    if exigir_preenchimento and not cpf_normalizado:
+        raise ValueError("Informe o CPF.")
+    if exigir_preenchimento and not telefone_normalizado:
+        raise ValueError("Informe o telefone.")
+
+    if cpf_normalizado:
+        cpf_ok, cpf_msg = validar_cpf(cpf_normalizado)
+        if not cpf_ok:
+            raise ValueError(cpf_msg)
+        cpf_normalizado = cpf_msg
+    elif cpf_informado not in (None, ""):
+        raise ValueError("Informe um CPF valido.")
+
+    if telefone_normalizado:
+        telefone_ok, telefone_msg = validar_telefone(telefone_normalizado)
+        if not telefone_ok:
+            raise ValueError(telefone_msg)
+        telefone_normalizado = telefone_msg
+    elif telefone_informado not in (None, ""):
+        raise ValueError("Informe um telefone valido com DDD.")
+
+    if cpf_normalizado:
+        usuario_existente = buscar_usuario_por_cpf(cpf_normalizado)
+        if usuario_existente and int(usuario_existente["id"]) != int(usuario_id or 0):
+            raise ValueError("Este CPF ja esta vinculado a outra conta.")
+
+    return {
+        "cpf": cpf_normalizado or None,
+        "telefone": telefone_normalizado or None,
+    }
+
+
 def _usuario_sem_senha(usuario):
     if not usuario:
         return None
@@ -34,6 +152,12 @@ def _usuario_sem_senha(usuario):
     usuario_limpo["is_admin"] = int(usuario_limpo.get("is_admin") or 0)
     usuario_limpo["aceitou_termos"] = int(usuario_limpo.get("aceitou_termos") or 0)
     usuario_limpo["aceitou_privacidade"] = int(usuario_limpo.get("aceitou_privacidade") or 0)
+    usuario_limpo["cpf"] = normalizar_cpf(usuario_limpo.get("cpf") or usuario_limpo.get("cpf_cnpj")) or None
+    usuario_limpo["telefone"] = normalizar_telefone(usuario_limpo.get("telefone") or usuario_limpo.get("mobilePhone")) or None
+    usuario_limpo["cpf_cnpj"] = usuario_limpo["cpf"]
+    usuario_limpo["mobilePhone"] = usuario_limpo["telefone"]
+    usuario_limpo["cpf_formatado"] = formatar_cpf(usuario_limpo["cpf"])
+    usuario_limpo["telefone_formatado"] = formatar_telefone(usuario_limpo["telefone"])
     return usuario_limpo
 
 
@@ -63,6 +187,13 @@ def buscar_usuario_por_email(email):
     return _buscar_usuario_por_coluna("email", (email or "").strip().lower())
 
 
+def buscar_usuario_por_cpf(cpf):
+    cpf_normalizado = normalizar_cpf(cpf)
+    if not cpf_normalizado:
+        return None
+    return _buscar_usuario_por_coluna("cpf", cpf_normalizado)
+
+
 def buscar_usuario_por_id(usuario_id):
     return _buscar_usuario_por_coluna("id", usuario_id)
 
@@ -71,18 +202,19 @@ def criar_usuario(dados):
     data_consentimento = dados.get("data_consentimento")
     if not data_consentimento and (dados.get("aceitou_termos") or dados.get("aceitou_privacidade")):
         data_consentimento = datetime.now().isoformat(timespec="seconds")
+    contato = _validar_dados_contato_usuario(dados, exigir_preenchimento=True)
 
     conn = conectar()
     cursor = conn.cursor()
     cursor.execute(
         """
         INSERT INTO usuarios (
-            nome, apelido, foto_perfil, email, senha, sexo, tipo_usuario, status_conta, onboarding_completo, is_admin,
+            nome, apelido, foto_perfil, email, cpf, telefone, senha, sexo, tipo_usuario, status_conta, onboarding_completo, is_admin,
             idade, peso, altura, objetivo, distancia_principal, tempo_pratica,
             treinos_corrida_semana, tem_prova, data_prova, distancia_prova,
             treinos_musculacao_semana, local_treino, experiencia_musculacao,
             historico_lesao, dor_atual, aceitou_termos, aceitou_privacidade, data_consentimento
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING id
         """,
         (
@@ -90,6 +222,8 @@ def criar_usuario(dados):
             (dados.get("apelido") or "").strip() or None,
             dados.get("foto_perfil"),
             (dados.get("email") or "").strip().lower(),
+            contato["cpf"],
+            contato["telefone"],
             hash_senha(dados.get("senha") or ""),
             _normalizar_sexo(dados.get("sexo")),
             normalizar_tipo_usuario(dados.get("tipo_usuario"), dados.get("is_admin")),
@@ -326,6 +460,7 @@ def redefinir_objetivo_atleta(usuario_id, dados_objetivo):
 
 
 def atualizar_perfil_usuario(usuario_id, dados_perfil):
+    contato = _validar_dados_contato_usuario(dados_perfil, exigir_preenchimento=False, usuario_id=usuario_id)
     conn = conectar()
     cursor = conn.cursor()
     cursor.execute(
@@ -333,13 +468,17 @@ def atualizar_perfil_usuario(usuario_id, dados_perfil):
         UPDATE usuarios
         SET nome = %s,
             apelido = %s,
-            foto_perfil = %s
+            foto_perfil = %s,
+            cpf = %s,
+            telefone = %s
         WHERE id = %s
         """,
         (
             (dados_perfil.get("nome") or "").strip(),
             (dados_perfil.get("apelido") or "").strip() or None,
             dados_perfil.get("foto_perfil"),
+            contato["cpf"],
+            contato["telefone"],
             usuario_id,
         ),
     )

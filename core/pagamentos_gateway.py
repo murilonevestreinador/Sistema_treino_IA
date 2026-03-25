@@ -8,6 +8,7 @@ from decimal import Decimal, ROUND_HALF_UP
 import requests
 
 from core.banco import conectar
+from core.usuarios import diagnosticar_dados_checkout
 
 
 LOGGER = logging.getLogger("trilab.asaas.gateway")
@@ -227,7 +228,19 @@ def _buscar_customer_por_email(email):
 def criar_customer_asaas(usuario):
     usuario_id = usuario.get("id")
     usuario_db = _buscar_usuario_existente(usuario_id) if usuario_id else None
-    asaas_customer_id = (usuario.get("asaas_customer_id") or (usuario_db or {}).get("asaas_customer_id") or "").strip()
+    usuario_integrado = dict(usuario_db or {})
+    usuario_integrado.update(usuario or {})
+    diagnostico = diagnosticar_dados_checkout(usuario_integrado)
+    if not diagnostico["ok"]:
+        return {
+            "ok": False,
+            "gateway": DEFAULT_GATEWAY,
+            "status": "dados_incompletos",
+            "mensagem": diagnostico["mensagem"],
+            "payload": diagnostico,
+        }
+
+    asaas_customer_id = (usuario_integrado.get("asaas_customer_id") or "").strip()
     if asaas_customer_id:
         return {
             "ok": True,
@@ -238,7 +251,7 @@ def criar_customer_asaas(usuario):
             "payload": None,
         }
 
-    customer_existente = _buscar_customer_por_email((usuario.get("email") or "").strip().lower())
+    customer_existente = _buscar_customer_por_email((usuario_integrado.get("email") or "").strip().lower())
     if customer_existente and customer_existente.get("id"):
         if usuario_id:
             _atualizar_asaas_customer_usuario(usuario_id, customer_existente["id"])
@@ -252,15 +265,13 @@ def criar_customer_asaas(usuario):
         }
 
     payload = {
-        "name": (usuario.get("nome") or "").strip(),
-        "email": (usuario.get("email") or "").strip().lower(),
+        "name": (usuario_integrado.get("nome") or "").strip(),
+        "email": (usuario_integrado.get("email") or "").strip().lower(),
     }
-    if usuario.get("cpf_cnpj"):
-        payload["cpfCnpj"] = str(usuario.get("cpf_cnpj")).strip()
-    if usuario.get("mobilePhone"):
-        payload["mobilePhone"] = str(usuario.get("mobilePhone")).strip()
-    if usuario.get("telefone"):
-        payload["mobilePhone"] = str(usuario.get("telefone")).strip()
+    if usuario_integrado.get("cpf") or usuario_integrado.get("cpf_cnpj"):
+        payload["cpfCnpj"] = str(usuario_integrado.get("cpf") or usuario_integrado.get("cpf_cnpj")).strip()
+    if usuario_integrado.get("telefone") or usuario_integrado.get("mobilePhone"):
+        payload["mobilePhone"] = str(usuario_integrado.get("telefone") or usuario_integrado.get("mobilePhone")).strip()
 
     resultado = _asaas_request("POST", "/v3/customers", payload=payload)
     if not resultado["ok"]:

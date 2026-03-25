@@ -64,6 +64,8 @@ def _criar_tabela_usuarios(cursor):
             apelido TEXT,
             foto_perfil TEXT,
             email TEXT UNIQUE,
+            cpf TEXT,
+            telefone TEXT,
             senha TEXT,
             sexo TEXT,
             tipo_usuario TEXT DEFAULT 'atleta',
@@ -96,6 +98,8 @@ def _criar_tabela_usuarios(cursor):
     colunas = {
         "apelido": "TEXT",
         "foto_perfil": "TEXT",
+        "cpf": "TEXT",
+        "telefone": "TEXT",
         "tipo_usuario": "TEXT DEFAULT 'atleta'",
         "status_conta": "TEXT DEFAULT 'ativo'",
         "onboarding_completo": "INTEGER DEFAULT 0",
@@ -961,6 +965,13 @@ def _criar_indices_bi(cursor):
         """
         CREATE INDEX IF NOT EXISTS idx_usuarios_asaas_customer
         ON usuarios (asaas_customer_id)
+        """
+    )
+    cursor.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_usuarios_cpf_unico
+        ON usuarios (cpf)
+        WHERE cpf IS NOT NULL AND btrim(cpf) <> ''
         """
     )
     cursor.execute(
