@@ -163,6 +163,7 @@ def _render_vinculo_atleta(usuario):
     st.subheader("Treinador")
     vinculos = listar_treinadores_do_atleta(usuario["id"])
     ativos = [item for item in vinculos if item["status"] == "ativo"]
+    pendentes = [item for item in vinculos if item["status"] == "pendente"]
 
     if ativos:
         for vinculo in ativos:
@@ -183,6 +184,12 @@ def _render_vinculo_atleta(usuario):
                     st.rerun()
     else:
         st.caption("Nenhum treinador ativo vinculado.")
+
+    if pendentes:
+        st.caption("Solicitacoes pendentes de aprovacao pelo treinador")
+        for vinculo in pendentes:
+            nome_treinador = vinculo.get("treinador_apelido") or vinculo["treinador_nome"]
+            st.write(f"{nome_treinador} ({vinculo['treinador_email']})")
 
     with st.form(f"form_vinculo_treinador_{usuario['id']}"):
         email_treinador = st.text_input("E-mail do treinador", value="")

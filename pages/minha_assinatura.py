@@ -1,6 +1,7 @@
 import streamlit as st
 
 from core.financeiro import (
+    atleta_tem_treinador_ativo,
     buscar_assinatura_atual,
     cancelar_renovacao_automatica,
     expirar_assinatura_atual_para_teste,
@@ -31,9 +32,15 @@ if not usuario:
 else:
     assinatura = buscar_assinatura_atual(usuario["id"])
     resumo = resumo_status_assinatura(assinatura)
+    atleta_coberto_por_treinador = (
+        (usuario.get("tipo_usuario") or "").strip().lower() == "atleta"
+        and atleta_tem_treinador_ativo(usuario["id"])
+    )
 
     st.subheader(resumo["titulo"])
     st.write(resumo["descricao"])
+    if atleta_coberto_por_treinador:
+        st.info("Seu acesso como atleta esta coberto por um treinador com vinculo ativo. Voce nao precisa de assinatura individual enquanto esse vinculo estiver valido.")
 
     if not assinatura:
         st.info("Nenhuma assinatura ativa ou historica encontrada.")

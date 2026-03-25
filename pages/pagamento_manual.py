@@ -3,6 +3,7 @@ import streamlit as st
 from core.financeiro import (
     aplicar_desconto,
     assinar_plano_manual,
+    atleta_tem_treinador_ativo,
     buscar_cupom_por_codigo,
     buscar_plano_por_codigo,
     listar_planos_ativos,
@@ -33,11 +34,19 @@ else:
     plano_codigo = st.session_state.get("plano_checkout")
     plano = buscar_plano_por_codigo(plano_codigo) if plano_codigo else None
     planos_validos = [p for p in listar_planos_ativos() if p["tipo_plano"] == usuario.get("tipo_usuario")]
+    atleta_coberto_por_treinador = (
+        (usuario.get("tipo_usuario") or "").strip().lower() == "atleta"
+        and atleta_tem_treinador_ativo(usuario["id"])
+    )
 
     if not plano:
         st.error("Nenhum plano selecionado para checkout.")
         if planos_validos and st.button("Escolher plano", use_container_width=True):
             _ir_para("pages/planos.py")
+    elif atleta_coberto_por_treinador and plano["tipo_plano"] == "atleta":
+        st.info("Seu acesso ja esta coberto por um treinador com vinculo ativo. O checkout individual foi bloqueado para evitar cobranca duplicada.")
+        if st.button("Voltar para o app", use_container_width=True):
+            _ir_para("app.py")
     else:
         st.subheader("Resumo do checkout")
         col_resumo, col_precos = st.columns([1.15, 0.85])

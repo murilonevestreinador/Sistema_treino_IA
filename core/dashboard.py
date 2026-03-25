@@ -7,6 +7,7 @@ import streamlit.components.v1 as components
 from core.carga import rotulo_categoria_movimento
 from core.cronograma import buscar_semana_por_numero, gerar_cronograma, obter_semana_atual
 from core.exercicios import carregar_exercicios
+from core.financeiro import obter_status_interface_atleta
 from core.progresso import (
     buscar_avaliacao_referencia,
     buscar_ultima_execucao,
@@ -21,7 +22,7 @@ from core.progresso import (
     salvar_execucao_exercicio,
     salvar_feedback_treino,
 )
-from core.treinador import listar_convites_pendentes_do_atleta, resolver_logo_treinador, responder_convite
+from core.treinador import listar_convites_pendentes_do_atleta, resolver_logo_treinador
 from core.treino import buscar_treino_gerado, obter_ou_gerar_treino_semana, resetar_treinos_futuros
 
 
@@ -459,6 +460,44 @@ def _aplicar_estilo_dashboard():
         .nav-chip-row .stButton > button {
             width: 100%;
         }
+        .access-status-card {
+            border-radius: 24px;
+            border: 1px solid var(--tri-border);
+            padding: 1rem 1.05rem;
+            margin: 0 0 1rem;
+            box-shadow: var(--tri-shadow-soft);
+        }
+        .access-status-card.success {
+            border-color: var(--tri-success-border);
+            background: linear-gradient(135deg, var(--tri-success-bg) 0%, var(--tri-surface) 100%);
+        }
+        .access-status-card.info {
+            border-color: var(--tri-info-border);
+            background: linear-gradient(135deg, var(--tri-info-bg) 0%, var(--tri-surface) 100%);
+        }
+        .access-status-card.warning {
+            border-color: var(--tri-warning-border);
+            background: linear-gradient(135deg, var(--tri-warning-bg) 0%, var(--tri-surface) 100%);
+        }
+        .access-status-card.danger {
+            border-color: var(--tri-danger-border);
+            background: linear-gradient(135deg, var(--tri-danger-bg) 0%, var(--tri-surface) 100%);
+        }
+        .access-status-card h3 {
+            margin: 0;
+            color: var(--tri-text-strong);
+            font-size: 1.08rem;
+        }
+        .access-status-card p {
+            margin: 0.45rem 0 0;
+            color: var(--tri-text-soft);
+            line-height: 1.55;
+        }
+        .access-status-detail {
+            margin-top: 0.65rem;
+            color: var(--tri-text);
+            font-weight: 600;
+        }
         @media (max-width: 768px) {
             .block-container {
                 padding-top: 0.9rem;
@@ -476,6 +515,10 @@ def _aplicar_estilo_dashboard():
             }
             .athlete-banner p {
                 font-size: 0.9rem;
+            }
+            .access-status-card {
+                border-radius: 14px;
+                padding: 0.85rem 0.9rem;
             }
             .metric-card, .workout-detail, .history-card, .section-shell {
                 border-radius: 14px;
@@ -510,19 +553,43 @@ def _render_convites_pendentes(usuario):
     if not convites:
         return
 
-    st.info("Voc\u00ea possui convites pendentes de treinadores.")
+    st.info("Existe um vinculo com treinador aguardando definicao.")
     for convite in convites:
-        col_info, col_aceitar, col_recusar = st.columns([4, 1, 1])
-        with col_info:
-            st.write(f"{convite['treinador_nome']} ({convite['treinador_email']})")
-        with col_aceitar:
-            if st.button("Aceitar", key=f"aceitar_{convite['treinador_id']}"):
-                responder_convite(usuario["id"], convite["treinador_id"], aceitar=True)
-                st.rerun()
-        with col_recusar:
-            if st.button("Recusar", key=f"recusar_{convite['treinador_id']}"):
-                responder_convite(usuario["id"], convite["treinador_id"], aceitar=False)
-                st.rerun()
+        st.write(f"{convite['treinador_nome']} ({convite['treinador_email']})")
+    st.caption("Quando o convite vier por link, a confirmacao aparece automaticamente no topo do app.")
+
+
+def _abrir_pagina_dashboard(destino):
+    try:
+        st.switch_page(destino)
+    except Exception:
+        st.info("Use o menu lateral para abrir esta pagina.")
+
+
+def _render_status_acesso_atleta(usuario):
+    contexto = obter_status_interface_atleta(usuario["id"])
+    if not contexto.get("mostrar_no_dashboard"):
+        return
+
+    st.markdown(
+        f"""
+        <div class="access-status-card {contexto.get('variant', 'info')}">
+            <h3>{contexto.get('titulo', '')}</h3>
+            <p>{contexto.get('texto', '')}</p>
+            {f"<div class='access-status-detail'>{contexto['detalhe']}</div>" if contexto.get('detalhe') else ""}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    if contexto.get("cta_label") and contexto.get("cta_destino"):
+        if st.button(
+            contexto["cta_label"],
+            key=f"cta_status_atleta_{contexto['status']}",
+            type="secondary",
+            use_container_width=False,
+        ):
+            _abrir_pagina_dashboard(contexto["cta_destino"])
 
 
 def _render_overview_inicial():
@@ -1271,6 +1338,7 @@ def tela_dashboard(usuario):
     if mensagem_execucao:
         st.success(mensagem_execucao)
 
+    _render_status_acesso_atleta(usuario)
     _render_convites_pendentes(usuario)
 
     if st.session_state.get("mostrar_overview"):

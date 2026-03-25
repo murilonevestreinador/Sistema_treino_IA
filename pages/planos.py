@@ -1,6 +1,6 @@
 import streamlit as st
 
-from core.financeiro import listar_planos_ativos
+from core.financeiro import atleta_tem_treinador_ativo, listar_planos_ativos
 from core.ui import inject_app_icons
 
 
@@ -40,6 +40,11 @@ with col_b:
     st.write("Gestao de atletas vinculados, acompanhamento e edicao de treinos pela mesma plataforma.")
 
 usuario = st.session_state.get("usuario")
+atleta_coberto_por_treinador = bool(
+    usuario
+    and (usuario.get("tipo_usuario") or "").strip().lower() == "atleta"
+    and atleta_tem_treinador_ativo(usuario["id"])
+)
 if not usuario:
     col_cta1, col_cta2 = st.columns(2)
     with col_cta1:
@@ -53,6 +58,8 @@ planos = listar_planos_ativos()
 if not planos:
     st.warning("Nenhum plano disponivel no momento.")
 else:
+    if atleta_coberto_por_treinador:
+        st.info("Seu acesso como atleta ja esta coberto por um treinador com vinculo ativo. Nao ha assinatura individual para esta conta vinculada.")
     colunas = st.columns(len(planos))
     for indice, plano in enumerate(planos):
         with colunas[indice]:
@@ -70,7 +77,9 @@ else:
             )
 
             if usuario:
-                if st.button("Assinar", key=f"assinar_{plano['codigo']}", use_container_width=True):
+                if atleta_coberto_por_treinador and plano["tipo_plano"] == "atleta":
+                    st.caption("Conta coberta pelo treinador vinculado.")
+                elif st.button("Assinar", key=f"assinar_{plano['codigo']}", use_container_width=True):
                     if usuario.get("tipo_usuario") == plano["tipo_plano"]:
                         _ir_para_pagamento(plano["codigo"])
                     else:

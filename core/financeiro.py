@@ -9,6 +9,7 @@ from core.pagamentos_gateway import (
     criar_assinatura_gateway,
     criar_cobranca_gateway,
 )
+from core.treinador import atleta_possui_vinculo_ativo
 
 
 TRIAL_DIAS = 14
@@ -737,6 +738,207 @@ def atleta_tem_treinador_ativo(atleta_id):
     return ativo
 
 
+def usuario_tem_acesso_atleta(usuario_id):
+    assinatura = buscar_assinatura_atual(usuario_id)
+    if not assinatura:
+        assinatura = criar_trial_assinatura(usuario_id, "atleta")
+    return bool((assinatura or {}).get("status") in STATUS_COM_ACESSO or atleta_tem_treinador_ativo(usuario_id))
+
+
+def avaliar_acesso_atleta(usuario_id):
+    assinatura = buscar_assinatura_atual(usuario_id)
+    if not assinatura:
+        assinatura = criar_trial_assinatura(usuario_id, "atleta")
+    tem_assinatura_ativa = bool((assinatura or {}).get("status") in STATUS_COM_ACESSO)
+    vinculo_ativo = atleta_possui_vinculo_ativo(usuario_id)
+    tem_treinador_ativo = atleta_tem_treinador_ativo(usuario_id)
+    tem_acesso = tem_assinatura_ativa or tem_treinador_ativo
+    return {
+        "tem_acesso": tem_acesso,
+        "assinatura": assinatura,
+        "motivo": None if tem_acesso else "atleta_trial_expirado",
+        "tem_assinatura_ativa": tem_assinatura_ativa,
+        "tem_treinador_ativo": tem_treinador_ativo,
+        "vinculo_ativo": vinculo_ativo,
+    }
+
+
+def _buscar_vinculo_atleta_por_status(atleta_id, statuses):
+    if not statuses:
+        return None
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT ta.id,
+               ta.treinador_id,
+               ta.atleta_id,
+               COALESCE(ta.status_vinculo, ta.status, 'pendente') AS status,
+               u.nome AS treinador_nome,
+               u.apelido AS treinador_apelido,
+               u.email AS treinador_email,
+               ta.created_at,
+               ta.data_inicio,
+               ta.data_fim
+        FROM treinador_atleta ta
+        JOIN usuarios u ON u.id = ta.treinador_id
+        WHERE ta.atleta_id = %s
+          AND COALESCE(ta.status_vinculo, ta.status, 'pendente') = ANY(%s)
+        ORDER BY COALESCE(ta.data_fim, DATE(ta.created_at), CURRENT_DATE) DESC,
+                 COALESCE(ta.created_at, CURRENT_TIMESTAMP) DESC,
+                 ta.id DESC
+        LIMIT 1
+        """,
+        (atleta_id, list(statuses)),
+    )
+    vinculo = cursor.fetchone()
+    conn.close()
+    return dict(vinculo) if vinculo else None
+
+
+def _nome_treinador_contexto(vinculo):
+    if not vinculo:
+        return None
+    return vinculo.get("treinador_apelido") or vinculo.get("treinador_nome")
+
+
+def _dias_restantes_trial(assinatura):
+    if not assinatura or (assinatura.get("status") or "").strip().lower() != "trial":
+        return None
+    data_fim = _parse_date(assinatura.get("data_fim"))
+    if not data_fim:
+        return None
+    return max((data_fim - _hoje()).days, 0)
+
+
+def obter_status_interface_atleta(usuario_id):
+    avaliacao = avaliar_acesso_atleta(usuario_id)
+    assinatura = avaliacao.get("assinatura")
+    vinculo_ativo = avaliacao.get("vinculo_ativo")
+    vinculo_pendente = _buscar_vinculo_atleta_por_status(usuario_id, ["pendente"])
+    vinculo_encerrado = _buscar_vinculo_atleta_por_status(usuario_id, ["removido", "cancelado", "encerrado"])
+    nome_treinador_ativo = _nome_treinador_contexto(vinculo_ativo)
+    nome_treinador_pendente = _nome_treinador_contexto(vinculo_pendente)
+    nome_treinador_encerrado = _nome_treinador_contexto(vinculo_encerrado)
+    dias_trial = _dias_restantes_trial(assinatura)
+    status_assinatura = (assinatura or {}).get("status")
+
+    contexto = {
+        "status": "assinatura_ativa_propria",
+        "variant": "success",
+        "titulo": "",
+        "texto": "",
+        "detalhe": None,
+        "cta_label": None,
+        "cta_destino": None,
+        "mostrar_no_dashboard": False,
+        "mostrar_no_bloqueio": False,
+        "tem_acesso": bool(avaliacao.get("tem_acesso")),
+        "assinatura": assinatura,
+        "dias_trial_restantes": dias_trial,
+        "treinador_nome": nome_treinador_ativo or nome_treinador_pendente or nome_treinador_encerrado,
+    }
+
+    if avaliacao.get("tem_treinador_ativo") and vinculo_ativo:
+        contexto.update(
+            {
+                "status": "vinculo_ativo",
+                "variant": "success",
+                "titulo": "Voce esta treinando com seu treinador",
+                "texto": "Seu acesso esta vinculado ao acompanhamento do seu treinador. Seus treinos e evolucoes estao liberados normalmente na plataforma.",
+                "detalhe": f"Treinador responsavel: {nome_treinador_ativo}" if nome_treinador_ativo else None,
+                "mostrar_no_dashboard": True,
+            }
+        )
+        return contexto
+
+    if vinculo_pendente:
+        contexto.update(
+            {
+                "status": "vinculo_pendente",
+                "variant": "warning" if avaliacao.get("tem_acesso") else "danger",
+                "titulo": "Seu vinculo com o treinador esta pendente",
+                "texto": (
+                    "Assim que o treinador aprovar seu vinculo, seu acesso sera liberado normalmente pela plataforma."
+                    if not avaliacao.get("tem_acesso")
+                    else "Assim que o treinador aprovar seu vinculo, seu acesso passara a ser coberto normalmente pela plataforma."
+                ),
+                "detalhe": (
+                    f"Treinador aguardando aprovacao: {nome_treinador_pendente}"
+                    if nome_treinador_pendente
+                    else None
+                ),
+                "cta_label": "Ver planos" if not avaliacao.get("tem_acesso") else None,
+                "cta_destino": "pages/planos.py" if not avaliacao.get("tem_acesso") else None,
+                "mostrar_no_dashboard": True,
+                "mostrar_no_bloqueio": not avaliacao.get("tem_acesso"),
+            }
+        )
+        if status_assinatura == "trial" and dias_trial is not None:
+            contexto["texto"] += f" Enquanto isso, seu acesso segue pelo teste gratis. Faltam {dias_trial} dias para o fim do seu teste."
+        elif not avaliacao.get("tem_acesso"):
+            contexto["texto"] += " Se preferir, voce tambem pode contratar um plano proprio para continuar."
+        return contexto
+
+    if status_assinatura == "trial":
+        contexto.update(
+            {
+                "status": "trial_ativo",
+                "variant": "info",
+                "titulo": "Seu teste gratis esta ativo",
+                "texto": "Voce esta no periodo de teste do TriLab. Aproveite para explorar seus treinos e, quando quiser, escolha um plano para continuar.",
+                "detalhe": f"Faltam {dias_trial} dias para o fim do seu teste." if dias_trial is not None else None,
+                "cta_label": "Ver planos",
+                "cta_destino": "pages/planos.py",
+                "mostrar_no_dashboard": True,
+            }
+        )
+        return contexto
+
+    if vinculo_encerrado and not avaliacao.get("tem_acesso"):
+        contexto.update(
+            {
+                "status": "vinculo_encerrado",
+                "variant": "danger",
+                "titulo": "Seu vinculo com o treinador foi encerrado",
+                "texto": "Para continuar usando o TriLab, escolha um plano ou vincule-se novamente a um treinador.",
+                "detalhe": f"Ultimo treinador vinculado: {nome_treinador_encerrado}" if nome_treinador_encerrado else None,
+                "cta_label": "Ver planos",
+                "cta_destino": "pages/planos.py",
+                "mostrar_no_dashboard": False,
+                "mostrar_no_bloqueio": True,
+            }
+        )
+        return contexto
+
+    if not avaliacao.get("tem_acesso"):
+        contexto.update(
+            {
+                "status": "sem_acesso",
+                "variant": "danger",
+                "titulo": "Seu periodo de teste terminou",
+                "texto": "Para continuar usando o TriLab, escolha um plano ou treine com um treinador parceiro.",
+                "cta_label": "Ver planos",
+                "cta_destino": "pages/planos.py",
+                "mostrar_no_dashboard": False,
+                "mostrar_no_bloqueio": True,
+            }
+        )
+        return contexto
+
+    if status_assinatura == "ativa":
+        contexto.update(
+            {
+                "status": "assinatura_ativa_propria",
+                "variant": "success",
+                "titulo": "Seu plano individual esta ativo",
+                "texto": "Seu acesso esta liberado normalmente para acompanhar treinos, progresso e evolucoes na plataforma.",
+                "mostrar_no_dashboard": False,
+            }
+        )
+    return contexto
+
+
 def avaliar_acesso_usuario(usuario):
     assinatura = garantir_assinatura_inicial(usuario)
     tipo_usuario = (usuario.get("tipo_usuario") or "atleta").strip().lower()
@@ -753,15 +955,9 @@ def avaliar_acesso_usuario(usuario):
         }
 
     if tipo_usuario == "atleta":
-        tem_treinador_ativo = atleta_tem_treinador_ativo(usuario["id"])
-        tem_acesso = status_assinatura in STATUS_COM_ACESSO or tem_treinador_ativo
-        return {
-            "tem_acesso": tem_acesso,
-            "assinatura": assinatura,
-            "motivo": None if tem_acesso else "atleta_trial_expirado",
-            "tipo_usuario": tipo_usuario,
-            "tem_treinador_ativo": tem_treinador_ativo,
-        }
+        avaliacao = avaliar_acesso_atleta(usuario["id"])
+        avaliacao["tipo_usuario"] = tipo_usuario
+        return avaliacao
 
     return {
         "tem_acesso": status_assinatura in STATUS_COM_ACESSO,
@@ -926,6 +1122,8 @@ def assinar_plano_manual(usuario, plano_codigo, cupom_codigo=None):
         return None, "Plano indisponivel."
     if plano["tipo_plano"] != usuario.get("tipo_usuario"):
         return None, "Este plano nao corresponde ao perfil da sua conta."
+    if plano["tipo_plano"] == "atleta" and atleta_tem_treinador_ativo(usuario["id"]):
+        return None, "Seu acesso ja esta coberto por um treinador ativo. Nao ha cobranca individual para este perfil vinculado."
     try:
         assinatura = criar_assinatura_manual(usuario, plano, cupom_codigo=cupom_codigo)
     except ValueError as exc:

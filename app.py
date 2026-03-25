@@ -9,7 +9,12 @@ from core.banco import garantir_colunas_e_tabelas
 from core.bloqueio_acesso import render_bloqueio_atleta, render_bloqueio_treinador
 from core.cronograma import gerar_cronograma, gerar_mensagem_usuario
 from core.dashboard import tela_dashboard
-from core.financeiro import avaliar_acesso_usuario, garantir_assinatura_inicial, resumo_status_assinatura
+from core.financeiro import (
+    avaliar_acesso_usuario,
+    garantir_assinatura_inicial,
+    obter_status_interface_atleta,
+    resumo_status_assinatura,
+)
 from core.perfil import tela_meu_perfil
 from core.permissoes import conta_ativa, eh_admin, eh_atleta, eh_treinador
 from core.questionario import tela_questionario
@@ -702,7 +707,7 @@ def main():
         if eh_treinador(usuario):
             render_bloqueio_treinador(fazer_logout)
         else:
-            render_bloqueio_atleta(usuario, fazer_logout)
+            render_bloqueio_atleta(usuario, fazer_logout, obter_status_interface_atleta(usuario["id"]))
         renderizar_rodape()
         return
 

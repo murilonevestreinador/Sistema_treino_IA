@@ -57,7 +57,7 @@ def treinador_pode_acessar_atleta(treinador_id, atleta_id):
         FROM treinador_atleta
         WHERE treinador_id = %s
           AND atleta_id = %s
-          AND status = 'ativo'
+          AND COALESCE(status_vinculo, status, 'pendente') = 'ativo'
         LIMIT 1
         """,
         (treinador_id, atleta_id),

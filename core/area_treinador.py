@@ -20,6 +20,7 @@ from core.progresso import (
 )
 from core.treinador import (
     buscar_atleta_vinculado,
+    definir_vinculo_treinador_atleta,
     gerar_link_convite,
     listar_atletas_do_treinador,
     listar_vinculos,
@@ -626,11 +627,23 @@ def _render_vinculos(treinador):
             st.caption("Nenhum convite pendente.")
         for vinculo in pendentes:
             nome_exibicao = vinculo.get("atleta_apelido") or vinculo["atleta_nome"]
-            _render_linha_atleta(
-                nome_exibicao,
-                vinculo["atleta_email"],
-                vinculo.get("atleta_foto_perfil"),
-            )
+            col_info, col_aprovar, col_recusar = st.columns([4, 1, 1])
+            with col_info:
+                _render_linha_atleta(
+                    nome_exibicao,
+                    vinculo["atleta_email"],
+                    vinculo.get("atleta_foto_perfil"),
+                )
+            with col_aprovar:
+                if st.button("Aprovar", key=f"aprovar_vinculo_{vinculo['id']}", use_container_width=True):
+                    definir_vinculo_treinador_atleta(treinador["id"], vinculo["atleta_id"], status="ativo")
+                    st.success(f"{nome_exibicao} agora esta com vinculo ativo.")
+                    st.rerun()
+            with col_recusar:
+                if st.button("Recusar", key=f"recusar_vinculo_{vinculo['id']}", use_container_width=True):
+                    definir_vinculo_treinador_atleta(treinador["id"], vinculo["atleta_id"], status="recusado")
+                    st.warning(f"Solicitacao de {nome_exibicao} recusada.")
+                    st.rerun()
 
     with col_ativos:
         st.subheader("Ativos")
@@ -638,11 +651,18 @@ def _render_vinculos(treinador):
             st.caption("Nenhum atleta vinculado.")
         for vinculo in ativos:
             nome_exibicao = vinculo.get("atleta_apelido") or vinculo["atleta_nome"]
-            _render_linha_atleta(
-                nome_exibicao,
-                vinculo["atleta_email"],
-                vinculo.get("atleta_foto_perfil"),
-            )
+            col_info, col_remover = st.columns([5, 1])
+            with col_info:
+                _render_linha_atleta(
+                    nome_exibicao,
+                    vinculo["atleta_email"],
+                    vinculo.get("atleta_foto_perfil"),
+                )
+            with col_remover:
+                if st.button("Remover", key=f"remover_vinculo_treinador_{vinculo['id']}", use_container_width=True):
+                    definir_vinculo_treinador_atleta(treinador["id"], vinculo["atleta_id"], status="removido")
+                    st.warning(f"{nome_exibicao} removido da base ativa.")
+                    st.rerun()
 
 
 def _render_visualizacao_atleta(treinador):

@@ -8,6 +8,18 @@ from core.usuarios import buscar_usuario_por_email, buscar_usuario_por_id
 
 DEFAULT_PUBLIC_APP_URL = "https://trilab-treinamento.onrender.com"
 DEFAULT_TEMA_TREINADOR = dict(TRILAB_DEFAULT_THEME)
+STATUS_VINCULO_ATIVO = "ativo"
+STATUS_VINCULO_PENDENTE = "pendente"
+
+
+def _status_vinculo_normalizado(item):
+    if not item:
+        return ""
+    return (item.get("status_vinculo") or item.get("status") or STATUS_VINCULO_PENDENTE).strip().lower()
+
+
+def vinculo_esta_ativo(item):
+    return _status_vinculo_normalizado(item) == STATUS_VINCULO_ATIVO
 
 
 def _resolver_url_base_publica():
@@ -150,7 +162,7 @@ def buscar_tema_por_atleta(atleta_id):
         SELECT treinador_id
         FROM treinador_atleta
         WHERE atleta_id = %s
-          AND status = 'ativo'
+          AND COALESCE(status_vinculo, status, 'pendente') = 'ativo'
         ORDER BY created_at DESC, id DESC
         LIMIT 1
         """,
@@ -224,13 +236,33 @@ def buscar_status_vinculo(treinador_id, atleta_id):
     )
     vinculo = cursor.fetchone()
     conn.close()
-    return dict(vinculo) if vinculo else None
+    if not vinculo:
+        return None
+    item = dict(vinculo)
+    item["status"] = _status_vinculo_normalizado(item)
+    item["status_vinculo"] = item["status"]
+    return item
 
 
 def definir_vinculo_treinador_atleta(treinador_id, atleta_id, status="ativo"):
+    status = (status or STATUS_VINCULO_PENDENTE).strip().lower()
     vinculo = buscar_status_vinculo(treinador_id, atleta_id)
     conn = conectar()
     cursor = conn.cursor()
+
+    if status == STATUS_VINCULO_ATIVO:
+        cursor.execute(
+            """
+            UPDATE treinador_atleta
+            SET status = 'encerrado',
+                status_vinculo = 'encerrado',
+                data_fim = COALESCE(data_fim, CURRENT_DATE)
+            WHERE atleta_id = %s
+              AND treinador_id <> %s
+              AND COALESCE(status_vinculo, status, 'pendente') = 'ativo'
+            """,
+            (atleta_id, treinador_id),
+        )
 
     if vinculo:
         cursor.execute(
@@ -272,7 +304,7 @@ def remover_vinculo_treinador_atleta(treinador_id, atleta_id):
     vinculo = buscar_status_vinculo(treinador_id, atleta_id)
     if not vinculo:
         return False
-    definir_vinculo_treinador_atleta(treinador_id, atleta_id, status="encerrado")
+    definir_vinculo_treinador_atleta(treinador_id, atleta_id, status="removido")
     return True
 
 
@@ -303,7 +335,9 @@ def listar_vinculos(treinador_id):
         SELECT ta.id,
                ta.treinador_id,
                ta.atleta_id,
-               ta.status,
+               COALESCE(ta.status_vinculo, ta.status, 'pendente') AS status,
+               ta.status AS status_legado,
+               ta.status_vinculo,
                ta.created_at,
                u.nome AS atleta_nome,
                u.apelido AS atleta_apelido,
@@ -322,7 +356,7 @@ def listar_vinculos(treinador_id):
 
 
 def listar_atletas_do_treinador(treinador_id):
-    return [vinculo for vinculo in listar_vinculos(treinador_id) if vinculo["status"] == "ativo"]
+    return [vinculo for vinculo in listar_vinculos(treinador_id) if vinculo_esta_ativo(vinculo)]
 
 
 def listar_treinadores_do_atleta(atleta_id):
@@ -333,7 +367,9 @@ def listar_treinadores_do_atleta(atleta_id):
         SELECT ta.id,
                ta.treinador_id,
                ta.atleta_id,
-               ta.status,
+               COALESCE(ta.status_vinculo, ta.status, 'pendente') AS status,
+               ta.status AS status_legado,
+               ta.status_vinculo,
                ta.created_at,
                u.nome AS treinador_nome,
                u.apelido AS treinador_apelido,
@@ -342,7 +378,7 @@ def listar_treinadores_do_atleta(atleta_id):
         JOIN usuarios u ON u.id = ta.treinador_id
         WHERE ta.atleta_id = %s
         ORDER BY
-            CASE ta.status
+            CASE COALESCE(ta.status_vinculo, ta.status, 'pendente')
                 WHEN 'ativo' THEN 0
                 WHEN 'pendente' THEN 1
                 ELSE 2
@@ -362,24 +398,13 @@ def vincular_atleta_ao_treinador(atleta_id, treinador_id):
         return False, "Treinador nao encontrado."
     if treinador["id"] == atleta_id:
         return False, "Voce nao pode se vincular ao proprio usuario."
-
-    conn = conectar()
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-        UPDATE treinador_atleta
-        SET status = 'encerrado'
-        WHERE atleta_id = %s
-          AND status = 'ativo'
-          AND treinador_id <> %s
-        """,
-        (atleta_id, treinador_id),
-    )
-    conn.commit()
-    conn.close()
-
-    definir_vinculo_treinador_atleta(treinador_id, atleta_id, status="ativo")
-    return True, "Vinculo com treinador atualizado."
+    vinculo = buscar_status_vinculo(treinador_id, atleta_id)
+    if vinculo and vinculo["status"] == STATUS_VINCULO_ATIVO:
+        return False, "Seu perfil ja esta vinculado a este treinador."
+    if vinculo and vinculo["status"] == STATUS_VINCULO_PENDENTE:
+        return False, "Ja existe uma solicitacao pendente para este treinador."
+    definir_vinculo_treinador_atleta(treinador_id, atleta_id, status=STATUS_VINCULO_PENDENTE)
+    return True, "Solicitacao enviada. O acesso como atleta vinculado sera liberado quando o treinador aprovar."
 
 
 def vincular_atleta_ao_treinador_por_email(atleta_id, email_treinador):
@@ -397,14 +422,16 @@ def listar_convites_pendentes_do_atleta(atleta_id):
         SELECT ta.id,
                ta.treinador_id,
                ta.atleta_id,
-               ta.status,
+               COALESCE(ta.status_vinculo, ta.status, 'pendente') AS status,
+               ta.status AS status_legado,
+               ta.status_vinculo,
                ta.created_at,
                u.nome AS treinador_nome,
                u.email AS treinador_email
         FROM treinador_atleta ta
         JOIN usuarios u ON u.id = ta.treinador_id
         WHERE ta.atleta_id = %s
-          AND ta.status = 'pendente'
+          AND COALESCE(ta.status_vinculo, ta.status, 'pendente') = 'pendente'
         ORDER BY ta.created_at DESC
         """,
         (atleta_id,),
@@ -417,6 +444,35 @@ def listar_convites_pendentes_do_atleta(atleta_id):
 def responder_convite(atleta_id, treinador_id, aceitar=True):
     novo_status = "ativo" if aceitar else "recusado"
     definir_vinculo_treinador_atleta(treinador_id, atleta_id, status=novo_status)
+
+
+def atleta_possui_vinculo_ativo(atleta_id):
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT ta.id,
+               ta.treinador_id,
+               ta.atleta_id,
+               COALESCE(ta.status_vinculo, ta.status, 'pendente') AS status,
+               u.nome AS treinador_nome,
+               u.apelido AS treinador_apelido,
+               u.email AS treinador_email,
+               ta.data_inicio,
+               ta.data_fim
+        FROM treinador_atleta ta
+        JOIN usuarios u ON u.id = ta.treinador_id
+        WHERE ta.atleta_id = %s
+          AND COALESCE(ta.status_vinculo, ta.status, 'pendente') = 'ativo'
+          AND COALESCE(u.status_conta, 'ativo') = 'ativo'
+        ORDER BY COALESCE(ta.data_inicio, DATE(ta.created_at)) DESC, ta.id DESC
+        LIMIT 1
+        """,
+        (atleta_id,),
+    )
+    vinculo = cursor.fetchone()
+    conn.close()
+    return dict(vinculo) if vinculo else None
 
 
 def buscar_atleta_vinculado(treinador_id, atleta_id):

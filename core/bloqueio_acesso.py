@@ -1,5 +1,7 @@
 import streamlit as st
 
+from core.financeiro import obter_status_interface_atleta
+
 
 def _aplicar_estilo_bloqueio():
     st.markdown(
@@ -109,36 +111,73 @@ def _abrir_pagina(destino):
         st.info("Use o menu lateral para abrir esta pagina.")
 
 
-def render_bloqueio_atleta(usuario, on_logout):
+def _conteudo_bloqueio_atleta(contexto, usuario):
+    status = contexto.get("status")
+    if status == "vinculo_pendente":
+        return {
+            "badge": "Atleta • vinculo pendente",
+            "titulo": contexto.get("titulo") or "Seu vinculo com o treinador esta pendente",
+            "texto": contexto.get("texto") or "Assim que o treinador aprovar seu vinculo, seu acesso sera liberado normalmente pela plataforma.",
+            "painel_titulo": "Enquanto isso",
+            "painel_html": "<p class='trial-lock-note'>Se o seu teste gratis ja terminou, o acesso completo depende da aprovacao do treinador ou da contratacao de um plano proprio.</p>",
+            "acao_titulo": "Proximo passo recomendado",
+            "acao_texto": "Acompanhe a aprovacao do seu treinador. Se preferir, voce tambem pode assinar um plano para continuar agora.",
+        }
+    if status == "vinculo_encerrado":
+        return {
+            "badge": "Atleta • vinculo encerrado",
+            "titulo": contexto.get("titulo") or "Seu vinculo com o treinador foi encerrado",
+            "texto": contexto.get("texto") or "Para continuar usando o TriLab, escolha um plano ou vincule-se novamente a um treinador.",
+            "painel_titulo": "Como retomar o acesso",
+            "painel_html": "<p class='trial-lock-note'>Voce pode seguir com um plano individual ou solicitar um novo vinculo com treinador pela plataforma.</p>",
+            "acao_titulo": "Proximo passo recomendado",
+            "acao_texto": f"{usuario.get('nome', 'Atleta')}, escolha um plano ou vincule sua conta novamente para voltar a usar a plataforma sem interrupcao.",
+        }
+    return {
+        "badge": "Atleta • acesso premium",
+        "titulo": contexto.get("titulo") or "Seu periodo de teste terminou",
+        "texto": contexto.get("texto") or "Para continuar usando o TriLab, escolha um plano ou treine com um treinador parceiro.",
+        "painel_titulo": "O que voce desbloqueia ao continuar",
+        "painel_html": """
+            <div class="trial-lock-benefit">
+                <div class="trial-lock-icon">1</div>
+                <div><strong>Treinos e historico completos</strong><br><span class="trial-lock-note">Acompanhe seu plano, progresso e consistencia sem perder o que ja construiu.</span></div>
+            </div>
+            <div class="trial-lock-benefit">
+                <div class="trial-lock-icon">2</div>
+                <div><strong>Periodizacao e ajustes inteligentes</strong><br><span class="trial-lock-note">Continue recebendo evolucao do treino com base no seu momento e nas suas respostas.</span></div>
+            </div>
+            <div class="trial-lock-benefit">
+                <div class="trial-lock-icon">3</div>
+                <div><strong>Fluxo com treinador parceiro</strong><br><span class="trial-lock-note">Se voce ja tem treinador, vincule sua conta para manter o acesso pela operacao dele.</span></div>
+            </div>
+        """,
+        "acao_titulo": "Proximo passo recomendado",
+        "acao_texto": f"{usuario.get('nome', 'Atleta')}, voce pode retomar o acesso agora escolhendo um plano ou vinculando sua conta a um treinador ativo.",
+    }
+
+
+def render_bloqueio_atleta(usuario, on_logout, contexto=None):
+    contexto = contexto or obter_status_interface_atleta(usuario["id"])
+    conteudo = _conteudo_bloqueio_atleta(contexto, usuario)
     _aplicar_estilo_bloqueio()
     st.markdown(
         f"""
         <div class="trial-lock-shell">
             <div class="trial-lock-card">
                 <div class="trial-lock-head">
-                    <div class="trial-lock-badge">Atleta • acesso premium</div>
-                    <h2>Seu periodo de teste terminou</h2>
-                    <p>Para continuar usando o TriLab, escolha um plano ou treine com um treinador parceiro.</p>
+                    <div class="trial-lock-badge">{conteudo['badge']}</div>
+                    <h2>{conteudo['titulo']}</h2>
+                    <p>{conteudo['texto']}</p>
                 </div>
                 <div class="trial-lock-body">
                     <div class="trial-lock-panel">
-                        <h3>O que voce desbloqueia ao continuar</h3>
-                        <div class="trial-lock-benefit">
-                            <div class="trial-lock-icon">1</div>
-                            <div><strong>Treinos e historico completos</strong><br><span class="trial-lock-note">Acompanhe seu plano, progresso e consistencia sem perder o que ja construiu.</span></div>
-                        </div>
-                        <div class="trial-lock-benefit">
-                            <div class="trial-lock-icon">2</div>
-                            <div><strong>Periodizacao e ajustes inteligentes</strong><br><span class="trial-lock-note">Continue recebendo evolucao do treino com base no seu momento e nas suas respostas.</span></div>
-                        </div>
-                        <div class="trial-lock-benefit">
-                            <div class="trial-lock-icon">3</div>
-                            <div><strong>Fluxo com treinador parceiro</strong><br><span class="trial-lock-note">Se voce ja tem treinador, vincule sua conta para manter o acesso pela operacao dele.</span></div>
-                        </div>
+                        <h3>{conteudo['painel_titulo']}</h3>
+                        {conteudo['painel_html']}
                     </div>
                     <div class="trial-lock-panel">
-                        <h3>Proximo passo recomendado</h3>
-                        <p class="trial-lock-note">{usuario.get('nome', 'Atleta')}, voce pode retomar o acesso agora escolhendo um plano ou vinculando sua conta a um treinador ativo.</p>
+                        <h3>{conteudo['acao_titulo']}</h3>
+                        <p class="trial-lock-note">{conteudo['acao_texto']}</p>
                         <p class="trial-lock-note">Se recebeu um convite, use a opcao de perfil para adicionar o treinador ou aceitar o vinculo.</p>
                     </div>
                 </div>
