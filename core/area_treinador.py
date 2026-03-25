@@ -4,6 +4,7 @@ import uuid
 from datetime import date, timedelta
 from pathlib import Path
 
+import pandas as pd
 import streamlit as st
 
 from core.carga import rotulo_categoria_movimento

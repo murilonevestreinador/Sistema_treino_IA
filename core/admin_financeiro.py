@@ -44,6 +44,10 @@ def _formatar_percentual(valor):
     return "-" if valor is None else f"{float(valor):.1f}%"
 
 
+def _sincronizar_editor_plano():
+    st.session_state["financeiro_plano_editor_alvo_id"] = st.session_state["financeiro_plano_editor_id"]
+
+
 def _render_cards(metricas):
     for inicio in range(0, len(metricas), 4):
         cols = st.columns(min(4, len(metricas) - inicio))
@@ -135,11 +139,19 @@ def _render_planos(admin, registrar_log_admin):
     } for p in planos]), use_container_width=True, hide_index=True)
 
     with st.expander("Criar ou editar plano", expanded=False):
+        opcoes_planos = ["novo"] + [p["id"] for p in planos]
+        alvo_editor = st.session_state.get("financeiro_plano_editor_alvo_id", "novo")
+        if alvo_editor not in opcoes_planos:
+            alvo_editor = "novo"
+            st.session_state["financeiro_plano_editor_alvo_id"] = alvo_editor
+        if st.session_state.get("financeiro_plano_editor_id") != alvo_editor:
+            st.session_state["financeiro_plano_editor_id"] = alvo_editor
         plano_selecionado = st.selectbox(
             "Plano para editar",
-            ["novo"] + [p["id"] for p in planos],
+            opcoes_planos,
             format_func=lambda valor: "Novo plano" if valor == "novo" else next(f"{p['nome']} ({p['codigo']})" for p in planos if p["id"] == valor),
             key="financeiro_plano_editor_id",
+            on_change=_sincronizar_editor_plano,
         )
         plano = next((p for p in planos if p["id"] == plano_selecionado), None)
         sufixo_form = str(plano_selecionado)
@@ -215,7 +227,7 @@ def _render_planos(admin, registrar_log_admin):
             except Exception as exc:
                 st.error(f"Nao foi possivel salvar o plano: {exc}")
             else:
-                st.session_state["financeiro_plano_editor_id"] = plano_salvo["id"]
+                st.session_state["financeiro_plano_editor_alvo_id"] = plano_salvo["id"]
                 registrar_log_admin(admin["id"], "salvou plano financeiro", "plano", plano_salvo["id"], plano_salvo["codigo"])
                 st.success("Plano salvo com sucesso.")
                 st.rerun()
