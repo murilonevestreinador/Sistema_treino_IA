@@ -9,7 +9,12 @@ from core.progresso import (
     buscar_ultima_execucao,
     listar_preferencias_substituicao,
 )
-from core.selecao import escolher_exercicio_por_categoria
+from core.selecao import (
+    assinatura_equipamento_exercicio,
+    categoria_exige_diversidade_equipamento,
+    normalizar_categoria_funcional,
+    escolher_exercicio_por_categoria,
+)
 
 
 def gerar_treino_semana(atleta, exercicios_db, semana_numero, fase):
@@ -23,20 +28,26 @@ def gerar_treino_semana(atleta, exercicios_db, semana_numero, fase):
     categorias_avaliadas = set()
     for nome_treino, categorias in estrutura.items():
         nomes_usados = set()
+        assinaturas_por_categoria = {}
         bloco = []
 
         for categoria in categorias:
+            categoria_normalizada = normalizar_categoria_funcional(categoria)
+            assinaturas_ja_usadas = assinaturas_por_categoria.setdefault(categoria_normalizada, set())
             exercicio = escolher_exercicio_por_categoria(
                 exercicios_db,
                 categoria,
                 fase,
                 atleta_contexto,
                 nomes_ja_usados=nomes_usados,
+                assinaturas_ja_usadas=assinaturas_ja_usadas,
             )
             if not exercicio:
                 continue
 
             nomes_usados.add(exercicio["nome"])
+            if categoria_exige_diversidade_equipamento(categoria):
+                assinaturas_ja_usadas.add(assinatura_equipamento_exercicio(exercicio))
             categoria_mov = categoria_movimento(categoria)
             avaliacao = buscar_avaliacao_referencia(atleta["id"], categoria_mov) if semana_numero >= 3 and categoria_mov else None
             ultima_execucao = buscar_ultima_execucao(

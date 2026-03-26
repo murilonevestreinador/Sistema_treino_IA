@@ -1,6 +1,14 @@
 import unicodedata
 
-from core.equipamentos import exercicio_compativel_com_equipamentos
+from core.equipamentos import assinatura_equipamentos, exercicio_compativel_com_equipamentos
+
+
+CATEGORIAS_COM_DIVERSIDADE_EQUIPAMENTO = {
+    "empurrar_membros_inferiores",
+    "puxar_membros_inferiores",
+    "empurrar_membros_superiores",
+    "puxar_membros_superiores",
+}
 
 
 def _normalizar_categoria(valor):
@@ -8,6 +16,18 @@ def _normalizar_categoria(valor):
     texto = unicodedata.normalize("NFKD", texto)
     texto = "".join(caractere for caractere in texto if not unicodedata.combining(caractere))
     return texto.strip().lower().replace(" ", "_")
+
+
+def categoria_exige_diversidade_equipamento(categoria):
+    return _normalizar_categoria(categoria) in CATEGORIAS_COM_DIVERSIDADE_EQUIPAMENTO
+
+
+def normalizar_categoria_funcional(categoria):
+    return _normalizar_categoria(categoria)
+
+
+def assinatura_equipamento_exercicio(exercicio):
+    return assinatura_equipamentos(exercicio.get("equipamentos_necessarios") or [])
 
 
 def _tem_dor_ou_lesao(atleta, chave):
@@ -84,10 +104,37 @@ def listar_exercicios_por_categoria(exercicios, categoria, fase, atleta):
     )
 
 
-def escolher_exercicio_por_categoria(exercicios, categoria, fase, atleta, nomes_ja_usados=None):
+def escolher_exercicio_por_categoria(
+    exercicios,
+    categoria,
+    fase,
+    atleta,
+    nomes_ja_usados=None,
+    assinaturas_ja_usadas=None,
+):
     nomes_ja_usados = nomes_ja_usados or set()
+    assinaturas_ja_usadas = assinaturas_ja_usadas or set()
     candidatos = listar_exercicios_por_categoria(exercicios, categoria, fase, atleta)
+    aplicar_diversidade = categoria_exige_diversidade_equipamento(categoria)
 
+    if aplicar_diversidade:
+        candidatos_diversos = [
+            exercicio
+            for exercicio in candidatos
+            if assinatura_equipamento_exercicio(exercicio) not in assinaturas_ja_usadas
+        ]
+    else:
+        candidatos_diversos = candidatos
+
+    for exercicio in candidatos_diversos:
+        if exercicio["nome"] not in nomes_ja_usados:
+            return exercicio
+
+    if candidatos_diversos:
+        return candidatos_diversos[0]
+
+    # Fallback controlado: se nao houver opcoes suficientes sem repetir assinatura
+    # de equipamento, permite reutilizar a assinatura para completar o treino.
     for exercicio in candidatos:
         if exercicio["nome"] not in nomes_ja_usados:
             return exercicio

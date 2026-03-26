@@ -125,6 +125,13 @@ def normalizar_lista_equipamentos(valores):
     return equipamentos
 
 
+def assinatura_equipamentos(valores):
+    equipamentos = sorted(normalizar_lista_equipamentos(valores))
+    if not equipamentos:
+        return ""
+    return "|".join(equipamentos)
+
+
 def parsear_equipamentos_exercicio(valor):
     if valor is None:
         return []
