@@ -233,7 +233,7 @@ def renderizar_rodape():
             <a href="/termos" target="_self">Termos de Uso</a>
             <a href="/privacidade" target="_self">Politica de Privacidade</a>
             <a href="/contato" target="_self">Contato</a>
-            <div style="margin-top:0.45rem;">TriLab TREINAMENTO • sports tech para treinador e atleta.</div>
+            <div style="margin-top:0.45rem;">TriLab TREINAMENTO • plataforma de treinamento para corredores.</div>
         </div>
         """,
         unsafe_allow_html=True,

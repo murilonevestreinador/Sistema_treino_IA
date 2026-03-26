@@ -5,6 +5,7 @@ from pathlib import Path
 import streamlit as st
 
 from core.financeiro import criar_trial_assinatura
+from core.lancamento import cadastro_publico_permite_treinador
 from core.permissoes import conta_ativa
 from core.sessao_persistente import registrar_sessao_persistente
 from core.treinador import buscar_convite_por_token, definir_vinculo_treinador_atleta
@@ -162,7 +163,11 @@ def _tela_login_tab():
         st.rerun()
 
 def _tela_cadastro_tab():
-    tipo_usuario = st.selectbox("Perfil", ["atleta", "treinador"], key="cad_tipo")
+    if cadastro_publico_permite_treinador():
+        tipo_usuario = st.selectbox("Perfil", ["atleta", "treinador"], key="cad_tipo")
+    else:
+        tipo_usuario = "atleta"
+        st.caption("Perfil disponivel neste lancamento: atleta.")
 
     with st.form("form_cadastro_auth"):
         nome = st.text_input("Nome", key="cad_nome", placeholder="Seu nome completo")
@@ -187,10 +192,17 @@ def _tela_cadastro_tab():
             "Autorizo o tratamento dos meus dados conforme a [Politica de Privacidade](/privacidade)",
             key="cad_aceitou_privacidade",
         )
+        if not cadastro_publico_permite_treinador():
+            st.caption("No lancamento inicial, o cadastro publico esta disponivel apenas para atletas. Treinadores ja cadastrados continuam acessando normalmente.")
         enviar = st.form_submit_button("Criar conta", use_container_width=True)
 
     if not enviar:
         return
+
+    # O backend continua suportando treinador, mas o fluxo publico do lancamento
+    # fica restrito a atletas para evitar cadastro novo desse perfil pela interface.
+    if not cadastro_publico_permite_treinador():
+        tipo_usuario = "atleta"
 
     campos_obrigatorios = [nome.strip(), email.strip(), senha.strip(), cpf.strip(), telefone.strip()]
     if tipo_usuario == "treinador":

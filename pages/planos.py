@@ -1,6 +1,7 @@
 import streamlit as st
 
 from core.financeiro import atleta_tem_treinador_ativo, listar_planos_ativos
+from core.lancamento import pode_exibir_planos_treinador_publicamente
 from core.ui import inject_app_icons
 
 
@@ -31,20 +32,23 @@ st.write(
     "Escolha o plano ideal para usar a TriLab TREINAMENTO com treinos de forca para corredores, periodizacao e adaptacao por feedback."
 )
 
-col_a, col_b = st.columns(2)
-with col_a:
-    st.subheader("Perfil Atleta")
-    st.write("Acesso individual com checklist, historico e acompanhamento do proprio progresso.")
-with col_b:
-    st.subheader("Perfil Treinador")
-    st.write("Gestao de atletas vinculados, acompanhamento e edicao de treinos pela mesma plataforma.")
-
 usuario = st.session_state.get("usuario")
+exibir_planos_treinador = pode_exibir_planos_treinador_publicamente(usuario)
 atleta_coberto_por_treinador = bool(
     usuario
     and (usuario.get("tipo_usuario") or "").strip().lower() == "atleta"
     and atleta_tem_treinador_ativo(usuario["id"])
 )
+
+st.subheader("Perfil Atleta")
+st.write("Acesso individual com checklist, historico e acompanhamento do proprio progresso.")
+if not exibir_planos_treinador:
+    st.info("No lancamento inicial, a adesao publica esta focada em atletas.")
+else:
+    st.markdown("---")
+    st.subheader("Perfil Treinador")
+    st.write("Gestao de atletas vinculados, acompanhamento e edicao de treinos pela mesma plataforma.")
+
 if not usuario:
     col_cta1, col_cta2 = st.columns(2)
     with col_cta1:
@@ -55,6 +59,11 @@ if not usuario:
             _ir_para_app("Login")
 
 planos = listar_planos_ativos()
+if not exibir_planos_treinador:
+    planos = [plano for plano in planos if plano["tipo_plano"] == "atleta"]
+elif usuario and (usuario.get("tipo_usuario") or "").strip().lower() == "treinador":
+    planos = [plano for plano in planos if plano["tipo_plano"] == "treinador"]
+
 if not planos:
     st.warning("Nenhum plano disponivel no momento.")
 else:

@@ -9,6 +9,7 @@ from core.financeiro import (
     listar_planos_ativos,
     validar_cupom_para_plano,
 )
+from core.lancamento import pode_exibir_planos_treinador_publicamente
 from core.ui import inject_app_icons
 from core.usuarios import diagnosticar_dados_checkout, formatar_cpf, formatar_telefone
 
@@ -45,10 +46,21 @@ else:
         (usuario.get("tipo_usuario") or "").strip().lower() == "atleta"
         and atleta_tem_treinador_ativo(usuario["id"])
     )
+    exibir_planos_treinador = pode_exibir_planos_treinador_publicamente(usuario)
 
     if not plano:
         st.error("Nenhum plano selecionado para checkout.")
         if planos_validos and st.button("Escolher plano", use_container_width=True):
+            _ir_para("pages/planos.py")
+    elif plano["tipo_plano"] != usuario.get("tipo_usuario"):
+        st.error("O plano selecionado nao corresponde ao perfil da sua conta.")
+        st.session_state.pop("plano_checkout", None)
+        if st.button("Voltar para planos", use_container_width=True):
+            _ir_para("pages/planos.py")
+    elif plano["tipo_plano"] == "treinador" and not exibir_planos_treinador:
+        st.error("A adesao publica de planos de treinador esta temporariamente indisponivel no lancamento.")
+        st.session_state.pop("plano_checkout", None)
+        if st.button("Voltar para planos", use_container_width=True):
             _ir_para("pages/planos.py")
     elif atleta_coberto_por_treinador and plano["tipo_plano"] == "atleta":
         st.info("Seu acesso ja esta coberto por um treinador com vinculo ativo. O checkout individual foi bloqueado para evitar cobranca duplicada.")
