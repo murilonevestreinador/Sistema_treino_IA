@@ -5,6 +5,7 @@ import secrets
 from datetime import datetime, timedelta
 
 from core.banco import conectar
+from core.equipamentos import normalizar_ambiente_treino_forca, normalizar_lista_equipamentos
 from core.permissoes import eh_admin, normalizar_status_conta, normalizar_tipo_usuario
 
 
@@ -151,7 +152,53 @@ def _validar_dados_contato_usuario(dados, exigir_preenchimento=False, usuario_id
     }
 
 
-def _usuario_sem_senha(usuario):
+def listar_equipamentos_atleta(usuario_id):
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT equipamento
+        FROM atleta_equipamentos
+        WHERE atleta_id = %s
+        ORDER BY equipamento
+        """,
+        (usuario_id,),
+    )
+    equipamentos = [linha["equipamento"] for linha in cursor.fetchall()]
+    conn.close()
+    return normalizar_lista_equipamentos(equipamentos)
+
+
+def salvar_equipamentos_atleta(usuario_id, equipamentos, origem="manual"):
+    equipamentos_normalizados = normalizar_lista_equipamentos(equipamentos)
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM atleta_equipamentos WHERE atleta_id = %s", (usuario_id,))
+    for equipamento in equipamentos_normalizados:
+        cursor.execute(
+            """
+            INSERT INTO atleta_equipamentos (atleta_id, equipamento, origem, updated_at)
+            VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
+            """,
+            (usuario_id, equipamento, (origem or "manual").strip().lower()),
+        )
+    conn.commit()
+    conn.close()
+    return equipamentos_normalizados
+
+
+def _anexar_contexto_treino_atleta(usuario_limpo):
+    if not usuario_limpo or usuario_limpo.get("tipo_usuario") != "atleta":
+        return usuario_limpo
+    usuario_limpo["ambiente_treino_forca"] = normalizar_ambiente_treino_forca(
+        usuario_limpo.get("ambiente_treino_forca"),
+        usuario_limpo.get("local_treino"),
+    )
+    usuario_limpo["equipamentos_disponiveis"] = listar_equipamentos_atleta(usuario_limpo["id"])
+    return usuario_limpo
+
+
+def _usuario_sem_senha(usuario, incluir_contexto_treino=False):
     if not usuario:
         return None
     usuario_limpo = dict(usuario)
@@ -173,10 +220,16 @@ def _usuario_sem_senha(usuario):
     usuario_limpo["cpf_formatado"] = formatar_cpf(usuario_limpo["cpf"])
     usuario_limpo["telefone_formatado"] = formatar_telefone(usuario_limpo["telefone"])
     usuario_limpo["cref"] = normalizar_cref(usuario_limpo.get("cref")) or None
+    usuario_limpo["ambiente_treino_forca"] = normalizar_ambiente_treino_forca(
+        usuario_limpo.get("ambiente_treino_forca"),
+        usuario_limpo.get("local_treino"),
+    )
+    if incluir_contexto_treino:
+        return _anexar_contexto_treino_atleta(usuario_limpo)
     return usuario_limpo
 
 
-def _buscar_usuario_por_coluna(coluna, valor, incluir_senha=False):
+def _buscar_usuario_por_coluna(coluna, valor, incluir_senha=False, incluir_contexto_treino=False):
     conn = conectar()
     cursor = conn.cursor()
     cursor.execute(f"SELECT * FROM usuarios WHERE {coluna} = %s", (valor,))
@@ -184,7 +237,7 @@ def _buscar_usuario_por_coluna(coluna, valor, incluir_senha=False):
     conn.close()
     if incluir_senha:
         return usuario
-    return _usuario_sem_senha(usuario)
+    return _usuario_sem_senha(usuario, incluir_contexto_treino=incluir_contexto_treino)
 
 
 def hash_senha(senha):
@@ -199,7 +252,7 @@ def verificar_senha(senha, senha_hash):
 
 
 def buscar_usuario_por_email(email):
-    return _buscar_usuario_por_coluna("email", (email or "").strip().lower())
+    return _buscar_usuario_por_coluna("email", (email or "").strip().lower(), incluir_contexto_treino=True)
 
 
 def buscar_usuario_por_cpf(cpf, tipo_usuario=None):
@@ -217,11 +270,11 @@ def buscar_usuario_por_cpf(cpf, tipo_usuario=None):
         cursor.execute("SELECT * FROM usuarios WHERE cpf = %s ORDER BY id ASC LIMIT 1", (cpf_normalizado,))
     usuario = _linha_para_dict(cursor.fetchone())
     conn.close()
-    return _usuario_sem_senha(usuario)
+    return _usuario_sem_senha(usuario, incluir_contexto_treino=True)
 
 
 def buscar_usuario_por_id(usuario_id):
-    return _buscar_usuario_por_coluna("id", usuario_id)
+    return _buscar_usuario_por_coluna("id", usuario_id, incluir_contexto_treino=True)
 
 
 def criar_usuario(dados):
@@ -243,9 +296,9 @@ def criar_usuario(dados):
             nome, apelido, foto_perfil, email, cpf, telefone, cref, senha, sexo, tipo_usuario, status_conta, onboarding_completo, is_admin,
             idade, peso, altura, objetivo, distancia_principal, tempo_pratica,
             treinos_corrida_semana, tem_prova, data_prova, distancia_prova,
-            treinos_musculacao_semana, local_treino, experiencia_musculacao,
+            treinos_musculacao_semana, local_treino, ambiente_treino_forca, experiencia_musculacao,
             historico_lesao, dor_atual, aceitou_termos, aceitou_privacidade, data_consentimento
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING id
         """,
         (
@@ -273,7 +326,10 @@ def criar_usuario(dados):
             dados.get("data_prova"),
             dados.get("distancia_prova", ""),
             dados.get("treinos_musculacao_semana", 0),
-            dados.get("local_treino", ""),
+            dados.get("local_treino", "") if tipo_usuario == "atleta" else None,
+            normalizar_ambiente_treino_forca(dados.get("ambiente_treino_forca"), dados.get("local_treino"))
+            if tipo_usuario == "atleta"
+            else None,
             dados.get("experiencia_musculacao", ""),
             dados.get("historico_lesao", ""),
             dados.get("dor_atual", ""),
@@ -294,7 +350,7 @@ def autenticar_usuario(email, senha):
         return None
     if not verificar_senha(senha or "", usuario.get("senha")):
         return None
-    return _usuario_sem_senha(usuario)
+    return _usuario_sem_senha(usuario, incluir_contexto_treino=True)
 
 
 def atualizar_senha_por_email(email, nova_senha):
@@ -412,6 +468,10 @@ def redefinir_senha_com_codigo(email, codigo, nova_senha):
 
 
 def atualizar_usuario_onboarding(usuario_id, dados_onboarding):
+    ambiente_treino_forca = normalizar_ambiente_treino_forca(
+        dados_onboarding.get("ambiente_treino_forca"),
+        dados_onboarding.get("local_treino"),
+    )
     conn = conectar()
     cursor = conn.cursor()
     cursor.execute(
@@ -426,6 +486,7 @@ def atualizar_usuario_onboarding(usuario_id, dados_onboarding):
             distancia_prova = %s,
             treinos_musculacao_semana = %s,
             local_treino = %s,
+            ambiente_treino_forca = %s,
             experiencia_musculacao = %s,
             historico_lesao = %s,
             dor_atual = %s,
@@ -441,7 +502,8 @@ def atualizar_usuario_onboarding(usuario_id, dados_onboarding):
             dados_onboarding.get("data_prova"),
             dados_onboarding.get("distancia_prova", ""),
             int(dados_onboarding.get("treinos_musculacao_semana", 1)),
-            dados_onboarding.get("local_treino", ""),
+            ambiente_treino_forca,
+            ambiente_treino_forca,
             dados_onboarding.get("experiencia_musculacao", ""),
             dados_onboarding.get("historico_lesao", ""),
             dados_onboarding.get("dor_atual", ""),
@@ -450,6 +512,8 @@ def atualizar_usuario_onboarding(usuario_id, dados_onboarding):
     )
     conn.commit()
     conn.close()
+    if "equipamentos_disponiveis" in dados_onboarding:
+        salvar_equipamentos_atleta(usuario_id, dados_onboarding.get("equipamentos_disponiveis"), origem="manual")
     return buscar_usuario_por_id(usuario_id)
 
 
@@ -509,6 +573,10 @@ def atualizar_perfil_usuario(usuario_id, dados_perfil):
         if not cref_ok:
             raise ValueError(cref_msg)
         cref_valor = cref_msg
+    ambiente_treino_forca = normalizar_ambiente_treino_forca(
+        dados_perfil.get("ambiente_treino_forca") if "ambiente_treino_forca" in dados_perfil else usuario_atual.get("ambiente_treino_forca"),
+        dados_perfil.get("local_treino") if "local_treino" in dados_perfil else usuario_atual.get("local_treino"),
+    )
     conn = conectar()
     cursor = conn.cursor()
     cursor.execute(
@@ -519,7 +587,9 @@ def atualizar_perfil_usuario(usuario_id, dados_perfil):
             foto_perfil = %s,
             cpf = %s,
             telefone = %s,
-            cref = %s
+            cref = %s,
+            local_treino = %s,
+            ambiente_treino_forca = %s
         WHERE id = %s
         """,
         (
@@ -529,11 +599,15 @@ def atualizar_perfil_usuario(usuario_id, dados_perfil):
             contato["cpf"],
             contato["telefone"],
             cref_valor,
+            ambiente_treino_forca if usuario_atual.get("tipo_usuario") == "atleta" else None,
+            ambiente_treino_forca if usuario_atual.get("tipo_usuario") == "atleta" else None,
             usuario_id,
         ),
     )
     conn.commit()
     conn.close()
+    if usuario_atual.get("tipo_usuario") == "atleta" and "equipamentos_disponiveis" in dados_perfil:
+        salvar_equipamentos_atleta(usuario_id, dados_perfil.get("equipamentos_disponiveis"), origem="manual")
     return buscar_usuario_por_id(usuario_id)
 
 
@@ -851,6 +925,7 @@ def excluir_usuario(usuario_id):
     cursor = conn.cursor()
 
     cursor.execute("DELETE FROM recuperacao_senha WHERE usuario_id = %s", (usuario_id,))
+    cursor.execute("DELETE FROM atleta_equipamentos WHERE atleta_id = %s", (usuario_id,))
     cursor.execute("DELETE FROM preferencias_substituicao_exercicio WHERE atleta_id = %s", (usuario_id,))
     cursor.execute(
         "DELETE FROM treinos_realizados WHERE COALESCE(atleta_id, usuario_id) = %s",

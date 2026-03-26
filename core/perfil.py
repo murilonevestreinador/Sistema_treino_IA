@@ -4,6 +4,15 @@ from pathlib import Path
 
 import streamlit as st
 
+from core.cronograma import gerar_cronograma, obter_semana_atual
+from core.equipamentos import (
+    AMBIENTES_TREINO_FORCA,
+    EQUIPAMENTO_OPCOES,
+    ambiente_requer_inventario,
+    normalizar_ambiente_treino_forca,
+    rotulo_ambiente_treino,
+    rotulo_equipamento,
+)
 from core.treinador import (
     buscar_tema_treinador,
     listar_treinadores_do_atleta,
@@ -12,6 +21,7 @@ from core.treinador import (
     salvar_tema_treinador,
     vincular_atleta_ao_treinador_por_email,
 )
+from core.treino import invalidar_treinos_gerados_desde_semana
 from core.usuarios import (
     alterar_senha_usuario_autenticado,
     atualizar_perfil_usuario,
@@ -64,6 +74,30 @@ def _render_form_perfil(usuario):
             cref = None
             if usuario.get("tipo_usuario") == "treinador":
                 cref = st.text_input("CREF", value=usuario.get("cref") or "", placeholder="Ex.: 123456-G/SP")
+            ambiente_treino_forca = None
+            equipamentos_disponiveis = None
+            if usuario.get("tipo_usuario") == "atleta":
+                st.markdown("### Contexto de treino de forca")
+                ambiente_atual = normalizar_ambiente_treino_forca(
+                    usuario.get("ambiente_treino_forca"),
+                    usuario.get("local_treino"),
+                )
+                ambiente_treino_forca = st.selectbox(
+                    "Ambiente de treino de forca",
+                    AMBIENTES_TREINO_FORCA,
+                    index=AMBIENTES_TREINO_FORCA.index(ambiente_atual),
+                    format_func=rotulo_ambiente_treino,
+                )
+                if ambiente_requer_inventario(ambiente_treino_forca):
+                    equipamentos_disponiveis = st.multiselect(
+                        "Equipamentos disponiveis",
+                        EQUIPAMENTO_OPCOES,
+                        default=usuario.get("equipamentos_disponiveis") or [],
+                        format_func=rotulo_equipamento,
+                        help="A barra `/` na planilha e tratada como `e`: o exercicio so entra se todos os equipamentos exigidos estiverem disponiveis.",
+                    )
+                elif usuario.get("equipamentos_disponiveis"):
+                    st.caption("Seu inventario anterior foi preservado, mas sera ignorado enquanto o ambiente estiver como academia completa.")
             foto_upload = st.file_uploader(
                 "Foto de perfil",
                 type=["png", "jpg", "jpeg", "webp"],
@@ -111,6 +145,10 @@ def _render_form_perfil(usuario):
                 return
 
         try:
+            ambiente_anterior = normalizar_ambiente_treino_forca(
+                usuario.get("ambiente_treino_forca"),
+                usuario.get("local_treino"),
+            )
             usuario_atualizado = atualizar_perfil_usuario(
                 usuario["id"],
                 {
@@ -120,11 +158,29 @@ def _render_form_perfil(usuario):
                     "cpf": cpf_msg,
                     "telefone": telefone_msg,
                     "cref": cref_msg,
+                    "ambiente_treino_forca": ambiente_treino_forca,
+                    **(
+                        {"equipamentos_disponiveis": equipamentos_disponiveis}
+                        if usuario.get("tipo_usuario") == "atleta" and equipamentos_disponiveis is not None
+                        else {}
+                    ),
                 },
             )
         except ValueError as exc:
             st.error(str(exc))
             return
+        if usuario.get("tipo_usuario") == "atleta":
+            ambiente_novo = normalizar_ambiente_treino_forca(
+                usuario_atualizado.get("ambiente_treino_forca"),
+                usuario_atualizado.get("local_treino"),
+            )
+            inventario_anterior = usuario.get("equipamentos_disponiveis") or []
+            inventario_novo = usuario_atualizado.get("equipamentos_disponiveis") or []
+            if ambiente_anterior != ambiente_novo or inventario_anterior != inventario_novo:
+                cronograma, _, _ = gerar_cronograma(usuario_atualizado)
+                semana_atual = obter_semana_atual(cronograma)
+                invalidar_treinos_gerados_desde_semana(usuario["id"], semana_atual["semana"])
+                st.session_state["cronograma"] = cronograma
         st.session_state["usuario"] = usuario_atualizado
         st.session_state["mensagem_perfil"] = "Perfil atualizado com sucesso."
         st.rerun()

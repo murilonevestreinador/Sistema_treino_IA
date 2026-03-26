@@ -3,6 +3,14 @@ from datetime import date
 import streamlit as st
 
 from core.cronograma import gerar_cronograma, gerar_mensagem_usuario
+from core.equipamentos import (
+    AMBIENTES_TREINO_FORCA,
+    EQUIPAMENTO_OPCOES,
+    ambiente_requer_inventario,
+    normalizar_ambiente_treino_forca,
+    rotulo_ambiente_treino,
+    rotulo_equipamento,
+)
 from core.usuarios import atualizar_usuario_onboarding
 
 
@@ -12,6 +20,10 @@ def tela_questionario(usuario):
 
     hoje = date.today()
     tem_prova = st.checkbox("Tenho uma prova alvo", key="onboarding_tem_prova")
+    ambiente_atual = normalizar_ambiente_treino_forca(
+        usuario.get("ambiente_treino_forca"),
+        usuario.get("local_treino"),
+    )
 
     with st.form("form_questionario_atleta"):
         data_prova = None
@@ -30,7 +42,21 @@ def tela_questionario(usuario):
             max_value=5,
             value=max(1, int(usuario.get("treinos_musculacao_semana") or 3)),
         )
-        local_treino = st.selectbox("Local de treino", ["academia", "casa", "hibrido"])
+        ambiente_treino_forca = st.selectbox(
+            "Ambiente de treino de forca",
+            AMBIENTES_TREINO_FORCA,
+            index=AMBIENTES_TREINO_FORCA.index(ambiente_atual),
+            format_func=rotulo_ambiente_treino,
+        )
+        equipamentos_disponiveis = []
+        if ambiente_requer_inventario(ambiente_treino_forca):
+            st.caption("Selecione manualmente os equipamentos disponiveis. Quando a planilha tiver `banco/barra`, o exercicio exigira os dois.")
+            equipamentos_disponiveis = st.multiselect(
+                "Equipamentos disponiveis",
+                EQUIPAMENTO_OPCOES,
+                default=usuario.get("equipamentos_disponiveis") or [],
+                format_func=rotulo_equipamento,
+            )
         experiencia_musculacao = st.selectbox(
             "Experi\u00eancia com muscula\u00e7\u00e3o",
             ["iniciante", "intermediario", "avancado"],
@@ -62,7 +88,9 @@ def tela_questionario(usuario):
         "data_prova": data_prova.isoformat() if data_prova else None,
         "distancia_prova": distancia_prova,
         "treinos_musculacao_semana": int(treinos_musculacao_semana),
-        "local_treino": local_treino,
+        "local_treino": ambiente_treino_forca,
+        "ambiente_treino_forca": ambiente_treino_forca,
+        "equipamentos_disponiveis": equipamentos_disponiveis,
         "experiencia_musculacao": experiencia_musculacao,
         "historico_lesao": historico_lesao,
         "dor_atual": dor_atual,

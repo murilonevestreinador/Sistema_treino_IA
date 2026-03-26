@@ -3,6 +3,8 @@ import unicodedata
 
 import pandas as pd
 
+from core.equipamentos import parsear_equipamentos_exercicio
+
 
 PASTA_DADOS = Path("dados")
 NOME_PLANILHA_PADRAO = "Planilha exercícios e infos.xlsx"
@@ -75,6 +77,8 @@ def carregar_exercicios(caminho="dados/Planilha exercícios e infos.xlsx"):
                 "principal_musculo": _normalizar_texto(row.get("principal_musculo")),
                 "complexidade": _normalizar_texto(row.get("complexidade")),
                 "equipamento": _normalizar_texto(row.get("equipamento_utilizado")),
+                "equipamento_bruto": _valor_texto(row.get("equipamento_utilizado")),
+                "equipamentos_necessarios": parsear_equipamentos_exercicio(row.get("equipamento_utilizado")),
                 "impacto_joelho": _normalizar_texto(row.get("impacto_joelho")),
                 "impacto_coluna": _normalizar_texto(row.get("impacto_coluna")),
                 "impacto_ombro": _normalizar_texto(row.get("impacto_ombro")),

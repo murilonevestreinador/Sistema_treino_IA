@@ -172,6 +172,21 @@ def obter_ou_gerar_treino_semana(atleta, exercicios_db, semana_numero, fase, for
     return salvo["json_treino"]
 
 
+def invalidar_treinos_gerados_desde_semana(atleta_id, semana_inicial):
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        DELETE FROM treinos_gerados
+        WHERE COALESCE(atleta_id, usuario_id) = %s
+          AND semana_numero >= %s
+        """,
+        (atleta_id, semana_inicial),
+    )
+    conn.commit()
+    conn.close()
+
+
 def resetar_planejamento_atleta(atleta_id):
     conn = conectar()
     cursor = conn.cursor()

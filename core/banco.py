@@ -85,6 +85,7 @@ def _criar_tabela_usuarios(cursor):
             distancia_prova TEXT,
             treinos_musculacao_semana INTEGER,
             local_treino TEXT,
+            ambiente_treino_forca TEXT,
             experiencia_musculacao TEXT,
             historico_lesao TEXT,
             dor_atual TEXT,
@@ -118,6 +119,7 @@ def _criar_tabela_usuarios(cursor):
         "distancia_prova": "TEXT",
         "treinos_musculacao_semana": "INTEGER",
         "local_treino": "TEXT",
+        "ambiente_treino_forca": "TEXT",
         "experiencia_musculacao": "TEXT",
         "historico_lesao": "TEXT",
         "dor_atual": "TEXT",
@@ -413,6 +415,31 @@ def _criar_tabela_preferencias_substituicao(cursor):
         )
         """
     )
+
+
+def _criar_tabela_atleta_equipamentos(cursor):
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS atleta_equipamentos (
+            id SERIAL PRIMARY KEY,
+            atleta_id INTEGER NOT NULL,
+            equipamento TEXT NOT NULL,
+            origem TEXT DEFAULT 'manual',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(atleta_id, equipamento),
+            FOREIGN KEY (atleta_id) REFERENCES usuarios(id)
+        )
+        """
+    )
+
+    colunas = {
+        "origem": "TEXT DEFAULT 'manual'",
+        "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+        "updated_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+    }
+    for nome, definicao in colunas.items():
+        _adicionar_coluna_se_necessario(cursor, "atleta_equipamentos", nome, definicao)
 
 
 def _criar_tabela_planos(cursor):
@@ -834,6 +861,15 @@ def _sincronizar_papeis_legados(cursor):
     )
     cursor.execute(
         """
+        UPDATE usuarios
+        SET ambiente_treino_forca = 'academia_completa'
+        WHERE (ambiente_treino_forca IS NULL OR btrim(ambiente_treino_forca) = '')
+          AND LOWER(COALESCE(tipo_usuario, 'atleta')) = 'atleta'
+          AND COALESCE(onboarding_completo, 0) = 1
+        """
+    )
+    cursor.execute(
+        """
         UPDATE assinaturas a
         SET tipo_plano = COALESCE(NULLIF(a.tipo_plano, ''), p.tipo),
             valor = COALESCE(a.valor, p.preco_mensal, p.valor_base::float),
@@ -1041,6 +1077,12 @@ def _criar_indices_bi(cursor):
         ON execucao_exercicio (atleta_id, usuario_id, categoria_movimento, semana_numero DESC, created_at DESC)
         """
     )
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_atleta_equipamentos_atleta
+        ON atleta_equipamentos (atleta_id, equipamento, origem)
+        """
+    )
 
 
 def garantir_colunas_e_tabelas():
@@ -1058,6 +1100,7 @@ def garantir_colunas_e_tabelas():
     _criar_tabela_recuperacao_senha(cursor)
     _criar_tabela_sessoes_persistentes(cursor)
     _criar_tabela_preferencias_substituicao(cursor)
+    _criar_tabela_atleta_equipamentos(cursor)
     _criar_tabela_planos(cursor)
     _seed_planos(cursor)
     _criar_tabela_assinaturas(cursor)

@@ -1,5 +1,7 @@
 import unicodedata
 
+from core.equipamentos import exercicio_compativel_com_equipamentos
+
 
 def _normalizar_categoria(valor):
     texto = "" if valor is None else str(valor)
@@ -38,7 +40,9 @@ def filtrar_exercicios(exercicios, atleta):
     return [
         exercicio
         for exercicio in exercicios
-        if _impacto_permitido(exercicio, atleta) and _complexidade_permitida(exercicio, atleta)
+        if _impacto_permitido(exercicio, atleta)
+        and _complexidade_permitida(exercicio, atleta)
+        and exercicio_compativel_com_equipamentos(exercicio, atleta)
     ]
 
 
