@@ -151,7 +151,7 @@ def descrever_prescricao_carga(semana_numero, fase, exercicio, rpe_alvo, avaliac
             "modo_carga": "avaliacao",
             "categoria_movimento": categoria,
             "carga_sugerida": None,
-            "orientacao_carga": "Avaliacao de carga: registre peso usado, repeticoes realizadas e RPE.",
+            "orientacao_carga": "Avaliacao de carga: registre peso usado, repeticoes realizadas e percepcao de esforco.",
         }
 
     carga_sugerida = calcular_carga_sugerida(
@@ -168,7 +168,7 @@ def descrever_prescricao_carga(semana_numero, fase, exercicio, rpe_alvo, avaliac
             "categoria_movimento": categoria,
             "carga_sugerida": carga_sugerida,
             "orientacao_carga": (
-                f"Carga sugerida: {carga_sugerida} kg | RPE alvo {rpe_alvo}. "
+                f"Carga sugerida: {carga_sugerida} kg | Percepcao de esforco alvo {rpe_alvo}. "
                 "Carga sugerida com base na sua avaliacao anterior."
             ),
         }
@@ -177,5 +177,5 @@ def descrever_prescricao_carga(semana_numero, fase, exercicio, rpe_alvo, avaliac
         "modo_carga": "qualitativa",
         "categoria_movimento": categoria,
         "carga_sugerida": None,
-        "orientacao_carga": "Use uma carga moderada que mantenha tecnica consistente e RPE dentro da meta.",
+        "orientacao_carga": "Use uma carga moderada que mantenha tecnica consistente e percepcao de esforco dentro da meta.",
     }

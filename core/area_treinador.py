@@ -486,7 +486,7 @@ def _render_painel_cargas_atleta(atleta):
                     "Categoria": rotulo_categoria_movimento(avaliacao.get("categoria_movimento")),
                     "Carga": avaliacao.get("carga_utilizada"),
                     "Reps": avaliacao.get("reps_realizadas"),
-                    "RPE": avaliacao.get("rpe"),
+                    "Percepcao de esforco": avaliacao.get("rpe"),
                     "Referencia estimada": referencia,
                 }
             )
@@ -503,7 +503,7 @@ def _render_painel_cargas_atleta(atleta):
                 )
                 st.caption(
                     f"{avaliacao.get('exercicio_nome')} | carga usada {avaliacao.get('carga_utilizada') or '-'} kg | "
-                    f"reps {avaliacao.get('reps_realizadas') or '-'} | RPE {avaliacao.get('rpe') or '-'} | "
+                    f"reps {avaliacao.get('reps_realizadas') or '-'} | Percepcao de esforco {avaliacao.get('rpe') or '-'} | "
                     f"referencia {referencia or '-'} kg"
                 )
                 with st.form(f"form_override_carga_{avaliacao['id']}"):
@@ -540,8 +540,8 @@ def _render_painel_cargas_atleta(atleta):
                 "Categoria": rotulo_categoria_movimento(item.get("categoria_movimento")),
                 "Carga sugerida": item.get("carga_planejada"),
                 "Carga realizada": item.get("carga_realizada"),
-                "RPE alvo": item.get("rpe_alvo"),
-                "RPE real": item.get("rpe_real"),
+                "Percepcao de esforco alvo": item.get("rpe_alvo"),
+                "Percepcao de esforco real": item.get("rpe_real"),
                 "Dor": item.get("dor") or "-",
             }
             for item in historico

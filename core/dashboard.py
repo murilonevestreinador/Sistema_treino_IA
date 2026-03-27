@@ -652,7 +652,7 @@ def _render_card_exercicios(exercicios):
                     f"{badge_avaliacao}"
                     f"<strong>{exercicio['nome']}</strong>"
                     f"<span>Series {exercicio['series']} | Reps {exercicio['reps']} | "
-                    f"Descanso {exercicio['descanso']} | Peso {peso_texto} | RPE alvo {exercicio.get('rpe', '-')}</span>"
+                    f"Descanso {exercicio['descanso']} | Peso {peso_texto} | Percepcao de esforco alvo {exercicio.get('rpe', '-')}</span>"
                     f"{complemento_carga}"
                     f"</div>"
                 ),
@@ -685,7 +685,7 @@ def _render_resumo_avaliacao_concluida(usuario_id, semana_numero):
     )
     for item in resumo:
         st.caption(
-            f"{item['exercicio']} | carga {item['carga']} kg | reps {item['reps']} | RPE {item['rpe']}"
+            f"{item['exercicio']} | carga {item['carga']} kg | reps {item['reps']} | Percepcao de esforco {item['rpe']}"
         )
 
 
@@ -728,13 +728,13 @@ def _render_contexto_carga_semana(semana, avaliacoes):
         st.info("Semana 1: foco em tecnica, execucao, amplitude e controle. Nao ha teste de carga nesta semana.")
         return
     if semana["semana"] == 2:
-        st.warning("Semana 2: os exercicios-base marcados como avaliacao de carga devem registrar peso usado, repeticoes e RPE.")
+        st.warning("Semana 2: os exercicios-base marcados como avaliacao de carga devem registrar peso usado, repeticoes e percepcao de esforco.")
         return
 
     total_avaliacoes = len(avaliacoes or [])
     if total_avaliacoes:
         st.success(
-            f"Semana {semana['semana']}: as cargas sugeridas usam a avaliacao da semana 2, a fase {semana['fase']} e os registros de RPE/dor."
+            f"Semana {semana['semana']}: as cargas sugeridas usam a avaliacao da semana 2, a fase {semana['fase']} e os registros de percepcao de esforco/dor."
         )
     else:
         st.info("Ainda nao ha avaliacao de carga salva. As orientacoes seguem qualitativas ate existir referencia.")
@@ -772,7 +772,7 @@ def _salvar_execucao_treino_atleta(usuario, semana, nome_treino, exercicios, rer
             if reps_realizadas <= 0:
                 erros.append(f"{exercicio['nome']}: informe repeticoes realizadas acima de zero.")
             if not 5 <= rpe_real <= 10:
-                erros.append(f"{exercicio['nome']}: selecione um RPE entre 5 e 10.")
+                erros.append(f"{exercicio['nome']}: selecione uma percepcao de esforco entre 5 e 10.")
             resumo_avaliacoes.append(
                 {
                     "exercicio": exercicio["nome"],
@@ -828,7 +828,7 @@ def _render_form_execucao_exercicios(usuario, semana, nome_treino, exercicios):
         st.caption("Preencha a execucao real para alimentar a prescricao das proximas sessoes.")
         if semana["semana"] == 2:
             st.markdown("##### Exercicios de avaliacao")
-            st.caption("Preencha carga, repeticoes e RPE apenas com uma carga desafiadora e segura.")
+            st.caption("Preencha carga, repeticoes e percepcao de esforco apenas com uma carga desafiadora e segura.")
 
         for indice, exercicio in enumerate(exercicios):
             execucao = execucoes.get(exercicio["nome"], {})
@@ -864,12 +864,12 @@ def _render_form_execucao_exercicios(usuario, semana, nome_treino, exercicios):
                     )
                 with col_rpe:
                     st.select_slider(
-                        "Esforco percebido (RPE)",
+                        "Percepcao de esforco",
                         options=[5, 6, 7, 8, 9, 10],
                         value=int(execucao.get("rpe_real") or 7),
                         key=f"{prefixo}_rpe_{indice}",
                     )
-                st.caption("RPE 6 = leve | RPE 7 = moderado | RPE 8 = desafiador | RPE 9 = muito dificil | RPE 10 = esforco maximo")
+                st.caption("Percepcao de esforco 6 = leve | Percepcao de esforco 7 = moderado | Percepcao de esforco 8 = desafiador | Percepcao de esforco 9 = muito dificil | Percepcao de esforco 10 = esforco maximo")
 
                 col_series, col_dor, col_obs = st.columns([1, 1.2, 1.8])
                 with col_series:
@@ -924,7 +924,7 @@ def _render_form_execucao_exercicios(usuario, semana, nome_treino, exercicios):
                     )
                 with col_rpe:
                     st.number_input(
-                        "RPE real",
+                        "Percepcao de esforco real",
                         min_value=0.0,
                         max_value=10.0,
                         step=0.5,
