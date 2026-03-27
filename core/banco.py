@@ -86,6 +86,7 @@ def _criar_tabela_usuarios(cursor):
             treinos_musculacao_semana INTEGER,
             local_treino TEXT,
             ambiente_treino_forca TEXT,
+            plano_inicio_em TEXT,
             experiencia_musculacao TEXT,
             historico_lesao TEXT,
             dor_atual TEXT,
@@ -120,6 +121,7 @@ def _criar_tabela_usuarios(cursor):
         "treinos_musculacao_semana": "INTEGER",
         "local_treino": "TEXT",
         "ambiente_treino_forca": "TEXT",
+        "plano_inicio_em": "TEXT",
         "experiencia_musculacao": "TEXT",
         "historico_lesao": "TEXT",
         "dor_atual": "TEXT",
@@ -864,6 +866,15 @@ def _sincronizar_papeis_legados(cursor):
         UPDATE usuarios
         SET ambiente_treino_forca = 'academia_completa'
         WHERE (ambiente_treino_forca IS NULL OR btrim(ambiente_treino_forca) = '')
+          AND LOWER(COALESCE(tipo_usuario, 'atleta')) = 'atleta'
+          AND COALESCE(onboarding_completo, 0) = 1
+        """
+    )
+    cursor.execute(
+        """
+        UPDATE usuarios
+        SET plano_inicio_em = TO_CHAR(DATE_TRUNC('week', COALESCE(data_criacao, CURRENT_TIMESTAMP)), 'YYYY-MM-DD')
+        WHERE (plano_inicio_em IS NULL OR btrim(plano_inicio_em) = '')
           AND LOWER(COALESCE(tipo_usuario, 'atleta')) = 'atleta'
           AND COALESCE(onboarding_completo, 0) = 1
         """

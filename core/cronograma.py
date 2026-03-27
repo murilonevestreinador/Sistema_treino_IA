@@ -1,6 +1,7 @@
 from datetime import date, datetime, timedelta
 import math
 
+from core.calendario import hoje_local, inicio_semana_local
 from core.usuarios import saudacao_usuario
 
 
@@ -13,16 +14,33 @@ def _normalizar_data(data_texto):
         return None
     if isinstance(data_texto, date):
         return data_texto
-    return datetime.strptime(str(data_texto), "%Y-%m-%d").date()
+    texto = str(data_texto).strip()
+    if not texto:
+        return None
+    try:
+        return datetime.strptime(texto[:10], "%Y-%m-%d").date()
+    except ValueError:
+        try:
+            return datetime.fromisoformat(texto).date()
+        except ValueError:
+            return None
 
 
-def calcular_semanas_ate_prova(atleta):
+def _inicio_plano_atleta(atleta):
+    return inicio_semana_local(
+        _normalizar_data(atleta.get("plano_inicio_em"))
+        or _normalizar_data(atleta.get("data_criacao"))
+        or hoje_local()
+    )
+
+
+def calcular_semanas_ate_prova(atleta, inicio_plano=None):
     if not atleta.get("tem_prova") or not atleta.get("data_prova"):
         return 12
 
     data_prova = _normalizar_data(atleta["data_prova"])
-    hoje = date.today()
-    dias = (data_prova - hoje).days
+    referencia_inicial = inicio_plano or _inicio_plano_atleta(atleta)
+    dias = (data_prova - referencia_inicial).days
     return max(1, math.ceil(max(dias, 1) / 7))
 
 
@@ -47,14 +65,12 @@ def distribuir_fases(total_semanas_pre_prova, tem_dor=False):
 
 
 def gerar_cronograma(atleta):
-    total_pre_prova = calcular_semanas_ate_prova(atleta)
+    inicio_base = _inicio_plano_atleta(atleta)
+    total_pre_prova = calcular_semanas_ate_prova(atleta, inicio_plano=inicio_base)
     historico = (atleta.get("historico_lesao") or "").lower()
     dor = (atleta.get("dor_atual") or "").lower()
     tem_dor = any(valor and valor != "nenhuma" for valor in (historico, dor))
     fases = distribuir_fases(total_pre_prova, tem_dor=tem_dor)
-
-    hoje = date.today()
-    inicio_base = hoje - timedelta(days=hoje.weekday())
     cronograma = []
     semana_numero = 1
 
@@ -79,7 +95,7 @@ def obter_semana_atual(cronograma, referencia=None):
     if not cronograma:
         return None
 
-    hoje = referencia or date.today()
+    hoje = referencia or hoje_local()
 
     for semana in cronograma:
         inicio = _normalizar_data(semana["inicio"])

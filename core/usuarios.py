@@ -5,6 +5,7 @@ import secrets
 from datetime import datetime, timedelta
 
 from core.banco import conectar
+from core.calendario import inicio_semana_local
 from core.equipamentos import normalizar_ambiente_treino_forca, normalizar_lista_equipamentos
 from core.permissoes import eh_admin, normalizar_status_conta, normalizar_tipo_usuario
 
@@ -472,6 +473,7 @@ def atualizar_usuario_onboarding(usuario_id, dados_onboarding):
         dados_onboarding.get("ambiente_treino_forca"),
         dados_onboarding.get("local_treino"),
     )
+    plano_inicio_em = inicio_semana_local().isoformat()
     conn = conectar()
     cursor = conn.cursor()
     cursor.execute(
@@ -487,6 +489,7 @@ def atualizar_usuario_onboarding(usuario_id, dados_onboarding):
             treinos_musculacao_semana = %s,
             local_treino = %s,
             ambiente_treino_forca = %s,
+            plano_inicio_em = COALESCE(plano_inicio_em, %s),
             experiencia_musculacao = %s,
             historico_lesao = %s,
             dor_atual = %s,
@@ -504,6 +507,7 @@ def atualizar_usuario_onboarding(usuario_id, dados_onboarding):
             int(dados_onboarding.get("treinos_musculacao_semana", 1)),
             ambiente_treino_forca,
             ambiente_treino_forca,
+            plano_inicio_em,
             dados_onboarding.get("experiencia_musculacao", ""),
             dados_onboarding.get("historico_lesao", ""),
             dados_onboarding.get("dor_atual", ""),
@@ -537,7 +541,8 @@ def redefinir_objetivo_atleta(usuario_id, dados_objetivo):
             data_prova = %s,
             distancia_prova = %s,
             distancia_principal = %s,
-            treinos_musculacao_semana = %s
+            treinos_musculacao_semana = %s,
+            plano_inicio_em = %s
         WHERE id = %s
         """,
         (
@@ -547,6 +552,7 @@ def redefinir_objetivo_atleta(usuario_id, dados_objetivo):
             dados_objetivo.get("distancia_prova", ""),
             dados_objetivo.get("distancia_principal", ""),
             int(dados_objetivo.get("treinos_musculacao_semana", 1)),
+            inicio_semana_local().isoformat(),
             usuario_id,
         ),
     )
