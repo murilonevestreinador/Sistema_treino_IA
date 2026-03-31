@@ -577,6 +577,71 @@ def _criar_tabela_execucao_exercicio(cursor):
         _adicionar_coluna_se_necessario(cursor, "execucao_exercicio", nome, definicao)
 
 
+def _criar_tabela_feedback_exercicio(cursor):
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS feedback_exercicio (
+            id SERIAL PRIMARY KEY,
+            atleta_id INTEGER,
+            usuario_id INTEGER,
+            semana_numero INTEGER NOT NULL,
+            fase TEXT,
+            treino_nome TEXT NOT NULL,
+            exercicio_nome TEXT NOT NULL,
+            exercicio_original_nome TEXT,
+            categoria_feedback TEXT NOT NULL,
+            observacao TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (atleta_id) REFERENCES usuarios(id)
+        )
+        """
+    )
+
+    colunas = {
+        "atleta_id": "INTEGER",
+        "usuario_id": "INTEGER",
+        "fase": "TEXT",
+        "exercicio_original_nome": "TEXT",
+        "observacao": "TEXT",
+        "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+    }
+    for nome, definicao in colunas.items():
+        _adicionar_coluna_se_necessario(cursor, "feedback_exercicio", nome, definicao)
+
+
+def _criar_tabela_substituicoes_exercicio(cursor):
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS substituicoes_exercicio (
+            id SERIAL PRIMARY KEY,
+            atleta_id INTEGER,
+            usuario_id INTEGER,
+            semana_numero INTEGER NOT NULL,
+            fase TEXT,
+            treino_nome TEXT NOT NULL,
+            exercicio_original_nome TEXT NOT NULL,
+            exercicio_substituto_nome TEXT NOT NULL,
+            motivo TEXT NOT NULL,
+            regiao_dor TEXT,
+            detalhe_sugestao TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (atleta_id) REFERENCES usuarios(id)
+        )
+        """
+    )
+
+    colunas = {
+        "atleta_id": "INTEGER",
+        "usuario_id": "INTEGER",
+        "fase": "TEXT",
+        "regiao_dor": "TEXT",
+        "detalhe_sugestao": "TEXT",
+        "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+    }
+    for nome, definicao in colunas.items():
+        _adicionar_coluna_se_necessario(cursor, "substituicoes_exercicio", nome, definicao)
+
+
 def _seed_planos(cursor):
     planos = [
         (
@@ -1124,6 +1189,8 @@ def garantir_colunas_e_tabelas():
     _criar_tabela_configuracoes_sistema(cursor)
     _criar_tabela_avaliacao_forca(cursor)
     _criar_tabela_execucao_exercicio(cursor)
+    _criar_tabela_feedback_exercicio(cursor)
+    _criar_tabela_substituicoes_exercicio(cursor)
     _sincronizar_papeis_legados(cursor)
     _criar_indices_bi(cursor)
 

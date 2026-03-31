@@ -1,16 +1,15 @@
 import base64
+from datetime import datetime
 from urllib.parse import parse_qs, urlparse
 
 import streamlit as st
 import streamlit.components.v1 as components
 
-from core.carga import rotulo_categoria_movimento
 from core.cronograma import buscar_semana_por_numero, gerar_cronograma, obter_semana_atual
 from core.exercicios import carregar_exercicios
+from core.equipamentos import exercicio_compativel_com_equipamentos, normalizar_lista_equipamentos
 from core.financeiro import obter_status_interface_atleta
 from core.progresso import (
-    buscar_avaliacao_referencia,
-    buscar_ultima_execucao,
     buscar_progresso_semana,
     calcular_progresso_semanal,
     historico_progresso,
@@ -18,12 +17,20 @@ from core.progresso import (
     listar_execucao_treino,
     marcar_treino_feito,
     registrar_preferencia_substituicao,
+    registrar_substituicao_exercicio,
     salvar_avaliacao_forca,
     salvar_execucao_exercicio,
+    salvar_feedback_exercicio,
     salvar_feedback_treino,
 )
+from core.selecao import normalizar_categoria_funcional
 from core.treinador import listar_convites_pendentes_do_atleta, resolver_logo_treinador
-from core.treino import buscar_treino_gerado, obter_ou_gerar_treino_semana, resetar_treinos_futuros
+from core.treino import (
+    buscar_treino_gerado,
+    obter_ou_gerar_treino_semana,
+    resetar_treinos_futuros,
+    salvar_treino_gerado,
+)
 
 
 def _registrar_dialog_video():
@@ -53,115 +60,536 @@ def _registrar_dialog_video():
 _RENDER_DIALOG_VIDEO = _registrar_dialog_video()
 
 
-def _submeter_feedback_pendente(feedback, feedback_tipo, feedback_contexto_ruim, exercicio_escolhido, motivo_exercicio_ruim):
-    salvar_feedback_treino(
-        feedback["atleta_id"],
-        feedback["semana_numero"],
-        feedback["nome_treino"],
-        feedback_tipo,
-        feedback_contexto_ruim=feedback_contexto_ruim,
-        exercicio_substituir=exercicio_escolhido,
-        motivo_exercicio_ruim=motivo_exercicio_ruim,
+FEEDBACK_EXERCICIO_OPCOES = [
+    ("muito_facil", "Muito fácil"),
+    ("dentro_esperado", "Dentro do esperado"),
+    ("muito_dificil", "Muito difícil"),
+    ("desconforto", "Senti desconforto"),
+    ("dor", "Senti dor"),
+    ("nao_executei_bem", "Não consegui executar bem"),
+]
+MOTIVOS_SUBSTITUICAO = {
+    "dor": "Estou com dor",
+    "equipamento": "Não tenho o equipamento necessário",
+}
+REGIOES_DOR = {
+    "joelho": "Joelho",
+    "coluna": "Coluna",
+    "ombro": "Ombro",
+}
+IMPACTO_PESO = {"baixo": 0, "medio": 1, "médio": 1, "alto": 2}
+COMPLEXIDADE_PESO = {"baixo": 0, "basico": 0, "médio": 1, "medio": 1, "alto": 2, "avancado": 2}
+
+
+def _rotulo_feedback_exercicio(valor):
+    mapa = dict(FEEDBACK_EXERCICIO_OPCOES)
+    return mapa.get(valor, (valor or "").replace("_", " ").title())
+
+
+def _rotulo_motivo_substituicao(valor):
+    return MOTIVOS_SUBSTITUICAO.get(valor, valor or "")
+
+
+def _rotulo_regiao_dor(valor):
+    return REGIOES_DOR.get(valor, valor or "")
+
+
+def _chave_fase_prioridade(fase):
+    fase_normalizada = (fase or "").strip().lower()
+    if fase_normalizada == "específico":
+        fase_normalizada = "especifico"
+    return {
+        "base": "prioridade_base",
+        "especifico": "prioridade_especifico",
+        "polimento": "prioridade_polimento",
+        "retorno": "prioridade_retorno",
+    }.get(fase_normalizada, "prioridade_base")
+
+
+def _peso_impacto(valor):
+    return IMPACTO_PESO.get((valor or "").strip().lower(), 1)
+
+
+def _peso_complexidade(valor):
+    return COMPLEXIDADE_PESO.get((valor or "").strip().lower(), 1)
+
+
+def _exercicio_original_nome(exercicio):
+    return exercicio.get("exercicio_original_nome") or exercicio.get("nome")
+
+
+def _fechar_acao_exercicio():
+    st.session_state.pop("acao_exercicio", None)
+
+
+def _abrir_acao_exercicio(usuario, semana, nome_treino, exercicio):
+    st.session_state.pop("exercicio_video_aberto", None)
+    st.session_state["acao_exercicio"] = {
+        "atleta_id": usuario["id"],
+        "semana_numero": semana["semana"],
+        "fase": semana["fase"],
+        "nome_treino": nome_treino,
+        "exercicio": dict(exercicio),
+        "etapa": "menu",
+    }
+
+
+def _obter_execucao_por_exercicio(usuario_id, semana_numero, treino_nome):
+    return {
+        item["exercicio_nome"]: item
+        for item in listar_execucao_treino(usuario_id, semana_numero, treino_nome)
+    }
+
+
+def _salvar_execucao_exercicio_individual(contexto, exercicio, valores):
+    carga_realizada = float(valores.get("carga_realizada") or 0)
+    reps_realizadas = int(valores.get("reps_realizadas") or exercicio.get("reps") or 0)
+    series_realizadas = int(valores.get("series_realizadas") or exercicio.get("series") or 0)
+    rpe_real = float(valores.get("rpe_real") or 0)
+    observacao = (valores.get("observacao") or "").strip() or None
+
+    if exercicio.get("modo_carga") == "avaliacao":
+        if carga_realizada <= 0:
+            st.error("Informe uma carga utilizada maior que zero.")
+            return False
+        if reps_realizadas <= 0:
+            st.error("Informe repetições realizadas acima de zero.")
+            return False
+        if not 5 <= rpe_real <= 10:
+            st.error("Selecione uma percepção de esforço entre 5 e 10.")
+            return False
+
+    payload = {
+        **exercicio,
+        "series_realizadas": series_realizadas,
+        "reps_realizadas": reps_realizadas,
+        "carga_realizada": carga_realizada if carga_realizada > 0 else None,
+        "rpe_real": rpe_real if rpe_real > 0 else None,
+        "observacao": observacao,
+    }
+    salvar_execucao_exercicio(
+        contexto["atleta_id"],
+        contexto["semana_numero"],
+        contexto["fase"],
+        contexto["nome_treino"],
+        [payload],
     )
 
-    if feedback_tipo == "muito ruim" and exercicio_escolhido:
-        exercicio_atual = next(
-            (item for item in feedback["exercicios"] if item["nome"] == exercicio_escolhido),
-            None,
+    if exercicio.get("modo_carga") == "avaliacao" and payload.get("carga_realizada") and payload.get("rpe_real"):
+        avaliacao = salvar_avaliacao_forca(
+            contexto["atleta_id"],
+            contexto["semana_numero"],
+            contexto["fase"],
+            exercicio.get("categoria_movimento"),
+            exercicio.get("nome"),
+            payload.get("carga_realizada"),
+            payload.get("reps_realizadas"),
+            payload.get("rpe_real"),
         )
-        if exercicio_atual:
-            registrar_preferencia_substituicao(
-                feedback["atleta_id"],
+        if avaliacao:
+            resetar_treinos_futuros(contexto["atleta_id"], contexto["semana_numero"])
+            chave_resumo = f"resumo_avaliacao_{contexto['atleta_id']}_{contexto['semana_numero']}"
+            resumo_existente = st.session_state.get(chave_resumo, [])
+            resumo_existente = [item for item in resumo_existente if item.get("exercicio") != exercicio.get("nome")]
+            resumo_existente.append(
                 {
-                    "nome": exercicio_atual["nome"],
-                    "categoria": exercicio_atual.get("categoria"),
-                    "principal_musculo": exercicio_atual.get("principal_musculo"),
-                    "motivo": motivo_exercicio_ruim,
-                },
+                    "exercicio": exercicio.get("nome"),
+                    "carga": round(payload.get("carga_realizada") or 0, 1),
+                    "reps": int(payload.get("reps_realizadas") or 0),
+                    "rpe": round(payload.get("rpe_real") or 0, 1),
+                }
             )
-            resetar_treinos_futuros(feedback["atleta_id"], feedback["semana_numero"])
-            st.session_state["mensagem_feedback_treino"] = (
-                "Obrigado pelo feedback. Vamos substituir esse exercicio nos proximos treinos."
-            )
+            st.session_state[chave_resumo] = resumo_existente
+
+    st.session_state["mensagem_execucao_carga"] = f"Carga de {exercicio['nome']} salva."
+    return True
+
+
+def _justificativa_substituicao(candidato, motivo, regiao):
+    equipamento = candidato.get("equipamento_bruto") or "sem equipamento"
+    if motivo == "dor" and regiao:
+        impacto = candidato.get(f"impacto_{regiao}") or "baixo"
+        return f"Menor impacto em {REGIOES_DOR.get(regiao, regiao).lower()} ({impacto})."
+    return f"Mesma função com equipamento diferente: {equipamento}."
+
+
+def _gerar_sugestoes_substituicao(exercicio_atual, exercicios_db, usuario, fase, motivo, regiao=None, limite=3):
+    categoria_alvo = normalizar_categoria_funcional(exercicio_atual.get("categoria"))
+    prioridade_fase = _chave_fase_prioridade(fase)
+    equipamento_original = set(normalizar_lista_equipamentos(exercicio_atual.get("equipamentos_necessarios") or []))
+    nomes_bloqueados = {
+        exercicio_atual.get("nome"),
+        exercicio_atual.get("exercicio_original_nome"),
+    }
+
+    candidatos = []
+    for item in exercicios_db:
+        if item.get("nome") in nomes_bloqueados:
+            continue
+        if normalizar_categoria_funcional(item.get("categoria")) != categoria_alvo:
+            continue
+        if not exercicio_compativel_com_equipamentos(item, usuario):
+            continue
+
+        equipamento_candidato = set(normalizar_lista_equipamentos(item.get("equipamentos_necessarios") or []))
+        if motivo == "equipamento" and equipamento_original and equipamento_candidato == equipamento_original:
+            continue
+
+        score = 0
+        detalhe_extra = []
+        score += int(item.get(prioridade_fase) or 0) * 100
+
+        if item.get("principal_musculo") == exercicio_atual.get("principal_musculo"):
+            score += 40
+            detalhe_extra.append("mesmo foco muscular")
+
+        if motivo == "dor" and regiao:
+            impacto = _peso_impacto(item.get(f"impacto_{regiao}"))
+            score += max(0, 30 - (impacto * 15))
+            detalhe_extra.append(f"impacto {item.get(f'impacto_{regiao}') or 'medio'}")
+        elif motivo == "equipamento":
+            if equipamento_candidato != equipamento_original:
+                score += 25
+                detalhe_extra.append("equipamento diferente")
+
+        complexidade_atual = _peso_complexidade(exercicio_atual.get("complexidade"))
+        complexidade_candidato = _peso_complexidade(item.get("complexidade"))
+        if complexidade_candidato <= complexidade_atual:
+            score += 15
         else:
-            st.session_state["mensagem_feedback_treino"] = "Obrigado pelo feedback."
-    else:
-        st.session_state["mensagem_feedback_treino"] = "Obrigado e ate o proximo treino."
+            score -= 10
 
-    st.session_state.pop("feedback_pendente", None)
-    st.rerun()
+        if item.get("favorito"):
+            score += 5
 
+        candidatos.append(
+            {
+                **item,
+                "score": score,
+                "detalhe_sugestao": _justificativa_substituicao(item, motivo, regiao),
+                "criterios": detalhe_extra,
+            }
+        )
 
-def _render_formulario_feedback(feedback):
-    st.markdown(f"**Treino {feedback['nome_treino']}**")
-    feedback_tipo = st.radio(
-        "Como foi esse treino?",
-        ["muito bom", "neutro", "muito ruim"],
-        horizontal=True,
-        key=f"feedback_tipo_{feedback['atleta_id']}_{feedback['semana_numero']}_{feedback['nome_treino']}",
+    candidatos.sort(
+        key=lambda item: (
+            item.get("score", 0),
+            int(item.get(prioridade_fase) or 0),
+            -_peso_impacto(item.get(f"impacto_{regiao}")) if motivo == "dor" and regiao else 0,
+            -_peso_complexidade(item.get("complexidade")),
+            item.get("nome", ""),
+        ),
+        reverse=True,
     )
-    feedback_contexto_ruim = None
-    exercicio_escolhido = None
-    motivo_exercicio_ruim = None
 
-    if feedback_tipo == "muito ruim":
-        feedback_contexto_ruim = "muito_ruim"
-        motivo_exercicio_ruim = st.selectbox(
-            "Por que foi muito ruim?",
-            [
-                "dor em um exercicio",
-                "nao gostou do exercicio",
-                "exercicio ficou desconfortavel",
-                "nao tem o equipamento na academia",
-            ],
-            key=f"motivo_ruim_{feedback['atleta_id']}_{feedback['semana_numero']}_{feedback['nome_treino']}",
+    sugestoes = candidatos[:limite]
+    nomes_prioritarios = {
+        nome.strip()
+        for nome in exercicio_atual.get("substituicoes_dor", []) or []
+        if nome and nome.strip()
+    }
+    if nomes_prioritarios:
+        sugestoes.sort(
+            key=lambda item: (
+                1 if item.get("nome") in nomes_prioritarios else 0,
+                item.get("score", 0),
+            ),
+            reverse=True,
         )
-        nomes_exercicios = [item["nome"] for item in feedback["exercicios"]]
-        exercicio_escolhido = st.selectbox(
-            "Qual exercicio do treino gerou esse desconforto?",
-            nomes_exercicios,
-            key=f"exercicio_ruim_{feedback['atleta_id']}_{feedback['semana_numero']}_{feedback['nome_treino']}",
-        )
+    return sugestoes[:limite]
 
-    col_enviar, col_fechar = st.columns(2)
-    with col_enviar:
-        if st.button(
-            "Enviar feedback",
-            key=f"enviar_feedback_{feedback['atleta_id']}_{feedback['semana_numero']}_{feedback['nome_treino']}",
-            use_container_width=True,
-        ):
-            _submeter_feedback_pendente(
-                feedback,
-                feedback_tipo,
-                feedback_contexto_ruim,
-                exercicio_escolhido,
-                motivo_exercicio_ruim,
-            )
-    with col_fechar:
-        if st.button(
-            "Fechar janela",
-            key=f"fechar_feedback_{feedback['atleta_id']}_{feedback['semana_numero']}_{feedback['nome_treino']}",
-            use_container_width=True,
-        ):
-            st.session_state.pop("feedback_pendente", None)
+
+def _aplicar_substituicao_exercicio(contexto, exercicio_atual, sugestao):
+    treino_salvo = buscar_treino_gerado(contexto["atleta_id"], contexto["semana_numero"])
+    if not treino_salvo:
+        st.error("Não foi possível localizar o treino salvo desta semana.")
+        return False
+
+    treino_json = treino_salvo["json_treino"]
+    exercicios_treino = treino_json.get(contexto["nome_treino"], [])
+    indice_alvo = next(
+        (
+            indice
+            for indice, item in enumerate(exercicios_treino)
+            if item.get("nome") == exercicio_atual.get("nome")
+        ),
+        None,
+    )
+    if indice_alvo is None:
+        st.error("Não encontrei o exercício selecionado no treino atual.")
+        return False
+
+    exercicio_base = dict(exercicios_treino[indice_alvo])
+    exercicio_original_nome = _exercicio_original_nome(exercicio_base)
+    substituido = {
+        **exercicio_base,
+        **{chave: valor for chave, valor in sugestao.items() if chave not in {"score", "criterios", "detalhe_sugestao"}},
+        "series": exercicio_base.get("series"),
+        "reps": exercicio_base.get("reps"),
+        "descanso": exercicio_base.get("descanso"),
+        "rpe": exercicio_base.get("rpe"),
+        "carga": exercicio_base.get("carga"),
+        "carga_sugerida": exercicio_base.get("carga_sugerida"),
+        "modo_carga": exercicio_base.get("modo_carga"),
+        "categoria_movimento": exercicio_base.get("categoria_movimento"),
+        "orientacao_carga": exercicio_base.get("orientacao_carga"),
+        "execucao": exercicio_base.get("execucao"),
+        "intencao": exercicio_base.get("intencao"),
+        "substituido": True,
+        "exercicio_original_nome": exercicio_original_nome,
+        "substituicao_motivo": contexto.get("motivo"),
+        "substituicao_regiao": contexto.get("regiao"),
+        "substituicao_resumo": sugestao.get("detalhe_sugestao"),
+        "substituido_em": datetime.now().replace(microsecond=0).isoformat(),
+    }
+    exercicios_treino[indice_alvo] = substituido
+
+    salvar_treino_gerado(
+        contexto["atleta_id"],
+        contexto["semana_numero"],
+        contexto["fase"],
+        treino_json,
+        editado_por_treinador=int(treino_salvo.get("editado_por_treinador") or 0),
+    )
+    registrar_substituicao_exercicio(
+        contexto["atleta_id"],
+        contexto["semana_numero"],
+        contexto["fase"],
+        contexto["nome_treino"],
+        exercicio_original_nome,
+        substituido["nome"],
+        contexto.get("motivo"),
+        regiao_dor=contexto.get("regiao"),
+        detalhe_sugestao=sugestao.get("detalhe_sugestao"),
+    )
+
+    if contexto.get("motivo") == "dor":
+        registrar_preferencia_substituicao(
+            contexto["atleta_id"],
+            {
+                "nome": exercicio_original_nome,
+                "categoria": exercicio_base.get("categoria"),
+                "principal_musculo": exercicio_base.get("principal_musculo"),
+                "motivo": contexto.get("regiao") or contexto.get("motivo"),
+            },
+        )
+        resetar_treinos_futuros(contexto["atleta_id"], contexto["semana_numero"])
+
+    st.session_state["mensagem_execucao_carga"] = f"{exercicio_original_nome} foi substituído por {substituido['nome']}."
+    return True
+
+
+def _render_dialog_acoes_exercicio():
+    contexto = st.session_state.get("acao_exercicio")
+    if not contexto:
+        return
+
+    exercicio = contexto["exercicio"]
+    base_key = (
+        f"{contexto['atleta_id']}_{contexto['semana_numero']}_{contexto['nome_treino']}_{_exercicio_original_nome(exercicio)}"
+        .replace(" ", "_")
+    )
+
+    etapa = contexto.get("etapa", "menu")
+    st.caption(f"Treino {contexto['nome_treino']}")
+    st.markdown(f"**{exercicio['nome']}**")
+
+    if etapa == "menu":
+        if st.button("Registrar feedback", key=f"acao_feedback_{base_key}", use_container_width=True):
+            contexto["etapa"] = "feedback"
             st.rerun()
+        if st.button("Ajustar carga", key=f"acao_carga_{base_key}", use_container_width=True):
+            contexto["etapa"] = "carga"
+            st.rerun()
+        if st.button("Substituir exercício", key=f"acao_substituir_{base_key}", use_container_width=True):
+            contexto["etapa"] = "substituir"
+            st.rerun()
+        if st.button("Cancelar", key=f"acao_cancelar_{base_key}", use_container_width=True):
+            _fechar_acao_exercicio()
+            st.rerun()
+        return
+
+    if etapa == "feedback":
+        categoria = st.radio(
+            "Como foi este exercício?",
+            [item[0] for item in FEEDBACK_EXERCICIO_OPCOES],
+            format_func=_rotulo_feedback_exercicio,
+            key=f"feedback_categoria_{base_key}",
+        )
+        observacao = st.text_area(
+            "Observação opcional",
+            key=f"feedback_obs_{base_key}",
+            placeholder="Ex: senti desconforto no joelho nas últimas repetições.",
+            max_chars=220,
+        )
+        col_salvar, col_voltar = st.columns(2)
+        with col_salvar:
+            if st.button("Salvar feedback", key=f"feedback_salvar_{base_key}", use_container_width=True):
+                salvar_feedback_exercicio(
+                    contexto["atleta_id"],
+                    contexto["semana_numero"],
+                    contexto["fase"],
+                    contexto["nome_treino"],
+                    exercicio["nome"],
+                    categoria,
+                    observacao=observacao,
+                    exercicio_original_nome=_exercicio_original_nome(exercicio),
+                )
+                if categoria in {"dor", "desconforto", "nao_executei_bem", "muito_dificil"}:
+                    salvar_feedback_treino(
+                        contexto["atleta_id"],
+                        contexto["semana_numero"],
+                        contexto["nome_treino"],
+                        "muito ruim",
+                        feedback_contexto_ruim="feedback_exercicio",
+                        exercicio_substituir=exercicio["nome"],
+                        motivo_exercicio_ruim=categoria,
+                    )
+                st.session_state["mensagem_feedback_treino"] = f"Feedback de {exercicio['nome']} salvo."
+                _fechar_acao_exercicio()
+                st.rerun()
+        with col_voltar:
+            if st.button("Voltar", key=f"feedback_voltar_{base_key}", use_container_width=True):
+                contexto["etapa"] = "menu"
+                st.rerun()
+        return
+
+    if etapa == "carga":
+        execucoes = _obter_execucao_por_exercicio(contexto["atleta_id"], contexto["semana_numero"], contexto["nome_treino"])
+        execucao_atual = execucoes.get(exercicio["nome"], {})
+        carga = st.number_input(
+            "Carga utilizada (kg)",
+            min_value=0.0,
+            max_value=500.0,
+            step=0.5,
+            value=float(execucao_atual.get("carga_realizada") or exercicio.get("carga_sugerida") or 0.0),
+            key=f"carga_valor_{base_key}",
+        )
+        reps = st.number_input(
+            "Repetições realizadas",
+            min_value=0,
+            max_value=50,
+            value=int(execucao_atual.get("reps_realizadas") or exercicio.get("reps") or 0),
+            key=f"carga_reps_{base_key}",
+        )
+        series = st.number_input(
+            "Séries realizadas",
+            min_value=0,
+            max_value=20,
+            value=int(execucao_atual.get("series_realizadas") or exercicio.get("series") or 0),
+            key=f"carga_series_{base_key}",
+        )
+        rpe_default = execucao_atual.get("rpe_real") or (7 if exercicio.get("modo_carga") == "avaliacao" else 0)
+        rpe = st.number_input(
+            "Percepção de esforço real",
+            min_value=0.0,
+            max_value=10.0,
+            step=0.5,
+            value=float(rpe_default),
+            key=f"carga_rpe_{base_key}",
+        )
+        observacao = st.text_input(
+            "Observação opcional",
+            value=str(execucao_atual.get("observacao") or ""),
+            key=f"carga_obs_{base_key}",
+            placeholder="Ex: carga segura e controlada",
+        )
+        col_salvar, col_voltar = st.columns(2)
+        with col_salvar:
+            if st.button("Salvar carga", key=f"carga_salvar_{base_key}", use_container_width=True):
+                if _salvar_execucao_exercicio_individual(
+                    contexto,
+                    exercicio,
+                    {
+                        "carga_realizada": carga,
+                        "reps_realizadas": reps,
+                        "series_realizadas": series,
+                        "rpe_real": rpe,
+                        "observacao": observacao,
+                    },
+                ):
+                    _fechar_acao_exercicio()
+                    st.rerun()
+        with col_voltar:
+            if st.button("Voltar", key=f"carga_voltar_{base_key}", use_container_width=True):
+                contexto["etapa"] = "menu"
+                st.rerun()
+        return
+
+    if etapa == "substituir":
+        motivo = st.radio(
+            "Por que você quer substituir este exercício?",
+            list(MOTIVOS_SUBSTITUICAO.keys()),
+            format_func=_rotulo_motivo_substituicao,
+            key=f"substituir_motivo_{base_key}",
+        )
+        contexto["motivo"] = motivo
+        if motivo == "dor":
+            regiao = st.selectbox(
+                "Onde está a dor?",
+                list(REGIOES_DOR.keys()),
+                format_func=_rotulo_regiao_dor,
+                key=f"substituir_regiao_{base_key}",
+            )
+            contexto["regiao"] = regiao
+        else:
+            contexto["regiao"] = None
+
+        exercicios_db = carregar_exercicios()
+        usuario_contexto = st.session_state.get("usuario") or {"id": contexto["atleta_id"]}
+        sugestoes = _gerar_sugestoes_substituicao(
+            exercicio,
+            exercicios_db,
+            usuario_contexto,
+            contexto["fase"],
+            motivo,
+            regiao=contexto.get("regiao"),
+        )
+
+        if not sugestoes:
+            st.warning("Nenhuma alternativa compatível foi encontrada para este contexto.")
+        else:
+            opcoes = [item["nome"] for item in sugestoes]
+            for item in sugestoes:
+                equipamento = item.get("equipamento_bruto") or "Sem equipamento"
+                st.markdown(
+                    f"**{item['nome']}**  \nEquipamento: {equipamento}  \n{item['detalhe_sugestao']}"
+                )
+
+            escolhida = st.radio(
+                "Escolha uma alternativa",
+                opcoes,
+                key=f"substituir_opcao_{base_key}",
+            )
+            sugestao_escolhida = next(item for item in sugestoes if item["nome"] == escolhida)
+            if st.button("Confirmar substituição", key=f"substituir_confirmar_{base_key}", use_container_width=True):
+                if _aplicar_substituicao_exercicio(contexto, exercicio, sugestao_escolhida):
+                    _fechar_acao_exercicio()
+                    st.rerun()
+
+        col_voltar, col_cancelar = st.columns(2)
+        with col_voltar:
+            if st.button("Voltar", key=f"substituir_voltar_{base_key}", use_container_width=True):
+                contexto["etapa"] = "menu"
+                st.rerun()
+        with col_cancelar:
+            if st.button("Cancelar", key=f"substituir_cancelar_{base_key}", use_container_width=True):
+                _fechar_acao_exercicio()
+                st.rerun()
 
 
-def _registrar_dialog_feedback():
+def _registrar_dialog_acoes_exercicio():
     if not hasattr(st, "dialog"):
         return None
 
-    @st.dialog("Feedback do treino")
-    def _render_dialog_feedback():
-        feedback = st.session_state.get("feedback_pendente")
-        if not feedback:
-            return
-        _render_formulario_feedback(feedback)
+    @st.dialog("Ações do exercício")
+    def _render_dialog():
+        _render_dialog_acoes_exercicio()
 
-    return _render_dialog_feedback
+    return _render_dialog
 
 
-_RENDER_DIALOG_FEEDBACK = _registrar_dialog_feedback()
+_RENDER_DIALOG_ACOES_EXERCICIO = _registrar_dialog_acoes_exercicio()
 
 
 def _foto_perfil_bytes(usuario):
@@ -362,6 +790,17 @@ def _aplicar_estilo_dashboard():
             color: var(--tri-text);
             font-size: 0.9rem;
             line-height: 1.4;
+        }
+        .exercise-meta-badge {
+            display: inline-block;
+            margin-top: 0.45rem;
+            padding: 0.18rem 0.55rem;
+            border-radius: 999px;
+            background: var(--tri-info-bg);
+            color: var(--tri-info-text);
+            border: 1px solid var(--tri-info-border);
+            font-size: 0.74rem;
+            font-weight: 700;
         }
         .detail-header {
             display: flex;
@@ -602,47 +1041,27 @@ def _render_overview_inicial():
         st.rerun()
 
 
-def _abrir_feedback_pendente(usuario_id, semana_numero, nome_treino, exercicios):
-    st.session_state.pop("exercicio_video_aberto", None)
-    st.session_state["feedback_pendente"] = {
-        "atleta_id": usuario_id,
-        "semana_numero": semana_numero,
-        "nome_treino": nome_treino,
-        "exercicios": exercicios,
-    }
-
-
-def _render_feedback_pendente(nome_treino_esperado=None):
-    feedback = st.session_state.get("feedback_pendente")
-    if not feedback:
-        return
-    if nome_treino_esperado and feedback.get("nome_treino") != nome_treino_esperado:
-        return
-
-    if _RENDER_DIALOG_FEEDBACK:
-        _RENDER_DIALOG_FEEDBACK()
-        return
-
-    st.markdown("---")
-    with st.container():
-        st.subheader(f"Feedback do treino {feedback['nome_treino']}")
-        _render_formulario_feedback(feedback)
-
-
-def _render_card_exercicios(exercicios):
+def _render_card_exercicios(usuario, semana, nome_treino, exercicios):
     for indice, exercicio in enumerate(exercicios):
-        col_info, col_video = st.columns([5, 1])
+        col_info, col_video, col_acoes = st.columns([6, 1.2, 1.2])
         with col_info:
             orientacao_carga = exercicio.get("orientacao_carga")
-            carga_exibida = exercicio.get("carga_sugerida")
-            if carga_exibida is not None:
-                peso_texto = f"{carga_exibida} kg"
-            else:
-                peso_texto = exercicio.get("carga") or "-"
+            instrucoes = exercicio.get("observacao_curta") or exercicio.get("execucao") or ""
             complemento_carga = f'<span class="exercise-guidance">{orientacao_carga}</span>' if orientacao_carga else ""
+            bloco_instrucoes = f'<span class="exercise-guidance">{instrucoes}</span>' if instrucoes else ""
             badge_avaliacao = (
                 '<div class="badge-evaluation">Avaliacao</div>'
                 if exercicio.get("modo_carga") == "avaliacao"
+                else ""
+            )
+            badge_substituicao = (
+                '<div class="exercise-meta-badge">Exercício alternativo</div>'
+                if exercicio.get("substituido")
+                else ""
+            )
+            origem_substituicao = (
+                f'<span class="exercise-guidance">Origem: {exercicio.get("exercicio_original_nome")}</span>'
+                if exercicio.get("substituido")
                 else ""
             )
             classe_avaliacao = "evaluation" if exercicio.get("modo_carga") == "avaliacao" else ""
@@ -650,10 +1069,13 @@ def _render_card_exercicios(exercicios):
                 (
                     f'<div class="exercise-card {classe_avaliacao}">'
                     f"{badge_avaliacao}"
+                    f"{badge_substituicao}"
                     f"<strong>{exercicio['nome']}</strong>"
-                    f"<span>Series {exercicio['series']} | Reps {exercicio['reps']} | "
-                    f"Descanso {exercicio['descanso']} | Peso {peso_texto} | Percepcao de esforco alvo {exercicio.get('rpe', '-')}</span>"
+                    f"<span>Séries {exercicio['series']} | Reps {exercicio['reps']} | "
+                    f"Descanso {exercicio['descanso']} | Percepção de esforço alvo {exercicio.get('rpe', '-')}</span>"
+                    f"{bloco_instrucoes}"
                     f"{complemento_carga}"
+                    f"{origem_substituicao}"
                     f"</div>"
                 ),
                 unsafe_allow_html=True,
@@ -666,6 +1088,14 @@ def _render_card_exercicios(exercicios):
                 use_container_width=True,
             ):
                 st.session_state["exercicio_video_aberto"] = exercicio
+                st.rerun()
+        with col_acoes:
+            if st.button(
+                "⋯",
+                key=f"acoes_exercicio_{nome_treino}_{indice}_{_exercicio_original_nome(exercicio)}",
+                use_container_width=True,
+            ):
+                _abrir_acao_exercicio(usuario, semana, nome_treino, exercicio)
                 st.rerun()
 
 
@@ -740,223 +1170,9 @@ def _render_contexto_carga_semana(semana, avaliacoes):
         st.info("Ainda nao ha avaliacao de carga salva. As orientacoes seguem qualitativas ate existir referencia.")
 
 
-def _salvar_execucao_treino_atleta(usuario, semana, nome_treino, exercicios, rerun_apos_salvar=True):
-    prefixo = f"exec_{usuario['id']}_{semana['semana']}_{nome_treino}"
-    payload = []
-    avaliacoes_salvas = 0
-    erros = []
-    resumo_avaliacoes = []
-
-    for indice, exercicio in enumerate(exercicios):
-        series_realizadas = int(st.session_state.get(f"{prefixo}_series_{indice}", exercicio.get("series") or 0) or 0)
-        reps_realizadas = int(st.session_state.get(f"{prefixo}_reps_{indice}", exercicio.get("reps") or 0) or 0)
-        carga_realizada = float(st.session_state.get(f"{prefixo}_carga_{indice}", 0.0) or 0.0)
-        rpe_real = float(st.session_state.get(f"{prefixo}_rpe_{indice}", 0.0) or 0.0)
-        dor = (st.session_state.get(f"{prefixo}_dor_{indice}", "") or "").strip() or None
-        observacao = (st.session_state.get(f"{prefixo}_obs_{indice}", "") or "").strip() or None
-
-        item = {
-            **exercicio,
-            "series_realizadas": series_realizadas,
-            "reps_realizadas": reps_realizadas,
-            "carga_realizada": carga_realizada if carga_realizada > 0 else None,
-            "rpe_real": rpe_real if rpe_real > 0 else None,
-            "dor": dor,
-            "observacao": observacao,
-        }
-        payload.append(item)
-
-        if exercicio.get("modo_carga") == "avaliacao":
-            if carga_realizada <= 0:
-                erros.append(f"{exercicio['nome']}: informe uma carga utilizada maior que zero.")
-            if reps_realizadas <= 0:
-                erros.append(f"{exercicio['nome']}: informe repeticoes realizadas acima de zero.")
-            if not 5 <= rpe_real <= 10:
-                erros.append(f"{exercicio['nome']}: selecione uma percepcao de esforco entre 5 e 10.")
-            resumo_avaliacoes.append(
-                {
-                    "exercicio": exercicio["nome"],
-                    "carga": round(carga_realizada, 1),
-                    "reps": reps_realizadas,
-                    "rpe": round(rpe_real, 1),
-                }
-            )
-
-    if erros:
-        for erro in erros:
-            st.error(erro)
-        return False
-
-    for item in payload:
-        if item.get("modo_carga") == "avaliacao":
-            avaliacao = salvar_avaliacao_forca(
-                usuario["id"],
-                semana["semana"],
-                semana["fase"],
-                item.get("categoria_movimento"),
-                item.get("nome"),
-                item.get("carga_realizada"),
-                item.get("reps_realizadas"),
-                item.get("rpe_real"),
-            )
-            if avaliacao:
-                avaliacoes_salvas += 1
-
-    salvar_execucao_exercicio(usuario["id"], semana["semana"], semana["fase"], nome_treino, payload)
-    if avaliacoes_salvas:
-        resetar_treinos_futuros(usuario["id"], semana["semana"])
-        st.session_state[f"resumo_avaliacao_{usuario['id']}_{semana['semana']}"] = resumo_avaliacoes
-
-    st.session_state["mensagem_execucao_carga"] = (
-        f"Execucao de {nome_treino} salva."
-        + (f" {avaliacoes_salvas} avaliacao(oes) de carga atualizada(s)." if avaliacoes_salvas else "")
-    )
-    if rerun_apos_salvar:
-        st.rerun()
-    return True
-
-
-def _render_form_execucao_exercicios(usuario, semana, nome_treino, exercicios):
-    execucoes = {
-        item["exercicio_nome"]: item
-        for item in listar_execucao_treino(usuario["id"], semana["semana"], nome_treino)
-    }
-    prefixo = f"exec_{usuario['id']}_{semana['semana']}_{nome_treino}"
-
-    with st.form(f"form_execucao_{usuario['id']}_{semana['semana']}_{nome_treino}"):
-        st.markdown("#### Registrar carga e execucao")
-        st.caption("Preencha a execucao real para alimentar a prescricao das proximas sessoes.")
-        if semana["semana"] == 2:
-            st.markdown("##### Exercicios de avaliacao")
-            st.caption("Preencha carga, repeticoes e percepcao de esforco apenas com uma carga desafiadora e segura.")
-
-        for indice, exercicio in enumerate(exercicios):
-            execucao = execucoes.get(exercicio["nome"], {})
-            if exercicio.get("modo_carga") == "avaliacao":
-                st.markdown(
-                    f"""
-                    <div class="evaluation-entry">
-                        <div class="badge-evaluation">Avaliacao</div>
-                        <h4>{exercicio['nome']}</h4>
-                        <p>{exercicio['series']} x {exercicio['reps']} | {rotulo_categoria_movimento(exercicio.get('categoria_movimento'))}</p>
-                        <p>{exercicio.get('orientacao_carga') or ''}</p>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-                col_carga, col_reps, col_rpe = st.columns(3)
-                with col_carga:
-                    st.number_input(
-                        "Carga utilizada (kg)",
-                        min_value=0.0,
-                        max_value=500.0,
-                        step=0.5,
-                        value=float(execucao.get("carga_realizada") or 0.0),
-                        key=f"{prefixo}_carga_{indice}",
-                    )
-                with col_reps:
-                    st.number_input(
-                        "Repeticoes realizadas",
-                        min_value=0,
-                        max_value=50,
-                        value=int(execucao.get("reps_realizadas") or exercicio.get("reps") or 0),
-                        key=f"{prefixo}_reps_{indice}",
-                    )
-                with col_rpe:
-                    st.select_slider(
-                        "Percepcao de esforco",
-                        options=[5, 6, 7, 8, 9, 10],
-                        value=int(execucao.get("rpe_real") or 7),
-                        key=f"{prefixo}_rpe_{indice}",
-                    )
-                st.caption("Percepcao de esforco 6 = leve | Percepcao de esforco 7 = moderado | Percepcao de esforco 8 = desafiador | Percepcao de esforco 9 = muito dificil | Percepcao de esforco 10 = esforco maximo")
-
-                col_series, col_dor, col_obs = st.columns([1, 1.2, 1.8])
-                with col_series:
-                    st.number_input(
-                        "Series realizadas",
-                        min_value=0,
-                        max_value=20,
-                        value=int(execucao.get("series_realizadas") or exercicio.get("series") or 0),
-                        key=f"{prefixo}_series_{indice}",
-                    )
-                with col_dor:
-                    st.text_input(
-                        "Dor/desconforto",
-                        value=str(execucao.get("dor") or ""),
-                        key=f"{prefixo}_dor_{indice}",
-                        placeholder="Ex: joelho esquerdo sensivel",
-                    )
-                with col_obs:
-                    st.text_input(
-                        "Observacao",
-                        value=str(execucao.get("observacao") or ""),
-                        key=f"{prefixo}_obs_{indice}",
-                        placeholder="Ex: carga segura e controlada",
-                    )
-            else:
-                st.markdown(f"**{exercicio['nome']}**")
-                col_series, col_reps, col_carga, col_rpe = st.columns(4)
-                with col_series:
-                    st.number_input(
-                        "Series realizadas",
-                        min_value=0,
-                        max_value=20,
-                        value=int(execucao.get("series_realizadas") or exercicio.get("series") or 0),
-                        key=f"{prefixo}_series_{indice}",
-                    )
-                with col_reps:
-                    st.number_input(
-                        "Reps realizadas",
-                        min_value=0,
-                        max_value=50,
-                        value=int(execucao.get("reps_realizadas") or exercicio.get("reps") or 0),
-                        key=f"{prefixo}_reps_{indice}",
-                    )
-                with col_carga:
-                    st.number_input(
-                        "Carga usada (kg)",
-                        min_value=0.0,
-                        max_value=500.0,
-                        step=0.5,
-                        value=float(execucao.get("carga_realizada") or exercicio.get("carga_sugerida") or 0.0),
-                        key=f"{prefixo}_carga_{indice}",
-                    )
-                with col_rpe:
-                    st.number_input(
-                        "Percepcao de esforco real",
-                        min_value=0.0,
-                        max_value=10.0,
-                        step=0.5,
-                        value=float(execucao.get("rpe_real") or 0.0),
-                        key=f"{prefixo}_rpe_{indice}",
-                    )
-
-                col_dor, col_obs = st.columns(2)
-                with col_dor:
-                    st.text_input(
-                        "Dor/desconforto",
-                        value=str(execucao.get("dor") or ""),
-                        key=f"{prefixo}_dor_{indice}",
-                        placeholder="Ex: joelho esquerdo sensivel",
-                    )
-                with col_obs:
-                    st.text_input(
-                        "Observacao",
-                        value=str(execucao.get("observacao") or ""),
-                        key=f"{prefixo}_obs_{indice}",
-                        placeholder="Ex: sobrou carga / muito pesado",
-                    )
-
-        salvar = st.form_submit_button("Salvar execucao de carga", use_container_width=True)
-
-    if salvar:
-        _salvar_execucao_treino_atleta(usuario, semana, nome_treino, exercicios)
-
-
 def _anexar_links_exercicios(treino_semana, exercicios_db):
-    links_por_nome = {
-        item["nome"]: item.get("link_yt")
+    metadados_por_nome = {
+        item["nome"]: item
         for item in exercicios_db
         if item.get("nome")
     }
@@ -966,7 +1182,20 @@ def _anexar_links_exercicios(treino_semana, exercicios_db):
         treino_com_links[nome_treino] = []
         for exercicio in exercicios:
             item = dict(exercicio)
-            item["link_yt"] = item.get("link_yt") or links_por_nome.get(item.get("nome"))
+            metadados = metadados_por_nome.get(item.get("nome"), {})
+            for chave in (
+                "link_yt",
+                "equipamento",
+                "equipamento_bruto",
+                "equipamentos_necessarios",
+                "complexidade",
+                "impacto_joelho",
+                "impacto_coluna",
+                "impacto_ombro",
+                "substituicoes_dor",
+                "favorito",
+            ):
+                item[chave] = item.get(chave) or metadados.get(chave)
             treino_com_links[nome_treino].append(item)
 
     return treino_com_links
@@ -1184,22 +1413,15 @@ def _render_cabecalho_execucao_treino(semana, nome_treino, progresso_item):
 
 def _voltar_para_lista_treinos():
     st.session_state["treino_aberto"] = None
-    if st.session_state.get("feedback_pendente"):
-        st.session_state.pop("feedback_pendente", None)
+    _fechar_acao_exercicio()
     st.rerun()
 
 
 def _render_acoes_execucao_treino(usuario, semana, nome_treino, exercicios, progresso_item):
     feito_atual = bool(progresso_item.get("feito"))
-    col_salvar, col_concluir, col_feedback = st.columns(3)
-    with col_salvar:
-        if st.button(
-            "Salvar progresso",
-            key=f"salvar_execucao_rapida_{usuario['id']}_{semana['semana']}_{nome_treino}",
-            type="secondary",
-            use_container_width=True,
-        ):
-            _salvar_execucao_treino_atleta(usuario, semana, nome_treino, exercicios)
+    col_status, col_concluir, col_voltar = st.columns([2.2, 1.2, 1.2])
+    with col_status:
+        st.caption("Use o menu de ações em cada exercício para registrar feedback, carga e substituições.")
     with col_concluir:
         if st.button(
             "Concluir treino",
@@ -1207,21 +1429,11 @@ def _render_acoes_execucao_treino(usuario, semana, nome_treino, exercicios, prog
             type="primary",
             use_container_width=True,
         ):
-            salvou = _salvar_execucao_treino_atleta(
-                usuario,
-                semana,
-                nome_treino,
-                exercicios,
-                rerun_apos_salvar=False,
-            )
-            if not salvou:
-                return
             marcar_treino_feito(usuario["id"], semana["semana"], nome_treino, True)
             st.session_state[f"feito_{usuario['id']}_{semana['semana']}_{nome_treino}"] = True
-            _abrir_feedback_pendente(usuario["id"], semana["semana"], nome_treino, exercicios)
-            st.session_state["mensagem_execucao_carga"] = f"Treino {nome_treino} concluido com sucesso."
+            st.session_state["mensagem_execucao_carga"] = f"Treino {nome_treino} concluído com sucesso."
             st.rerun()
-    with col_feedback:
+    with col_voltar:
         if st.button(
             "Voltar para treinos",
             key=f"voltar_lista_treinos_{usuario['id']}_{semana['semana']}_{nome_treino}",
@@ -1231,13 +1443,7 @@ def _render_acoes_execucao_treino(usuario, semana, nome_treino, exercicios, prog
             _voltar_para_lista_treinos()
 
     if feito_atual:
-        if st.button(
-            "Dar feedback deste treino",
-            key=f"reabrir_feedback_{usuario['id']}_{semana['semana']}_{nome_treino}",
-            use_container_width=True,
-        ):
-            _abrir_feedback_pendente(usuario["id"], semana["semana"], nome_treino, exercicios)
-            st.rerun()
+        st.caption("Treino concluído. Você ainda pode ajustar qualquer exercício pelo botão de ações.")
 
 
 def _render_execucao_treino(usuario, semana, nome_treino, exercicios, progresso_item):
@@ -1255,10 +1461,13 @@ def _render_execucao_treino(usuario, semana, nome_treino, exercicios, progresso_
 
     _render_cabecalho_execucao_treino(semana, nome_treino, progresso_item)
     _render_guia_avaliacao_semana(semana, exercicios)
-    _render_card_exercicios(exercicios)
-    _render_form_execucao_exercicios(usuario, semana, nome_treino, exercicios)
+    _render_card_exercicios(usuario, semana, nome_treino, exercicios)
     _render_acoes_execucao_treino(usuario, semana, nome_treino, exercicios, progresso_item)
-    _render_feedback_pendente(nome_treino_esperado=nome_treino)
+    if _RENDER_DIALOG_ACOES_EXERCICIO and st.session_state.get("acao_exercicio", {}).get("nome_treino") == nome_treino:
+        _RENDER_DIALOG_ACOES_EXERCICIO()
+    elif st.session_state.get("acao_exercicio", {}).get("nome_treino") == nome_treino:
+        st.markdown("---")
+        _render_dialog_acoes_exercicio()
 
 
 def _render_area_treinos(usuario, semana, treino_semana, progresso):
@@ -1268,7 +1477,7 @@ def _render_area_treinos(usuario, semana, treino_semana, progresso):
         treino_aberto = None
 
     if treino_aberto:
-        if not st.session_state.get("feedback_pendente"):
+        if not st.session_state.get("acao_exercicio"):
             _render_video_exercicio()
         _render_execucao_treino(
             usuario,

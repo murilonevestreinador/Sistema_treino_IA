@@ -82,6 +82,11 @@ def carregar_exercicios(caminho="dados/Planilha exercícios e infos.xlsx"):
                 "impacto_joelho": _normalizar_texto(row.get("impacto_joelho")),
                 "impacto_coluna": _normalizar_texto(row.get("impacto_coluna")),
                 "impacto_ombro": _normalizar_texto(row.get("impacto_ombro")),
+                "substituicoes_dor": [
+                    item.strip()
+                    for item in str(row.get("pode_ser_substituido_caso_tenha_dor") or "").split(";")
+                    if item and item.strip()
+                ],
                 "prioridade_base": _valor_numerico(row.get("prioridade_base")),
                 "prioridade_especifico": _valor_numerico(row.get("prioridade_especifico")),
                 "prioridade_polimento": _valor_numerico(row.get("prioridade_polimento")),

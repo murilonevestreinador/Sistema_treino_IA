@@ -112,6 +112,44 @@ def salvar_feedback_treino(
     conn.close()
 
 
+def salvar_feedback_exercicio(
+    atleta_id,
+    semana_numero,
+    fase,
+    treino_nome,
+    exercicio_nome,
+    categoria_feedback,
+    observacao=None,
+    exercicio_original_nome=None,
+):
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT INTO feedback_exercicio (
+            atleta_id, usuario_id, semana_numero, fase, treino_nome, exercicio_nome,
+            exercicio_original_nome, categoria_feedback, observacao
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        RETURNING *
+        """,
+        (
+            atleta_id,
+            atleta_id,
+            semana_numero,
+            fase,
+            treino_nome,
+            exercicio_nome,
+            exercicio_original_nome,
+            categoria_feedback,
+            observacao,
+        ),
+    )
+    linha = dict(cursor.fetchone())
+    conn.commit()
+    conn.close()
+    return linha
+
+
 def registrar_preferencia_substituicao(atleta_id, exercicio):
     conn = conectar()
     cursor = conn.cursor()
@@ -283,6 +321,73 @@ def listar_avaliacoes_forca(atleta_id):
     linhas = [dict(linha) for linha in cursor.fetchall()]
     conn.close()
     return linhas
+
+
+def listar_feedback_exercicio(atleta_id, semana_numero=None, treino_nome=None):
+    conn = conectar()
+    cursor = conn.cursor()
+    filtros = ["COALESCE(atleta_id, usuario_id) = %s"]
+    params = [atleta_id]
+
+    if semana_numero is not None:
+        filtros.append("semana_numero = %s")
+        params.append(semana_numero)
+    if treino_nome:
+        filtros.append("treino_nome = %s")
+        params.append(treino_nome)
+
+    cursor.execute(
+        f"""
+        SELECT *
+        FROM feedback_exercicio
+        WHERE {" AND ".join(filtros)}
+        ORDER BY created_at DESC
+        """,
+        tuple(params),
+    )
+    linhas = [dict(linha) for linha in cursor.fetchall()]
+    conn.close()
+    return linhas
+
+
+def registrar_substituicao_exercicio(
+    atleta_id,
+    semana_numero,
+    fase,
+    treino_nome,
+    exercicio_original_nome,
+    exercicio_substituto_nome,
+    motivo,
+    regiao_dor=None,
+    detalhe_sugestao=None,
+):
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT INTO substituicoes_exercicio (
+            atleta_id, usuario_id, semana_numero, fase, treino_nome,
+            exercicio_original_nome, exercicio_substituto_nome, motivo, regiao_dor, detalhe_sugestao
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        RETURNING *
+        """,
+        (
+            atleta_id,
+            atleta_id,
+            semana_numero,
+            fase,
+            treino_nome,
+            exercicio_original_nome,
+            exercicio_substituto_nome,
+            motivo,
+            regiao_dor,
+            detalhe_sugestao,
+        ),
+    )
+    linha = dict(cursor.fetchone())
+    conn.commit()
+    conn.close()
+    return linha
 
 
 def buscar_avaliacao_referencia(atleta_id, categoria_movimento):
