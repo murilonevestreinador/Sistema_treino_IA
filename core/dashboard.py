@@ -775,6 +775,22 @@ def _aplicar_estilo_dashboard():
             line-height: 1.35;
             margin: 0;
         }
+        div[class*="st-key-acoes_exercicio_"] {
+            display: flex;
+            justify-content: flex-end;
+        }
+        div[class*="st-key-acoes_exercicio_"] button {
+            width: 2.4rem !important;
+            min-width: 2.4rem !important;
+            max-width: 2.4rem !important;
+            min-height: 2.4rem !important;
+            padding: 0 !important;
+            border-radius: 0.8rem !important;
+        }
+        div[class*="st-key-acoes_exercicio_"] button p {
+            font-size: 1rem;
+            line-height: 1;
+        }
         .exercise-card {
             padding-top: 0.1rem;
         }
@@ -971,6 +987,12 @@ def _aplicar_estilo_dashboard():
             .exercise-card {
                 padding-top: 0.05rem;
             }
+            div[class*="st-key-acoes_exercicio_"] button {
+                width: 2.55rem !important;
+                min-width: 2.55rem !important;
+                max-width: 2.55rem !important;
+                min-height: 2.55rem !important;
+            }
             .detail-header {
                 display: block;
             }
@@ -1121,7 +1143,7 @@ def _render_card_exercicios_integrado(usuario, semana, nome_treino, exercicios):
         classe_avaliacao = "evaluation" if exercicio.get("modo_carga") == "avaliacao" else ""
 
         with st.container(border=True):
-            col_titulo, col_acoes = st.columns([6.2, 1.1], vertical_alignment="top")
+            col_titulo, col_acoes = st.columns([6.6, 0.7], vertical_alignment="top")
             with col_titulo:
                 st.markdown(
                     f'<div class="exercise-header-title"><strong>{exercicio["nome"]}</strong></div>',
@@ -1131,7 +1153,7 @@ def _render_card_exercicios_integrado(usuario, semana, nome_treino, exercicios):
                 if st.button(
                     "\u22ef",
                     key=f"acoes_exercicio_{nome_treino}_{indice}_{_exercicio_original_nome(exercicio)}",
-                    use_container_width=True,
+                    help="Acoes do exercicio",
                 ):
                     _abrir_acao_exercicio(usuario, semana, nome_treino, exercicio)
                     st.rerun()
