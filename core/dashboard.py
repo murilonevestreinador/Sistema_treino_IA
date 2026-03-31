@@ -768,19 +768,17 @@ def _aplicar_estilo_dashboard():
             color: var(--tri-text);
             border: 1px solid var(--tri-border);
         }
-        .exercise-card {
-            border-radius: 18px;
-            border: 1px solid var(--tri-border);
-            background: color-mix(in srgb, var(--tri-bg-soft) 94%, transparent);
-            padding: 0.85rem 0.95rem;
-            margin-bottom: 0.55rem;
-        }
-        .exercise-card strong {
+        .exercise-header-title {
             display: block;
             color: var(--tri-text-strong);
-            margin-bottom: 0.18rem;
+            font-size: 1rem;
+            line-height: 1.35;
+            margin: 0;
         }
-        .exercise-card span {
+        .exercise-card {
+            padding-top: 0.1rem;
+        }
+        .exercise-card .exercise-meta-line {
             color: var(--tri-text-soft);
             font-size: 0.92rem;
             display: block;
@@ -790,10 +788,11 @@ def _aplicar_estilo_dashboard():
             color: var(--tri-text);
             font-size: 0.9rem;
             line-height: 1.4;
+            display: block;
         }
         .exercise-meta-badge {
             display: inline-block;
-            margin-top: 0.45rem;
+            margin: 0.1rem 0.35rem 0 0;
             padding: 0.18rem 0.55rem;
             border-radius: 999px;
             background: var(--tri-info-bg);
@@ -860,7 +859,7 @@ def _aplicar_estilo_dashboard():
         }
         .badge-evaluation {
             display: inline-block;
-            margin-bottom: 0.4rem;
+            margin: 0.1rem 0.35rem 0 0;
             padding: 0.18rem 0.55rem;
             border-radius: 999px;
             background: var(--tri-danger-bg);
@@ -970,8 +969,7 @@ def _aplicar_estilo_dashboard():
                 padding: 0.85rem;
             }
             .exercise-card {
-                border-radius: 12px;
-                padding: 0.75rem 0.8rem;
+                padding-top: 0.05rem;
             }
             .detail-header {
                 display: block;
@@ -1097,6 +1095,71 @@ def _render_card_exercicios(usuario, semana, nome_treino, exercicios):
             ):
                 _abrir_acao_exercicio(usuario, semana, nome_treino, exercicio)
                 st.rerun()
+
+
+def _render_card_exercicios_integrado(usuario, semana, nome_treino, exercicios):
+    for indice, exercicio in enumerate(exercicios):
+        orientacao_carga = exercicio.get("orientacao_carga")
+        instrucoes = exercicio.get("observacao_curta") or exercicio.get("execucao") or ""
+        complemento_carga = f'<span class="exercise-guidance">{orientacao_carga}</span>' if orientacao_carga else ""
+        bloco_instrucoes = f'<span class="exercise-guidance">{instrucoes}</span>' if instrucoes else ""
+        badge_avaliacao = (
+            '<div class="badge-evaluation">Avaliacao</div>'
+            if exercicio.get("modo_carga") == "avaliacao"
+            else ""
+        )
+        badge_substituicao = (
+            '<div class="exercise-meta-badge">Exerc\u00edcio alternativo</div>'
+            if exercicio.get("substituido")
+            else ""
+        )
+        origem_substituicao = (
+            f'<span class="exercise-guidance">Origem: {exercicio.get("exercicio_original_nome")}</span>'
+            if exercicio.get("substituido")
+            else ""
+        )
+        classe_avaliacao = "evaluation" if exercicio.get("modo_carga") == "avaliacao" else ""
+
+        with st.container(border=True):
+            col_titulo, col_acoes = st.columns([6.2, 1.1], vertical_alignment="top")
+            with col_titulo:
+                st.markdown(
+                    f'<div class="exercise-header-title"><strong>{exercicio["nome"]}</strong></div>',
+                    unsafe_allow_html=True,
+                )
+            with col_acoes:
+                if st.button(
+                    "\u22ef",
+                    key=f"acoes_exercicio_{nome_treino}_{indice}_{_exercicio_original_nome(exercicio)}",
+                    use_container_width=True,
+                ):
+                    _abrir_acao_exercicio(usuario, semana, nome_treino, exercicio)
+                    st.rerun()
+
+            st.markdown(
+                (
+                    f'<div class="exercise-card {classe_avaliacao}">'
+                    f"{badge_avaliacao}"
+                    f"{badge_substituicao}"
+                    f"<span class=\"exercise-meta-line\">S\u00e9ries {exercicio['series']} | Reps {exercicio['reps']} | "
+                    f"Descanso {exercicio['descanso']} | Percep\u00e7\u00e3o de esfor\u00e7o alvo {exercicio.get('rpe', '-')}</span>"
+                    f"{bloco_instrucoes}"
+                    f"{complemento_carga}"
+                    f"{origem_substituicao}"
+                    f"</div>"
+                ),
+                unsafe_allow_html=True,
+            )
+
+        if st.button(
+            "V\u00eddeo",
+            key=f"video_exercicio_{indice}_{exercicio['nome']}",
+            disabled=not exercicio.get("link_yt"),
+            use_container_width=True,
+        ):
+            st.session_state["exercicio_video_aberto"] = exercicio
+            st.rerun()
+        st.markdown("")
 
 
 def _render_resumo_avaliacao_concluida(usuario_id, semana_numero):
@@ -1461,7 +1524,7 @@ def _render_execucao_treino(usuario, semana, nome_treino, exercicios, progresso_
 
     _render_cabecalho_execucao_treino(semana, nome_treino, progresso_item)
     _render_guia_avaliacao_semana(semana, exercicios)
-    _render_card_exercicios(usuario, semana, nome_treino, exercicios)
+    _render_card_exercicios_integrado(usuario, semana, nome_treino, exercicios)
     _render_acoes_execucao_treino(usuario, semana, nome_treino, exercicios, progresso_item)
     if _RENDER_DIALOG_ACOES_EXERCICIO and st.session_state.get("acao_exercicio", {}).get("nome_treino") == nome_treino:
         _RENDER_DIALOG_ACOES_EXERCICIO()
