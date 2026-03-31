@@ -774,10 +774,26 @@ def _aplicar_estilo_dashboard():
             font-size: 1rem;
             line-height: 1.35;
             margin: 0;
+            padding-right: 0.6rem;
+        }
+        [data-testid="stHorizontalBlock"]:has(div[class*="st-key-acoes_exercicio_"]) {
+            align-items: flex-start;
+            flex-wrap: nowrap;
+            gap: 0.4rem;
+        }
+        [data-testid="stHorizontalBlock"]:has(div[class*="st-key-acoes_exercicio_"]) > [data-testid="column"]:first-child {
+            flex: 1 1 auto;
+            min-width: 0;
+        }
+        [data-testid="stHorizontalBlock"]:has(div[class*="st-key-acoes_exercicio_"]) > [data-testid="column"]:last-child {
+            flex: 0 0 auto;
+            width: auto !important;
+            min-width: 2.4rem;
         }
         div[class*="st-key-acoes_exercicio_"] {
             display: flex;
             justify-content: flex-end;
+            width: 100%;
         }
         div[class*="st-key-acoes_exercicio_"] button {
             width: 2.4rem !important;
@@ -792,7 +808,12 @@ def _aplicar_estilo_dashboard():
             line-height: 1;
         }
         .exercise-card {
-            padding-top: 0.1rem;
+            padding-top: 0.35rem;
+            background: transparent;
+            border: none;
+            border-radius: 0;
+            box-shadow: none;
+            margin: 0;
         }
         .exercise-card .exercise-meta-line {
             color: var(--tri-text-soft);
@@ -869,9 +890,9 @@ def _aplicar_estilo_dashboard():
             margin-bottom: 0.15rem;
         }
         .exercise-card.evaluation {
-            border-color: var(--tri-warning-border);
-            background: linear-gradient(135deg, var(--tri-warning-bg) 0%, var(--tri-surface) 100%);
-            box-shadow: var(--tri-shadow-soft);
+            border: none;
+            background: transparent;
+            box-shadow: none;
         }
         .badge-evaluation {
             display: inline-block;
@@ -985,13 +1006,16 @@ def _aplicar_estilo_dashboard():
                 padding: 0.85rem;
             }
             .exercise-card {
-                padding-top: 0.05rem;
+                padding-top: 0.3rem;
             }
             div[class*="st-key-acoes_exercicio_"] button {
                 width: 2.55rem !important;
                 min-width: 2.55rem !important;
                 max-width: 2.55rem !important;
                 min-height: 2.55rem !important;
+            }
+            [data-testid="stHorizontalBlock"]:has(div[class*="st-key-acoes_exercicio_"]) {
+                gap: 0.3rem;
             }
             .detail-header {
                 display: block;
