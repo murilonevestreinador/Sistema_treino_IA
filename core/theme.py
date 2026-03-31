@@ -1,14 +1,14 @@
 TRILAB_DEFAULT_THEME = {
-    "cor_primaria": "#1b6f5c",
-    "cor_secundaria": "#2f8f7a",
-    "cor_botao": "#1b6f5c",
-    "cor_cards": "#f7fbf9",
-    "cor_header": "#102f2b",
+    "cor_primaria": "#023363",
+    "cor_secundaria": "#0c4a85",
+    "cor_botao": "#e73529",
+    "cor_cards": "#f4f8fc",
+    "cor_header": "#02284e",
     "logo_url": None,
 }
 
 
-def normalizar_hex(hex_color, fallback="#1b6f5c"):
+def normalizar_hex(hex_color, fallback="#023363"):
     valor = str(hex_color or fallback or "").strip()
     if not valor:
         return fallback.lower()

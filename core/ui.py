@@ -101,7 +101,15 @@ def aplicar_tema(cor_primaria, cor_secundaria, cor_botao=None, cor_cards=None, c
 
 
 def apply_global_styles():
-    aplicar_tema_global(gerar_paleta_tema(TEMA_PADRAO["cor_primaria"], TEMA_PADRAO["cor_secundaria"]))
+    aplicar_tema_global(
+        gerar_paleta_tema(
+            TEMA_PADRAO["cor_primaria"],
+            TEMA_PADRAO["cor_secundaria"],
+            TEMA_PADRAO["cor_botao"],
+            TEMA_PADRAO["cor_cards"],
+            TEMA_PADRAO["cor_header"],
+        )
+    )
     st.markdown(
         """
         <style>
@@ -141,7 +149,7 @@ def apply_global_styles():
             text-decoration: none;
         }
         a:hover {
-            color: var(--tri-secondary);
+            color: var(--tri-primary-dark);
         }
         header[data-testid="stHeader"] {
             background: color-mix(in srgb, var(--tri-bg) 82%, white 18%);
@@ -163,13 +171,13 @@ def apply_global_styles():
             box-shadow: none !important;
         }
         [data-testid="stSidebar"] button[kind="primary"] {
-            background: var(--tri-button-active-bg) !important;
-            border: 1px solid transparent !important;
-            color: var(--tri-button-active-text) !important;
-            box-shadow: 0 12px 24px rgba(15, 23, 42, 0.22) !important;
+            background: color-mix(in srgb, var(--tri-primary) 84%, white 16%) !important;
+            border: 1px solid color-mix(in srgb, var(--tri-text-on-header) 16%, transparent) !important;
+            color: var(--tri-text-on-primary) !important;
+            box-shadow: 0 12px 24px rgba(15, 23, 42, 0.18) !important;
         }
         [data-testid="stSidebar"] button[kind="primary"] * {
-            color: var(--tri-button-active-text) !important;
+            color: var(--tri-text-on-primary) !important;
         }
         [data-testid="stSidebar"] button[kind="secondary"] {
             background: var(--tri-button-inactive-bg) !important;
@@ -185,8 +193,8 @@ def apply_global_styles():
             border-color: color-mix(in srgb, var(--tri-text-on-header) 20%, transparent) !important;
         }
         [data-testid="stSidebar"] button[kind="primary"]:hover {
-            background: var(--tri-button-active-bg-hover) !important;
-            border-color: transparent !important;
+            background: color-mix(in srgb, var(--tri-primary-dark) 88%, white 12%) !important;
+            border-color: color-mix(in srgb, var(--tri-text-on-header) 18%, transparent) !important;
         }
         [data-testid="stSidebar"] button[kind="secondary"]:hover {
             background: var(--tri-button-inactive-bg-hover) !important;
@@ -222,7 +230,7 @@ def apply_global_styles():
         .stButton > button:focus,
         .stFormSubmitButton > button:focus,
         button[kind="primary"]:focus {
-            box-shadow: 0 0 0 4px rgba(0, 59, 122, 0.14), 0 18px 32px rgba(15, 23, 42, 0.18) !important;
+            box-shadow: 0 0 0 4px color-mix(in srgb, var(--tri-focus-ring) 42%, transparent), 0 18px 32px rgba(15, 23, 42, 0.18) !important;
         }
         button[kind="secondary"] {
             background: var(--tri-button-inactive-bg) !important;
@@ -255,8 +263,8 @@ def apply_global_styles():
         div[data-testid="stTextArea"] textarea:focus,
         div[data-testid="stNumberInput"] input:focus,
         div[data-testid="stDateInput"] input:focus {
-            border-color: rgba(0, 59, 122, 0.28) !important;
-            box-shadow: 0 0 0 4px rgba(0, 59, 122, 0.10) !important;
+            border-color: var(--tri-border-strong) !important;
+            box-shadow: 0 0 0 4px color-mix(in srgb, var(--tri-focus-ring) 32%, transparent) !important;
         }
         div[data-testid="stTextInput"] label,
         div[data-testid="stTextArea"] label,
@@ -286,12 +294,12 @@ def apply_global_styles():
             color: var(--tri-button-inactive-text) !important;
         }
         .stTabs [data-baseweb="tab"][aria-selected="true"] {
-            background: var(--tri-button-active-bg) !important;
-            color: var(--tri-button-active-text) !important;
+            background: var(--tri-primary) !important;
+            color: var(--tri-text-on-primary) !important;
             box-shadow: 0 10px 20px rgba(15, 23, 42, 0.14);
         }
         .stTabs [data-baseweb="tab"][aria-selected="true"] * {
-            color: var(--tri-button-active-text) !important;
+            color: var(--tri-text-on-primary) !important;
         }
         div[data-testid="stMetric"] {
             border-radius: 20px;
@@ -419,13 +427,13 @@ def apply_global_styles():
             color: var(--tri-text) !important;
         }
         .tri-badge--primary {
-            background: var(--tri-button-active-bg);
-            border-color: var(--tri-button-active-bg);
-            color: var(--tri-button-active-text) !important;
+            background: var(--tri-primary);
+            border-color: var(--tri-primary);
+            color: var(--tri-text-on-primary) !important;
         }
         .tri-card-highlight {
-            background: linear-gradient(135deg, var(--tri-primary) 0%, var(--tri-secondary) 100%) !important;
-            color: var(--tri-text-on-primary) !important;
+            background: linear-gradient(135deg, var(--tri-header-start) 0%, var(--tri-header-end) 100%) !important;
+            color: var(--tri-text-on-header) !important;
             border-color: transparent !important;
         }
         .tri-card-highlight * {

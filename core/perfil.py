@@ -219,11 +219,11 @@ def _render_personalizacao_treinador(usuario):
         st.image(logo_atual, width=120)
 
     with st.form(f"form_tema_treinador_perfil_{usuario['id']}"):
-        cor_primaria = st.color_picker("Cor primaria", value=tema_atual.get("cor_primaria", "#1b6f5c"))
-        cor_secundaria = st.color_picker("Cor secundaria", value=tema_atual.get("cor_secundaria", "#2f8f7a"))
-        cor_botao = st.color_picker("Cor do botao", value=tema_atual.get("cor_botao", "#1b6f5c"))
-        cor_cards = st.color_picker("Cor de fundo dos cards", value=tema_atual.get("cor_cards", "#f7fbf9"))
-        cor_header = st.color_picker("Cor do header", value=tema_atual.get("cor_header", "#102f2b"))
+        cor_primaria = st.color_picker("Cor primaria", value=tema_atual.get("cor_primaria", "#023363"))
+        cor_secundaria = st.color_picker("Cor secundaria", value=tema_atual.get("cor_secundaria", "#0c4a85"))
+        cor_botao = st.color_picker("Cor do botao", value=tema_atual.get("cor_botao", "#E73529"))
+        cor_cards = st.color_picker("Cor de fundo dos cards", value=tema_atual.get("cor_cards", "#f4f8fc"))
+        cor_header = st.color_picker("Cor do header", value=tema_atual.get("cor_header", "#02284e"))
         logo_upload = st.file_uploader(
             "Logo ou foto do treinador",
             type=["png", "jpg", "jpeg", "webp"],
