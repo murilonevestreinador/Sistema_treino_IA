@@ -188,6 +188,17 @@ def get_asaas_headers():
     }
 
 
+def _normalizar_path_asaas(base_url, path):
+    base_normalizada = (base_url or "").strip().rstrip("/")
+    path_original = str(path or "").strip()
+    path_normalizada = path_original if path_original.startswith("/") else f"/{path_original.lstrip('/')}"
+    if base_normalizada.endswith("/v3") and path_normalizada.startswith("/v3/"):
+        path_normalizada = path_normalizada[3:]
+    elif base_normalizada.endswith("/v3") and path_normalizada == "/v3":
+        path_normalizada = "/"
+    return path_normalizada or "/"
+
+
 def _asaas_request(method, path, payload=None, params=None, timeout=20):
     config = validar_configuracao_asaas()
     if not config["ok"]:
@@ -206,7 +217,8 @@ def _asaas_request(method, path, payload=None, params=None, timeout=20):
         )
         return {"ok": False, "erro": "configuracao", "mensagem": config["mensagem"]}
 
-    url = f"{config['config']['base_url']}{path}"
+    path_normalizado = _normalizar_path_asaas(config["config"]["base_url"], path)
+    url = f"{config['config']['base_url']}{path_normalizado}"
     headers = get_asaas_headers()
     inicio = perf_counter()
     _log_checkout_debug(
@@ -215,6 +227,7 @@ def _asaas_request(method, path, payload=None, params=None, timeout=20):
         funcao="_asaas_request",
         method=method,
         path=path,
+        path_normalizado=path_normalizado,
         base_url=config["config"].get("base_url"),
         final_url=url,
         params=params,
@@ -241,6 +254,7 @@ def _asaas_request(method, path, payload=None, params=None, timeout=20):
                     "funcao": "_asaas_request",
                     "method": method,
                     "path": path,
+                    "path_normalizado": path_normalizado,
                     "final_url": url,
                     "params": params,
                     "payload": _sanitize_for_log(payload),
@@ -258,7 +272,7 @@ def _asaas_request(method, path, payload=None, params=None, timeout=20):
             "mensagem": str(exc),
             "url": url,
             "method": method,
-            "path": path,
+            "path": path_normalizado,
             "request_payload": payload,
             "request_params": params,
             "elapsed_ms": elapsed_ms,
@@ -273,6 +287,7 @@ def _asaas_request(method, path, payload=None, params=None, timeout=20):
                     "funcao": "_asaas_request",
                     "method": method,
                     "path": path,
+                    "path_normalizado": path_normalizado,
                     "final_url": url,
                     "params": params,
                     "payload": _sanitize_for_log(payload),
@@ -290,7 +305,7 @@ def _asaas_request(method, path, payload=None, params=None, timeout=20):
             "mensagem": str(exc),
             "url": url,
             "method": method,
-            "path": path,
+            "path": path_normalizado,
             "request_payload": payload,
             "request_params": params,
             "elapsed_ms": elapsed_ms,
@@ -309,7 +324,7 @@ def _asaas_request(method, path, payload=None, params=None, timeout=20):
         "Resposta recebida da API Asaas",
         funcao="_asaas_request",
         method=method,
-        path=path,
+        path=path_normalizado,
         final_url=final_url,
         status_code=response.status_code,
         elapsed_ms=elapsed_ms,
@@ -325,7 +340,7 @@ def _asaas_request(method, path, payload=None, params=None, timeout=20):
             "data": body,
             "url": final_url,
             "method": method,
-            "path": path,
+            "path": path_normalizado,
             "request_payload": payload,
             "request_params": params,
             "response_text": response.text,
@@ -350,7 +365,7 @@ def _asaas_request(method, path, payload=None, params=None, timeout=20):
             {
                 "funcao": "_asaas_request",
                 "method": method,
-                "path": path,
+                "path": path_normalizado,
                 "final_url": final_url,
                 "status_code": response.status_code,
                 "elapsed_ms": elapsed_ms,
@@ -381,7 +396,7 @@ def _asaas_request(method, path, payload=None, params=None, timeout=20):
 
 
 def testar_conexao_asaas():
-    resultado = _asaas_request("GET", "/v3/finance/getPaymentCheckoutConfig")
+    resultado = _asaas_request("GET", "/finance/getPaymentCheckoutConfig")
     if resultado["ok"]:
         return {
             "sucesso": True,
@@ -428,7 +443,7 @@ def _atualizar_asaas_customer_usuario(usuario_id, asaas_customer_id):
 def _buscar_customer_por_email(email):
     if not email:
         return None
-    resultado = _asaas_request("GET", "/v3/customers", params={"email": email})
+    resultado = _asaas_request("GET", "/customers", params={"email": email})
     if not resultado["ok"]:
         return None
     data = resultado.get("data") or {}
@@ -528,7 +543,7 @@ def criar_customer_asaas(usuario):
         usuario_id=usuario_integrado.get("id"),
         payload=payload,
     )
-    resultado = _asaas_request("POST", "/v3/customers", payload=payload)
+    resultado = _asaas_request("POST", "/customers", payload=payload)
     if not resultado["ok"]:
         LOGGER.error(
             "[ASAAS_ERROR] Falha ao criar customer Asaas | %s",
@@ -595,7 +610,7 @@ def criar_assinatura_asaas(customer_id, plano):
         plano_tipo=plano.get("tipo_plano") or plano.get("tipo"),
         payload=payload,
     )
-    resultado = _asaas_request("POST", "/v3/subscriptions", payload=payload)
+    resultado = _asaas_request("POST", "/subscriptions", payload=payload)
     if not resultado["ok"]:
         LOGGER.error(
             "[ASAAS_ERROR] Falha ao criar assinatura Asaas | %s",
@@ -640,7 +655,7 @@ def criar_cobranca_gateway(**dados):
 def consultar_status_gateway(gateway_reference):
     if not gateway_reference:
         return {"ok": False, "gateway": DEFAULT_GATEWAY, "status": "erro", "mensagem": "Referencia ausente."}
-    resultado = _asaas_request("GET", f"/v3/subscriptions/{gateway_reference}")
+    resultado = _asaas_request("GET", f"/subscriptions/{gateway_reference}")
     if not resultado["ok"]:
         return {
             "ok": False,
@@ -989,7 +1004,7 @@ def processar_webhook_asaas(payload, headers):
 def cancelar_assinatura_gateway(gateway_reference):
     if not gateway_reference:
         return {"ok": False, "gateway": DEFAULT_GATEWAY, "status": "erro", "mensagem": "Referencia ausente."}
-    resultado = _asaas_request("DELETE", f"/v3/subscriptions/{gateway_reference}")
+    resultado = _asaas_request("DELETE", f"/subscriptions/{gateway_reference}")
     if not resultado["ok"]:
         return {
             "ok": False,
