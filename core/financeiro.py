@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import logging
+import traceback
 from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 
@@ -17,6 +20,7 @@ TRIAL_DIAS = 14
 STATUS_COM_ACESSO = {"ativa", "trial"}
 STATUS_FINANCEIROS_QUITADOS = {"pago", "bonificado"}
 CENTAVOS = Decimal("0.01")
+LOGGER = logging.getLogger("trilab.checkout")
 
 
 def _agora():
@@ -70,6 +74,10 @@ def _to_decimal(valor):
 
 def _decimal_para_float(valor):
     return float(_to_decimal(valor))
+
+
+def _payload_log(payload):
+    return json.dumps(payload or {}, ensure_ascii=True, sort_keys=True, default=str)
 
 
 def _linha_para_dict(linha):
@@ -1069,8 +1077,44 @@ def gerar_pagamento_assinatura(usuario_id, assinatura_id, cupom_ou_regra=None, s
 
 
 def criar_assinatura_manual(usuario, plano, cupom_codigo=None):
+    LOGGER.info(
+        "[CHECKOUT_DEBUG] Iniciando criacao de assinatura manual/integrada | %s",
+        _payload_log(
+            {
+                "funcao": "criar_assinatura_manual",
+                "usuario_id": usuario.get("id"),
+                "tipo_usuario": usuario.get("tipo_usuario"),
+                "plano_codigo": plano.get("codigo"),
+                "plano_tipo": plano.get("tipo_plano"),
+                "cupom_codigo": cupom_codigo,
+            }
+        ),
+    )
     retorno_gateway = criar_assinatura_gateway(usuario, plano)
     if not retorno_gateway.get("ok"):
+        LOGGER.error(
+            "[ASAAS_ERROR] Falha retornada pelo gateway na criacao da assinatura | %s",
+            _payload_log(
+                {
+                    "funcao": "criar_assinatura_manual",
+                    "usuario_id": usuario.get("id"),
+                    "plano_codigo": plano.get("codigo"),
+                    "gateway": retorno_gateway.get("gateway"),
+                    "erro": retorno_gateway.get("erro"),
+                    "status": retorno_gateway.get("status"),
+                    "mensagem": retorno_gateway.get("mensagem"),
+                    "url": retorno_gateway.get("url"),
+                    "method": retorno_gateway.get("method"),
+                    "path": retorno_gateway.get("path"),
+                    "status_code": retorno_gateway.get("status_code"),
+                    "source": retorno_gateway.get("source"),
+                    "payload_enviado": retorno_gateway.get("request_payload"),
+                    "params_enviados": retorno_gateway.get("request_params"),
+                    "resposta_gateway": retorno_gateway.get("payload") or retorno_gateway.get("data"),
+                    "response_text": retorno_gateway.get("response_text"),
+                }
+            ),
+        )
         raise ValueError(retorno_gateway.get("mensagem") or "Falha ao criar assinatura no gateway.")
     inicio = _hoje()
     fim = _periodo_para_fim(inicio, plano.get("periodicidade"))
@@ -1121,22 +1165,124 @@ def criar_assinatura_manual(usuario, plano, cupom_codigo=None):
 
 
 def assinar_plano_manual(usuario, plano_codigo, cupom_codigo=None):
+    LOGGER.info(
+        "[CHECKOUT_DEBUG] Entrada no fluxo assinar_plano_manual | %s",
+        _payload_log(
+            {
+                "funcao": "assinar_plano_manual",
+                "usuario_id": (usuario or {}).get("id"),
+                "tipo_usuario": (usuario or {}).get("tipo_usuario"),
+                "plano_codigo": plano_codigo,
+                "cupom_codigo": cupom_codigo,
+            }
+        ),
+    )
     usuario_atual = buscar_usuario_por_id(usuario["id"]) if usuario and usuario.get("id") else usuario
     diagnostico_checkout = diagnosticar_dados_checkout(usuario_atual)
     if not diagnostico_checkout["ok"]:
+        LOGGER.warning(
+            "[CHECKOUT_DEBUG] Fluxo interrompido por diagnostico de checkout | %s",
+            _payload_log(
+                {
+                    "funcao": "assinar_plano_manual",
+                    "usuario_id": (usuario_atual or {}).get("id"),
+                    "diagnostico": diagnostico_checkout,
+                }
+            ),
+        )
         return None, diagnostico_checkout["mensagem"]
 
     plano = buscar_plano_por_codigo(plano_codigo)
     if not plano or not int(plano.get("ativo", 0)):
+        LOGGER.warning(
+            "[CHECKOUT_DEBUG] Plano indisponivel no checkout | %s",
+            _payload_log({"funcao": "assinar_plano_manual", "usuario_id": (usuario_atual or {}).get("id"), "plano_codigo": plano_codigo}),
+        )
         return None, "Plano indisponivel."
     if plano["tipo_plano"] != usuario_atual.get("tipo_usuario"):
+        LOGGER.warning(
+            "[CHECKOUT_DEBUG] Plano divergente do perfil do usuario | %s",
+            _payload_log(
+                {
+                    "funcao": "assinar_plano_manual",
+                    "usuario_id": (usuario_atual or {}).get("id"),
+                    "plano_codigo": plano_codigo,
+                    "plano_tipo": plano.get("tipo_plano"),
+                    "tipo_usuario": usuario_atual.get("tipo_usuario"),
+                }
+            ),
+        )
         return None, "Este plano nao corresponde ao perfil da sua conta."
     if plano["tipo_plano"] == "atleta" and atleta_tem_treinador_ativo(usuario_atual["id"]):
+        LOGGER.warning(
+            "[CHECKOUT_DEBUG] Checkout individual bloqueado por vinculo ativo com treinador | %s",
+            _payload_log(
+                {
+                    "funcao": "assinar_plano_manual",
+                    "usuario_id": usuario_atual.get("id"),
+                    "plano_codigo": plano_codigo,
+                }
+            ),
+        )
         return None, "Seu acesso ja esta coberto por um treinador ativo. Nao ha cobranca individual para este perfil vinculado."
     try:
+        LOGGER.info(
+            "[CHECKOUT_DEBUG] Prosseguindo para criacao de assinatura | %s",
+            _payload_log(
+                {
+                    "funcao": "assinar_plano_manual",
+                    "usuario_id": usuario_atual.get("id"),
+                    "plano_codigo": plano.get("codigo"),
+                    "plano_tipo": plano.get("tipo_plano"),
+                    "gateway_esperado": "asaas" if plano.get("tipo_plano") == "atleta" else "manual",
+                }
+            ),
+        )
         assinatura = criar_assinatura_manual(usuario_atual, plano, cupom_codigo=cupom_codigo)
     except ValueError as exc:
+        LOGGER.error(
+            "[CHECKOUT_TRACE] Erro de negocio durante o checkout | %s",
+            _payload_log(
+                {
+                    "funcao": "assinar_plano_manual",
+                    "usuario_id": usuario_atual.get("id"),
+                    "plano_codigo": plano.get("codigo"),
+                    "exception_type": type(exc).__name__,
+                    "exception": str(exc),
+                    "traceback": traceback.format_exc(),
+                }
+            ),
+        )
         return None, str(exc)
+    except Exception as exc:
+        LOGGER.error(
+            "[CHECKOUT_TRACE] Erro inesperado durante o checkout | %s",
+            _payload_log(
+                {
+                    "funcao": "assinar_plano_manual",
+                    "usuario_id": usuario_atual.get("id"),
+                    "plano_codigo": plano.get("codigo"),
+                    "exception_type": type(exc).__name__,
+                    "exception": str(exc),
+                    "traceback": traceback.format_exc(),
+                }
+            ),
+        )
+        return None, "Erro ao iniciar pagamento. Verifique os logs com o marcador CHECKOUT_DEBUG."
+    LOGGER.info(
+        "[CHECKOUT_DEBUG] Checkout concluiu a etapa local de criacao de assinatura | %s",
+        _payload_log(
+            {
+                "funcao": "assinar_plano_manual",
+                "usuario_id": usuario_atual.get("id"),
+                "plano_codigo": plano.get("codigo"),
+                "assinatura_id": assinatura.get("id"),
+                "gateway": assinatura.get("gateway"),
+                "status_assinatura": assinatura.get("status"),
+                "gateway_reference": assinatura.get("gateway_reference"),
+            }
+        ),
+    )
     if assinatura.get("gateway") == "asaas" and plano.get("tipo_plano") == "atleta":
         return assinatura, "Assinatura criada no Asaas Sandbox. O acesso sera liberado quando o webhook confirmar o pagamento."
     return assinatura, "Assinatura ativada manualmente para testes."

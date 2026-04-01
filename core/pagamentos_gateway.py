@@ -2,8 +2,10 @@ import hashlib
 import json
 import logging
 import os
+import traceback
 from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
+from time import perf_counter
 
 import requests
 
@@ -89,6 +91,71 @@ def _payload_json(payload):
     return json.dumps(payload or {}, ensure_ascii=True, sort_keys=True, default=str)
 
 
+def _mask_secret(value, prefix=6, suffix=4):
+    texto = str(value or "").strip()
+    if not texto:
+        return ""
+    if len(texto) <= prefix + suffix:
+        return "*" * len(texto)
+    return f"{texto[:prefix]}...{texto[-suffix:]}"
+
+
+def _mask_email(value):
+    texto = str(value or "").strip()
+    if "@" not in texto:
+        return texto
+    local, dominio = texto.split("@", 1)
+    if len(local) <= 2:
+        local_mask = "*" * len(local)
+    else:
+        local_mask = f"{local[:2]}***"
+    return f"{local_mask}@{dominio}"
+
+
+def _mask_phone(value):
+    texto = "".join(ch for ch in str(value or "") if ch.isdigit())
+    if not texto:
+        return value
+    if len(texto) <= 4:
+        return "*" * len(texto)
+    return f"{texto[:2]}***{texto[-2:]}"
+
+
+def _mask_document(value):
+    texto = "".join(ch for ch in str(value or "") if ch.isdigit())
+    if not texto:
+        return value
+    if len(texto) <= 4:
+        return "*" * len(texto)
+    return f"{texto[:3]}***{texto[-2:]}"
+
+
+def _sanitize_for_log(value, field_name=""):
+    campo = (field_name or "").lower()
+    if isinstance(value, dict):
+        return {chave: _sanitize_for_log(valor, chave) for chave, valor in value.items()}
+    if isinstance(value, list):
+        return [_sanitize_for_log(item, field_name) for item in value]
+    if value is None:
+        return None
+    if "token" in campo or "api_key" in campo or "access_token" in campo or "authorization" in campo:
+        return _mask_secret(value)
+    if "email" in campo:
+        return _mask_email(value)
+    if "cpf" in campo or "cnpj" in campo:
+        return _mask_document(value)
+    if "phone" in campo or "telefone" in campo or "mobile" in campo:
+        return _mask_phone(value)
+    return value
+
+
+def _log_checkout_debug(prefixo, mensagem, **contexto):
+    if contexto:
+        LOGGER.info("%s %s | %s", prefixo, mensagem, _payload_json(_sanitize_for_log(contexto)))
+    else:
+        LOGGER.info("%s %s", prefixo, mensagem)
+
+
 def _buscar_configuracao_asaas():
     return {
         "api_key": (os.getenv("ASAAS_API_KEY") or "").strip(),
@@ -124,28 +191,148 @@ def get_asaas_headers():
 def _asaas_request(method, path, payload=None, params=None, timeout=20):
     config = validar_configuracao_asaas()
     if not config["ok"]:
+        LOGGER.error(
+            "[ASAAS_ERROR] Configuracao invalida antes da chamada HTTP | %s",
+            _payload_json(
+                {
+                    "funcao": "_asaas_request",
+                    "method": method,
+                    "path": path,
+                    "base_url": config.get("config", {}).get("base_url"),
+                    "app_env": config.get("config", {}).get("app_env"),
+                    "faltando": config.get("faltando"),
+                }
+            ),
+        )
         return {"ok": False, "erro": "configuracao", "mensagem": config["mensagem"]}
 
     url = f"{config['config']['base_url']}{path}"
+    headers = get_asaas_headers()
+    inicio = perf_counter()
+    _log_checkout_debug(
+        "[ASAAS_DEBUG]",
+        "Preparando request para API Asaas",
+        funcao="_asaas_request",
+        method=method,
+        path=path,
+        base_url=config["config"].get("base_url"),
+        final_url=url,
+        params=params,
+        payload=payload,
+        headers=headers,
+        app_env=config["config"].get("app_env"),
+        asaas_api_key_masked=_mask_secret(config["config"].get("api_key")),
+    )
     try:
         response = requests.request(
             method=method,
             url=url,
-            headers=get_asaas_headers(),
+            headers=headers,
             json=payload,
             params=params,
             timeout=timeout,
         )
     except requests.RequestException as exc:
-        return {"ok": False, "erro": "conexao", "mensagem": str(exc), "url": url}
+        elapsed_ms = round((perf_counter() - inicio) * 1000, 2)
+        LOGGER.error(
+            "[ASAAS_ERROR] Excecao durante request para API Asaas | %s",
+            _payload_json(
+                {
+                    "funcao": "_asaas_request",
+                    "method": method,
+                    "path": path,
+                    "final_url": url,
+                    "params": params,
+                    "payload": _sanitize_for_log(payload),
+                    "headers": _sanitize_for_log(headers),
+                    "elapsed_ms": elapsed_ms,
+                    "exception_type": type(exc).__name__,
+                    "exception": str(exc),
+                    "traceback": traceback.format_exc(),
+                }
+            ),
+        )
+        return {
+            "ok": False,
+            "erro": "conexao",
+            "mensagem": str(exc),
+            "url": url,
+            "method": method,
+            "path": path,
+            "request_payload": payload,
+            "request_params": params,
+            "elapsed_ms": elapsed_ms,
+            "source": "asaas_api",
+        }
+    except Exception as exc:
+        elapsed_ms = round((perf_counter() - inicio) * 1000, 2)
+        LOGGER.error(
+            "[CHECKOUT_TRACE] Excecao inesperada antes de processar resposta do Asaas | %s",
+            _payload_json(
+                {
+                    "funcao": "_asaas_request",
+                    "method": method,
+                    "path": path,
+                    "final_url": url,
+                    "params": params,
+                    "payload": _sanitize_for_log(payload),
+                    "headers": _sanitize_for_log(headers),
+                    "elapsed_ms": elapsed_ms,
+                    "exception_type": type(exc).__name__,
+                    "exception": str(exc),
+                    "traceback": traceback.format_exc(),
+                }
+            ),
+        )
+        return {
+            "ok": False,
+            "erro": "interno_gateway",
+            "mensagem": str(exc),
+            "url": url,
+            "method": method,
+            "path": path,
+            "request_payload": payload,
+            "request_params": params,
+            "elapsed_ms": elapsed_ms,
+            "source": "internal_gateway",
+        }
 
     try:
         body = response.json()
     except ValueError:
         body = {"raw": response.text[:500]}
+    elapsed_ms = round((perf_counter() - inicio) * 1000, 2)
+    response_headers = dict(response.headers or {})
+    final_url = response.url or url
+    _log_checkout_debug(
+        "[ASAAS_DEBUG]",
+        "Resposta recebida da API Asaas",
+        funcao="_asaas_request",
+        method=method,
+        path=path,
+        final_url=final_url,
+        status_code=response.status_code,
+        elapsed_ms=elapsed_ms,
+        response_headers=response_headers,
+        response_text=response.text,
+        response_json=body,
+    )
 
     if response.ok:
-        return {"ok": True, "status_code": response.status_code, "data": body, "url": url}
+        return {
+            "ok": True,
+            "status_code": response.status_code,
+            "data": body,
+            "url": final_url,
+            "method": method,
+            "path": path,
+            "request_payload": payload,
+            "request_params": params,
+            "response_text": response.text,
+            "response_headers": response_headers,
+            "elapsed_ms": elapsed_ms,
+            "source": "asaas_api",
+        }
 
     mensagem = None
     if isinstance(body, dict):
@@ -157,13 +344,39 @@ def _asaas_request(method, path, payload=None, params=None, timeout=20):
                 for item in errors
                 if item
             )
+    LOGGER.error(
+        "[ASAAS_ERROR] Falha HTTP retornada pela API Asaas | %s",
+        _payload_json(
+            {
+                "funcao": "_asaas_request",
+                "method": method,
+                "path": path,
+                "final_url": final_url,
+                "status_code": response.status_code,
+                "elapsed_ms": elapsed_ms,
+                "payload": _sanitize_for_log(payload),
+                "params": _sanitize_for_log(params),
+                "response_headers": _sanitize_for_log(response_headers),
+                "response_text": response.text,
+                "response_json": _sanitize_for_log(body),
+            }
+        ),
+    )
     return {
         "ok": False,
         "erro": "api",
         "status_code": response.status_code,
         "mensagem": mensagem or f"Erro HTTP {response.status_code}",
         "data": body,
-        "url": url,
+        "url": final_url,
+        "method": method,
+        "path": path,
+        "request_payload": payload,
+        "request_params": params,
+        "response_text": response.text,
+        "response_headers": response_headers,
+        "elapsed_ms": elapsed_ms,
+        "source": "asaas_api",
     }
 
 
@@ -230,8 +443,28 @@ def criar_customer_asaas(usuario):
     usuario_db = _buscar_usuario_existente(usuario_id) if usuario_id else None
     usuario_integrado = dict(usuario_db or {})
     usuario_integrado.update(usuario or {})
+    _log_checkout_debug(
+        "[CHECKOUT_DEBUG]",
+        "Entrando na etapa de customer Asaas",
+        funcao="criar_customer_asaas",
+        usuario_id=usuario_integrado.get("id"),
+        tipo_usuario=usuario_integrado.get("tipo_usuario"),
+        email=usuario_integrado.get("email"),
+        asaas_customer_id=usuario_integrado.get("asaas_customer_id"),
+    )
     diagnostico = diagnosticar_dados_checkout(usuario_integrado)
     if not diagnostico["ok"]:
+        LOGGER.warning(
+            "[CHECKOUT_DEBUG] Checkout bloqueado por dados incompletos antes do customer Asaas | %s",
+            _payload_json(
+                {
+                    "funcao": "criar_customer_asaas",
+                    "usuario_id": usuario_integrado.get("id"),
+                    "tipo_usuario": usuario_integrado.get("tipo_usuario"),
+                    "diagnostico": _sanitize_for_log(diagnostico),
+                }
+            ),
+        )
         return {
             "ok": False,
             "gateway": DEFAULT_GATEWAY,
@@ -242,6 +475,13 @@ def criar_customer_asaas(usuario):
 
     asaas_customer_id = (usuario_integrado.get("asaas_customer_id") or "").strip()
     if asaas_customer_id:
+        _log_checkout_debug(
+            "[ASAAS_DEBUG]",
+            "Usuario ja possui customer Asaas salvo",
+            funcao="criar_customer_asaas",
+            usuario_id=usuario_integrado.get("id"),
+            asaas_customer_id=asaas_customer_id,
+        )
         return {
             "ok": True,
             "gateway": DEFAULT_GATEWAY,
@@ -255,6 +495,14 @@ def criar_customer_asaas(usuario):
     if customer_existente and customer_existente.get("id"):
         if usuario_id:
             _atualizar_asaas_customer_usuario(usuario_id, customer_existente["id"])
+        _log_checkout_debug(
+            "[ASAAS_DEBUG]",
+            "Customer Asaas existente reutilizado por email",
+            funcao="criar_customer_asaas",
+            usuario_id=usuario_integrado.get("id"),
+            asaas_customer_id=customer_existente.get("id"),
+            customer=customer_existente,
+        )
         return {
             "ok": True,
             "gateway": DEFAULT_GATEWAY,
@@ -273,8 +521,25 @@ def criar_customer_asaas(usuario):
     if usuario_integrado.get("telefone") or usuario_integrado.get("mobilePhone"):
         payload["mobilePhone"] = str(usuario_integrado.get("telefone") or usuario_integrado.get("mobilePhone")).strip()
 
+    _log_checkout_debug(
+        "[ASAAS_DEBUG]",
+        "Criando novo customer Asaas",
+        funcao="criar_customer_asaas",
+        usuario_id=usuario_integrado.get("id"),
+        payload=payload,
+    )
     resultado = _asaas_request("POST", "/v3/customers", payload=payload)
     if not resultado["ok"]:
+        LOGGER.error(
+            "[ASAAS_ERROR] Falha ao criar customer Asaas | %s",
+            _payload_json(
+                {
+                    "funcao": "criar_customer_asaas",
+                    "usuario_id": usuario_integrado.get("id"),
+                    "resultado": _sanitize_for_log(resultado),
+                }
+            ),
+        )
         return {
             "ok": False,
             "gateway": DEFAULT_GATEWAY,
@@ -321,8 +586,28 @@ def criar_assinatura_asaas(customer_id, plano):
         "cycle": _ciclo_asaas(plano),
         "description": (plano.get("description") or plano.get("descricao") or plano.get("nome") or "Assinatura TriLab TREINAMENTO").strip(),
     }
+    _log_checkout_debug(
+        "[ASAAS_DEBUG]",
+        "Criando assinatura Asaas",
+        funcao="criar_assinatura_asaas",
+        customer_id=customer_id,
+        plano_codigo=plano.get("codigo"),
+        plano_tipo=plano.get("tipo_plano") or plano.get("tipo"),
+        payload=payload,
+    )
     resultado = _asaas_request("POST", "/v3/subscriptions", payload=payload)
     if not resultado["ok"]:
+        LOGGER.error(
+            "[ASAAS_ERROR] Falha ao criar assinatura Asaas | %s",
+            _payload_json(
+                {
+                    "funcao": "criar_assinatura_asaas",
+                    "customer_id": customer_id,
+                    "plano_codigo": plano.get("codigo"),
+                    "resultado": _sanitize_for_log(resultado),
+                }
+            ),
+        )
         return {
             "ok": False,
             "gateway": DEFAULT_GATEWAY,
@@ -779,6 +1064,13 @@ def resumo_operacional_asaas():
 
 
 def criar_customer_gateway(usuario):
+    _log_checkout_debug(
+        "[CHECKOUT_DEBUG]",
+        "Entrando no gateway de customer",
+        funcao="criar_customer_gateway",
+        usuario_id=usuario.get("id"),
+        tipo_usuario=usuario.get("tipo_usuario"),
+    )
     if (usuario.get("tipo_usuario") or "").strip().lower() != "atleta":
         return {
             "ok": True,
@@ -791,6 +1083,15 @@ def criar_customer_gateway(usuario):
 
 
 def criar_assinatura_gateway(usuario, plano):
+    _log_checkout_debug(
+        "[CHECKOUT_DEBUG]",
+        "Entrando no gateway de assinatura",
+        funcao="criar_assinatura_gateway",
+        usuario_id=usuario.get("id"),
+        tipo_usuario=usuario.get("tipo_usuario"),
+        plano_codigo=plano.get("codigo"),
+        plano_tipo=plano.get("tipo_plano") or plano.get("tipo"),
+    )
     if (usuario.get("tipo_usuario") or "").strip().lower() != "atleta" or (plano.get("tipo_plano") or "").strip().lower() != "atleta":
         return {
             "ok": True,
@@ -801,6 +1102,17 @@ def criar_assinatura_gateway(usuario, plano):
         }
     customer = criar_customer_asaas(usuario)
     if not customer.get("ok"):
+        LOGGER.error(
+            "[ASAAS_ERROR] Fluxo interrompido antes da assinatura por falha no customer | %s",
+            _payload_json(
+                {
+                    "funcao": "criar_assinatura_gateway",
+                    "usuario_id": usuario.get("id"),
+                    "plano_codigo": plano.get("codigo"),
+                    "customer_resultado": _sanitize_for_log(customer),
+                }
+            ),
+        )
         return customer
     dados_plano = dict(plano or {})
     dados_plano.setdefault("description", f"Assinatura {dados_plano.get('nome') or 'TriLab TREINAMENTO'}")

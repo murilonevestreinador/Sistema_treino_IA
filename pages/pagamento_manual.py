@@ -1,3 +1,5 @@
+import logging
+
 import streamlit as st
 
 from core.financeiro import (
@@ -12,6 +14,9 @@ from core.financeiro import (
 from core.lancamento import pode_exibir_planos_treinador_publicamente
 from core.ui import inject_app_icons
 from core.usuarios import diagnosticar_dados_checkout, formatar_cpf, formatar_telefone
+
+
+LOGGER = logging.getLogger("trilab.checkout.ui")
 
 
 def _ir_para(nome_pagina):
@@ -122,13 +127,34 @@ else:
         col_confirmar, col_voltar = st.columns(2)
         with col_confirmar:
             if st.button("Continuar para pagamento", type="primary", use_container_width=True):
+                LOGGER.info(
+                    "[CHECKOUT_DEBUG] Clique no botao Continuar para pagamento | usuario_id=%s plano_codigo=%s tipo_usuario=%s cupom=%s pagina=%s",
+                    usuario.get("id"),
+                    plano.get("codigo"),
+                    usuario.get("tipo_usuario"),
+                    cupom_codigo or "",
+                    "pages/pagamento_manual.py",
+                )
                 assinatura, mensagem = assinar_plano_manual(usuario, plano["codigo"], cupom_codigo=cupom_codigo or None)
                 if assinatura:
+                    LOGGER.info(
+                        "[CHECKOUT_DEBUG] Checkout retornou sucesso para a UI | usuario_id=%s assinatura_id=%s gateway=%s status=%s",
+                        usuario.get("id"),
+                        assinatura.get("id"),
+                        assinatura.get("gateway"),
+                        assinatura.get("status"),
+                    )
                     st.success(mensagem)
                     st.session_state.pop("plano_checkout", None)
                     _ir_para("pages/minha_assinatura.py")
                 else:
-                    st.error(mensagem)
+                    LOGGER.error(
+                        "[CHECKOUT_DEBUG] Checkout retornou falha para a UI | usuario_id=%s plano_codigo=%s mensagem=%s",
+                        usuario.get("id"),
+                        plano.get("codigo"),
+                        mensagem,
+                    )
+                    st.error(f"{mensagem} Verifique os logs com os marcadores CHECKOUT_DEBUG/ASAAS_ERROR.")
         with col_voltar:
             if st.button("Voltar para planos", use_container_width=True):
                 _ir_para("pages/planos.py")
