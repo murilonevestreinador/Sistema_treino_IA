@@ -580,7 +580,7 @@ def render_financeiro_admin(admin, registrar_log_admin):
         "Cobrancas dos Alunos",
         "Fechamentos",
         "Relatorios",
-        "Asaas Sandbox",
+        "Asaas",
     ])
     with abas[0]:
         _render_visao_geral()

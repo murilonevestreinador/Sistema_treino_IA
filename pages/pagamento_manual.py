@@ -114,7 +114,7 @@ else:
             st.metric("Valor final", f"R$ {desconto_info['valor_final']:.2f}")
 
         if plano["tipo_plano"] == "atleta":
-            st.info("Ao continuar, vamos criar o customer e a assinatura no Asaas Sandbox. O acesso sera liberado quando o webhook confirmar o pagamento.")
+            st.info("Ao continuar, vamos criar o customer e a assinatura no Asaas. O acesso sera liberado quando o webhook confirmar o pagamento.")
         else:
             st.info("Ao continuar, a assinatura sera ativada no fluxo atual e seguira a politica do plano do treinador.")
 

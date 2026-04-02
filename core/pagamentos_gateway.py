@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import traceback
+import unicodedata
 from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from time import perf_counter
@@ -154,6 +155,101 @@ def _log_checkout_debug(prefixo, mensagem, **contexto):
         LOGGER.info("%s %s | %s", prefixo, mensagem, _payload_json(_sanitize_for_log(contexto)))
     else:
         LOGGER.info("%s %s", prefixo, mensagem)
+
+
+def _normalizar_texto_asaas(valor):
+    texto = str(valor or "").strip().lower()
+    if not texto:
+        return ""
+    texto = unicodedata.normalize("NFKD", texto)
+    return "".join(ch for ch in texto if not unicodedata.combining(ch))
+
+
+def _coletar_erros_asaas(resultado):
+    itens = []
+    if not isinstance(resultado, dict):
+        return itens
+
+    if resultado.get("mensagem"):
+        itens.append(
+            {
+                "field": "",
+                "code": "",
+                "description": resultado.get("mensagem"),
+            }
+        )
+
+    data = resultado.get("data")
+    if not isinstance(data, dict):
+        return itens
+
+    if data.get("message"):
+        itens.append(
+            {
+                "field": "",
+                "code": "",
+                "description": data.get("message"),
+            }
+        )
+
+    errors = data.get("errors")
+    if not isinstance(errors, list):
+        return itens
+
+    for item in errors:
+        if isinstance(item, dict):
+            itens.append(
+                {
+                    "field": item.get("field") or item.get("property") or item.get("param") or item.get("parameterName") or "",
+                    "code": item.get("code") or "",
+                    "description": item.get("description") or item.get("message") or "",
+                }
+            )
+        elif item:
+            itens.append({"field": "", "code": "", "description": str(item)})
+    return itens
+
+
+def _erro_customer_invalido_asaas(resultado):
+    if not isinstance(resultado, dict) or resultado.get("ok"):
+        return False
+
+    termos_customer = ("customer", "cliente")
+    termos_invalidade = (
+        "invalido",
+        "invalid",
+        "inexistente",
+        "nao existe",
+        "nao encontrado",
+        "not found",
+        "does not exist",
+        "nao informado",
+        "must be informed",
+        "must be provided",
+        "obrigatorio",
+        "required",
+        "missing",
+    )
+
+    for item in _coletar_erros_asaas(resultado):
+        campo = _normalizar_texto_asaas(item.get("field"))
+        codigo = _normalizar_texto_asaas(item.get("code"))
+        descricao = _normalizar_texto_asaas(item.get("description"))
+        composto = " ".join(parte for parte in (campo, codigo, descricao) if parte).strip()
+        if not composto:
+            continue
+
+        customer_relacionado = any(termo in campo for termo in termos_customer) or any(termo in composto for termo in termos_customer)
+        if not customer_relacionado:
+            continue
+
+        if any(termo in composto for termo in termos_invalidade):
+            return True
+
+        if any(termo in campo for termo in termos_customer) and not descricao and not codigo:
+            return True
+
+    return False
 
 
 def _buscar_configuracao_asaas():
@@ -401,7 +497,7 @@ def testar_conexao_asaas():
         return {
             "sucesso": True,
             "erro": None,
-            "mensagem": "Conexao com Asaas Sandbox validada com sucesso.",
+            "mensagem": "Conexao com a API do Asaas validada com sucesso.",
             "ambiente": validar_configuracao_asaas()["config"].get("app_env"),
             "url": resultado.get("url"),
             "data": resultado.get("data"),
@@ -453,7 +549,7 @@ def _buscar_customer_por_email(email):
     return itens[0] if itens else None
 
 
-def criar_customer_asaas(usuario):
+def criar_customer_asaas(usuario, ignorar_customer_salvo=False):
     usuario_id = usuario.get("id")
     usuario_db = _buscar_usuario_existente(usuario_id) if usuario_id else None
     usuario_integrado = dict(usuario_db or {})
@@ -466,6 +562,7 @@ def criar_customer_asaas(usuario):
         tipo_usuario=usuario_integrado.get("tipo_usuario"),
         email=usuario_integrado.get("email"),
         asaas_customer_id=usuario_integrado.get("asaas_customer_id"),
+        ignorar_customer_salvo=ignorar_customer_salvo,
     )
     diagnostico = diagnosticar_dados_checkout(usuario_integrado)
     if not diagnostico["ok"]:
@@ -489,7 +586,7 @@ def criar_customer_asaas(usuario):
         }
 
     asaas_customer_id = (usuario_integrado.get("asaas_customer_id") or "").strip()
-    if asaas_customer_id:
+    if asaas_customer_id and not ignorar_customer_salvo:
         _log_checkout_debug(
             "[ASAAS_DEBUG]",
             "Usuario ja possui customer Asaas salvo",
@@ -505,6 +602,14 @@ def criar_customer_asaas(usuario):
             "gateway_reference": asaas_customer_id,
             "payload": None,
         }
+    if asaas_customer_id and ignorar_customer_salvo:
+        _log_checkout_debug(
+            "[ASAAS_RECOVERY]",
+            "Ignorando customer salvo para refazer resolucao no ambiente atual",
+            funcao="criar_customer_asaas",
+            usuario_id=usuario_integrado.get("id"),
+            asaas_customer_id=asaas_customer_id,
+        )
 
     customer_existente = _buscar_customer_por_email((usuario_integrado.get("email") or "").strip().lower())
     if customer_existente and customer_existente.get("id"):
@@ -574,6 +679,67 @@ def criar_customer_asaas(usuario):
         "gateway_reference": customer.get("id"),
         "payload": customer,
     }
+
+
+def _recuperar_customer_asaas_invalido(usuario, customer_id_antigo, assinatura_resultado):
+    _log_checkout_debug(
+        "[ASAAS_RECOVERY]",
+        "Customer salvo invalido, recriando customer",
+        funcao="_recuperar_customer_asaas_invalido",
+        usuario_id=usuario.get("id"),
+        customer_id_antigo=customer_id_antigo,
+        erro_assinatura=assinatura_resultado,
+    )
+    customer_recuperado = criar_customer_asaas(usuario, ignorar_customer_salvo=True)
+    if not customer_recuperado.get("ok"):
+        LOGGER.error(
+            "[ASAAS_ERROR] [ASAAS_RECOVERY] Falha ao recuperar customer invalido no Asaas | %s",
+            _payload_json(
+                {
+                    "funcao": "_recuperar_customer_asaas_invalido",
+                    "usuario_id": usuario.get("id"),
+                    "customer_id_antigo": customer_id_antigo,
+                    "resultado_customer": _sanitize_for_log(customer_recuperado),
+                }
+            ),
+        )
+        mensagem = customer_recuperado.get("mensagem") or "Falha ao recriar customer no Asaas."
+        return {
+            **customer_recuperado,
+            "mensagem": f"Falha ao recuperar o customer do Asaas para o ambiente atual: {mensagem}",
+            "status": "erro_recuperacao_customer",
+        }
+
+    novo_customer_id = customer_recuperado.get("asaas_customer_id")
+    if customer_recuperado.get("status") == "criado":
+        _log_checkout_debug(
+            "[ASAAS_RECOVERY]",
+            "Novo customer criado com sucesso",
+            funcao="_recuperar_customer_asaas_invalido",
+            usuario_id=usuario.get("id"),
+            customer_id_antigo=customer_id_antigo,
+            novo_customer_id=novo_customer_id,
+        )
+    else:
+        _log_checkout_debug(
+            "[ASAAS_RECOVERY]",
+            "Customer do ambiente atual recuperado com sucesso",
+            funcao="_recuperar_customer_asaas_invalido",
+            usuario_id=usuario.get("id"),
+            customer_id_antigo=customer_id_antigo,
+            novo_customer_id=novo_customer_id,
+            status_customer=customer_recuperado.get("status"),
+        )
+    if usuario.get("id") and novo_customer_id:
+        _log_checkout_debug(
+            "[ASAAS_RECOVERY]",
+            "Customer atualizado no banco",
+            funcao="_recuperar_customer_asaas_invalido",
+            usuario_id=usuario.get("id"),
+            customer_id_antigo=customer_id_antigo,
+            novo_customer_id=novo_customer_id,
+        )
+    return customer_recuperado
 
 
 def _proximo_vencimento(plano):
@@ -1131,7 +1297,47 @@ def criar_assinatura_gateway(usuario, plano):
         return customer
     dados_plano = dict(plano or {})
     dados_plano.setdefault("description", f"Assinatura {dados_plano.get('nome') or 'TriLab TREINAMENTO'}")
-    return criar_assinatura_asaas(customer["asaas_customer_id"], dados_plano)
+    assinatura = criar_assinatura_asaas(customer["asaas_customer_id"], dados_plano)
+    if assinatura.get("ok") or not _erro_customer_invalido_asaas(assinatura):
+        return assinatura
+
+    _log_checkout_debug(
+        "[ASAAS_RECOVERY]",
+        "Erro de customer invalido detectado na criacao da assinatura",
+        funcao="criar_assinatura_gateway",
+        usuario_id=usuario.get("id"),
+        plano_codigo=plano.get("codigo"),
+        customer_id=customer.get("asaas_customer_id"),
+        assinatura_resultado=assinatura,
+    )
+    customer_recuperado = _recuperar_customer_asaas_invalido(usuario, customer.get("asaas_customer_id"), assinatura)
+    if not customer_recuperado.get("ok"):
+        return customer_recuperado
+
+    _log_checkout_debug(
+        "[ASAAS_RECOVERY]",
+        "Retentando criacao da assinatura",
+        funcao="criar_assinatura_gateway",
+        usuario_id=usuario.get("id"),
+        plano_codigo=plano.get("codigo"),
+        customer_id=customer_recuperado.get("asaas_customer_id"),
+    )
+    segunda_tentativa = criar_assinatura_asaas(customer_recuperado["asaas_customer_id"], dados_plano)
+    if not segunda_tentativa.get("ok"):
+        LOGGER.error(
+            "[ASAAS_ERROR] [ASAAS_RECOVERY] Segunda tentativa de criacao da assinatura falhou | %s",
+            _payload_json(
+                {
+                    "funcao": "criar_assinatura_gateway",
+                    "usuario_id": usuario.get("id"),
+                    "plano_codigo": plano.get("codigo"),
+                    "customer_id_antigo": customer.get("asaas_customer_id"),
+                    "customer_id_novo": customer_recuperado.get("asaas_customer_id"),
+                    "resultado_segunda_tentativa": _sanitize_for_log(segunda_tentativa),
+                }
+            ),
+        )
+    return segunda_tentativa
 
 
 def processar_webhook_gateway(payload):

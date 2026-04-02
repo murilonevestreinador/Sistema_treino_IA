@@ -1284,7 +1284,7 @@ def assinar_plano_manual(usuario, plano_codigo, cupom_codigo=None):
         ),
     )
     if assinatura.get("gateway") == "asaas" and plano.get("tipo_plano") == "atleta":
-        return assinatura, "Assinatura criada no Asaas Sandbox. O acesso sera liberado quando o webhook confirmar o pagamento."
+        return assinatura, "Assinatura criada no Asaas. O acesso sera liberado quando o webhook confirmar o pagamento."
     return assinatura, "Assinatura ativada manualmente para testes."
 
 
