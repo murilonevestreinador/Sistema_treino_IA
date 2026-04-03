@@ -1161,7 +1161,13 @@ def criar_assinatura_manual(usuario, plano, cupom_codigo=None):
             metodo_pagamento=retorno_gateway.get("gateway", "manual"),
             aplicado_por="usuario" if cupom else "manual",
         )
-    return buscar_assinatura_por_id(assinatura_id)
+    assinatura = buscar_assinatura_por_id(assinatura_id) or {}
+    assinatura["invoice_url"] = retorno_gateway.get("invoice_url")
+    assinatura["redirect_url"] = retorno_gateway.get("redirect_url") or retorno_gateway.get("invoice_url")
+    assinatura["asaas_payment_id"] = retorno_gateway.get("asaas_payment_id")
+    assinatura["payment_payload"] = retorno_gateway.get("payment_payload")
+    assinatura["mensagem_gateway"] = retorno_gateway.get("mensagem")
+    return assinatura
 
 
 def assinar_plano_manual(usuario, plano_codigo, cupom_codigo=None):
@@ -1284,7 +1290,14 @@ def assinar_plano_manual(usuario, plano_codigo, cupom_codigo=None):
         ),
     )
     if assinatura.get("gateway") == "asaas" and plano.get("tipo_plano") == "atleta":
-        return assinatura, "Assinatura criada no Asaas. O acesso sera liberado quando o webhook confirmar o pagamento."
+        if assinatura.get("invoice_url"):
+            return assinatura, "Redirecionando voce para a cobranca do Asaas."
+        return (
+            assinatura,
+            assinatura.get("mensagem_gateway")
+            or "Assinatura criada no Asaas, mas nao foi possivel abrir a cobranca automaticamente. "
+            "Acesse Minha Assinatura para acompanhar o status enquanto o webhook conclui a liberacao apos o pagamento.",
+        )
     return assinatura, "Assinatura ativada manualmente para testes."
 
 

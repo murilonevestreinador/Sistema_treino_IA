@@ -6,7 +6,7 @@ import traceback
 import unicodedata
 from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
-from time import perf_counter
+from time import perf_counter, sleep
 
 import requests
 
@@ -758,6 +758,179 @@ def _ciclo_asaas(plano):
     return mapa.get(periodicidade, "MONTHLY")
 
 
+def _listar_cobrancas_assinatura_asaas(asaas_subscription_id):
+    return _asaas_request("GET", f"/subscriptions/{asaas_subscription_id}/payments")
+
+
+def _extrair_lista_asaas(resultado):
+    data = (resultado or {}).get("data")
+    if isinstance(data, dict):
+        itens = data.get("data") or []
+        return itens if isinstance(itens, list) else []
+    return data if isinstance(data, list) else []
+
+
+def _ordenar_data_asaas(valor, padrao):
+    texto = str(valor or "").strip()
+    return texto or padrao
+
+
+def _prioridade_status_cobranca_asaas(status):
+    status_normalizado = str(status or "").strip().upper()
+    prioridades = {
+        "PENDING": 0,
+        "OVERDUE": 1,
+        "AWAITING_RISK_ANALYSIS": 2,
+    }
+    return prioridades.get(status_normalizado, 9)
+
+
+def _selecionar_cobranca_inicial_asaas(cobrancas):
+    itens = [dict(item) for item in (cobrancas or []) if isinstance(item, dict)]
+    if not itens:
+        return None
+    return sorted(
+        itens,
+        key=lambda item: (
+            _prioridade_status_cobranca_asaas(item.get("status")),
+            _ordenar_data_asaas(item.get("dueDate"), "9999-12-31"),
+            _ordenar_data_asaas(item.get("dateCreated"), "9999-12-31T23:59:59"),
+            str(item.get("id") or ""),
+        ),
+    )[0]
+
+
+def _buscar_invoice_url_assinatura_asaas(asaas_subscription_id, tentativas=3, intervalo_segundos=0.6):
+    if not asaas_subscription_id:
+        LOGGER.error(
+            "[ASAAS_ERROR] Assinatura criada sem identificador valido para buscar cobrancas | %s",
+            _payload_json(
+                {
+                    "funcao": "_buscar_invoice_url_assinatura_asaas",
+                    "asaas_subscription_id": asaas_subscription_id,
+                }
+            ),
+        )
+        return {
+            "ok": False,
+            "erro": "assinatura_sem_id",
+            "mensagem": "A assinatura foi criada sem um identificador valido para buscar a cobranca inicial.",
+            "resultado": None,
+            "cobranca": None,
+            "invoice_url": None,
+        }
+    ultimo_resultado = None
+    ultima_cobranca = None
+    for tentativa in range(1, tentativas + 1):
+        _log_checkout_debug(
+            "[ASAAS_DEBUG]",
+            "Buscando cobrancas da assinatura",
+            funcao="_buscar_invoice_url_assinatura_asaas",
+            asaas_subscription_id=asaas_subscription_id,
+            tentativa=tentativa,
+            tentativas=tentativas,
+        )
+        resultado = _listar_cobrancas_assinatura_asaas(asaas_subscription_id)
+        ultimo_resultado = resultado
+        if not resultado.get("ok"):
+            if tentativa < tentativas:
+                sleep(intervalo_segundos)
+                continue
+            LOGGER.error(
+                "[ASAAS_ERROR] Assinatura criada, mas a consulta das cobrancas falhou | %s",
+                _payload_json(
+                    {
+                        "funcao": "_buscar_invoice_url_assinatura_asaas",
+                        "asaas_subscription_id": asaas_subscription_id,
+                        "tentativa": tentativa,
+                        "resultado": _sanitize_for_log(resultado),
+                    }
+                ),
+            )
+            return {
+                "ok": False,
+                "erro": "consulta_cobrancas_falhou",
+                "mensagem": resultado.get("mensagem") or "Nao foi possivel consultar as cobrancas da assinatura no Asaas.",
+                "resultado": resultado,
+                "cobranca": None,
+                "invoice_url": None,
+            }
+
+        cobrancas = _extrair_lista_asaas(resultado)
+        cobranca = _selecionar_cobranca_inicial_asaas(cobrancas)
+        ultima_cobranca = cobranca
+        if cobranca:
+            _log_checkout_debug(
+                "[ASAAS_DEBUG]",
+                "Cobranca selecionada para redirecionamento",
+                funcao="_buscar_invoice_url_assinatura_asaas",
+                asaas_subscription_id=asaas_subscription_id,
+                tentativa=tentativa,
+                cobranca=cobranca,
+            )
+            invoice_url = (cobranca.get("invoiceUrl") or "").strip()
+            if invoice_url:
+                _log_checkout_debug(
+                    "[ASAAS_DEBUG]",
+                    "invoiceUrl encontrado",
+                    funcao="_buscar_invoice_url_assinatura_asaas",
+                    asaas_subscription_id=asaas_subscription_id,
+                    tentativa=tentativa,
+                    asaas_payment_id=cobranca.get("id"),
+                    invoice_url=invoice_url,
+                )
+                return {
+                    "ok": True,
+                    "erro": None,
+                    "mensagem": None,
+                    "resultado": resultado,
+                    "cobranca": cobranca,
+                    "invoice_url": invoice_url,
+                }
+        if tentativa < tentativas:
+            sleep(intervalo_segundos)
+
+    if ultima_cobranca:
+        LOGGER.error(
+            "[ASAAS_ERROR] Assinatura criada, mas invoiceUrl ausente | %s",
+            _payload_json(
+                {
+                    "funcao": "_buscar_invoice_url_assinatura_asaas",
+                    "asaas_subscription_id": asaas_subscription_id,
+                    "cobranca": _sanitize_for_log(ultima_cobranca),
+                    "resultado": _sanitize_for_log(ultimo_resultado),
+                }
+            ),
+        )
+        return {
+            "ok": False,
+            "erro": "invoice_url_ausente",
+            "mensagem": "A cobranca inicial foi encontrada, mas o invoiceUrl nao foi retornado pelo Asaas.",
+            "resultado": ultimo_resultado,
+            "cobranca": ultima_cobranca,
+            "invoice_url": None,
+        }
+
+    LOGGER.error(
+        "[ASAAS_ERROR] Assinatura criada, mas cobranca nao encontrada | %s",
+        _payload_json(
+            {
+                "funcao": "_buscar_invoice_url_assinatura_asaas",
+                "asaas_subscription_id": asaas_subscription_id,
+                "resultado": _sanitize_for_log(ultimo_resultado),
+            }
+        ),
+    )
+    return {
+        "ok": False,
+        "erro": "cobranca_nao_encontrada",
+        "mensagem": "A assinatura foi criada, mas nenhuma cobranca inicial foi encontrada no Asaas.",
+        "resultado": ultimo_resultado,
+        "cobranca": None,
+        "invoice_url": None,
+    }
+
+
 def criar_assinatura_asaas(customer_id, plano):
     payload = {
         "customer": customer_id,
@@ -798,13 +971,43 @@ def criar_assinatura_asaas(customer_id, plano):
         }
 
     assinatura = resultado["data"]
+    asaas_subscription_id = assinatura.get("id")
+    _log_checkout_debug(
+        "[ASAAS_DEBUG]",
+        "Assinatura criada com sucesso",
+        funcao="criar_assinatura_asaas",
+        customer_id=customer_id,
+        plano_codigo=plano.get("codigo"),
+        asaas_subscription_id=asaas_subscription_id,
+        assinatura=assinatura,
+    )
+    cobranca_inicial = _buscar_invoice_url_assinatura_asaas(asaas_subscription_id)
+    mensagem_redirecionamento = None
+    invoice_url = None
+    asaas_payment_id = None
+    cobranca_payload = None
+    if cobranca_inicial.get("ok"):
+        cobranca_payload = cobranca_inicial.get("cobranca")
+        invoice_url = cobranca_inicial.get("invoice_url")
+        asaas_payment_id = (cobranca_payload or {}).get("id")
+    else:
+        mensagem_redirecionamento = (
+            "Assinatura criada no Asaas, mas nao foi possivel abrir a cobranca automaticamente. "
+            "Voce pode acompanhar o status em Minha Assinatura."
+        )
+        cobranca_payload = cobranca_inicial.get("cobranca")
     return {
         "ok": True,
         "gateway": DEFAULT_GATEWAY,
         "status": "pendente",
-        "asaas_subscription_id": assinatura.get("id"),
-        "gateway_reference": assinatura.get("id"),
+        "mensagem": mensagem_redirecionamento,
+        "asaas_subscription_id": asaas_subscription_id,
+        "asaas_payment_id": asaas_payment_id,
+        "invoice_url": invoice_url,
+        "redirect_url": invoice_url,
+        "gateway_reference": asaas_subscription_id,
         "payload": assinatura,
+        "payment_payload": cobranca_payload,
     }
 
 

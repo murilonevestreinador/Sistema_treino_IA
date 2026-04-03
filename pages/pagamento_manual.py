@@ -1,6 +1,8 @@
+import json
 import logging
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 from core.financeiro import (
     aplicar_desconto,
@@ -29,6 +31,24 @@ def _ir_para(nome_pagina):
 def _ir_para_perfil():
     st.session_state["secao_app"] = "perfil"
     _ir_para("app.py")
+
+
+def _redirecionar_para_pagamento_asaas(url, mensagem):
+    st.info(mensagem)
+    components.html(
+        f"""
+        <script>
+        const targetUrl = {json.dumps(url)};
+        const parentWindow = window.top || window.parent || window;
+        if (targetUrl) {{
+            parentWindow.location.assign(targetUrl);
+        }}
+        </script>
+        """,
+        height=0,
+    )
+    st.caption("Se o redirecionamento nao acontecer automaticamente em alguns segundos, use o botao abaixo.")
+    st.link_button("Abrir pagamento no Asaas", url, use_container_width=True)
 
 
 st.set_page_config(page_title="Pagamento Manual", layout="wide")
@@ -144,8 +164,29 @@ else:
                         assinatura.get("gateway"),
                         assinatura.get("status"),
                     )
-                    st.success(mensagem)
                     st.session_state.pop("plano_checkout", None)
+                    redirect_url = (assinatura.get("redirect_url") or assinatura.get("invoice_url") or "").strip()
+                    fluxo_asaas = assinatura.get("gateway") == "asaas" and plano.get("tipo_plano") == "atleta"
+                    if fluxo_asaas and redirect_url:
+                        LOGGER.info(
+                            "[CHECKOUT_DEBUG] Redirecionando usuario para invoiceUrl do Asaas | usuario_id=%s assinatura_id=%s asaas_payment_id=%s",
+                            usuario.get("id"),
+                            assinatura.get("id"),
+                            assinatura.get("asaas_payment_id"),
+                        )
+                        _redirecionar_para_pagamento_asaas(redirect_url, mensagem)
+                        st.stop()
+                    if fluxo_asaas:
+                        LOGGER.warning(
+                            "[CHECKOUT_DEBUG] Assinatura criada sem invoiceUrl para redirecionamento imediato | usuario_id=%s assinatura_id=%s",
+                            usuario.get("id"),
+                            assinatura.get("id"),
+                        )
+                        st.warning(mensagem)
+                        if st.button("Ir para Minha Assinatura", type="primary", use_container_width=True, key="checkout_ir_minha_assinatura"):
+                            _ir_para("pages/minha_assinatura.py")
+                        st.stop()
+                    st.success(mensagem)
                     _ir_para("pages/minha_assinatura.py")
                 else:
                     LOGGER.error(
