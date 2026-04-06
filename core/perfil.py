@@ -1,4 +1,5 @@
 import base64
+import logging
 import uuid
 from pathlib import Path
 
@@ -23,6 +24,8 @@ from core.treinador import (
 )
 from core.treino import invalidar_treinos_gerados_desde_semana
 from core.usuarios import (
+    ExclusaoContaBloqueadaError,
+    ExclusaoContaError,
     alterar_senha_usuario_autenticado,
     atualizar_perfil_usuario,
     diagnosticar_dados_checkout,
@@ -33,6 +36,9 @@ from core.usuarios import (
     validar_cref,
     validar_telefone,
 )
+
+
+LOGGER = logging.getLogger("trilab.profile")
 
 
 def _foto_perfil_bytes(usuario):
@@ -311,7 +317,7 @@ def _render_vinculo_atleta(usuario):
 
 def _render_exclusao_conta(usuario):
     st.subheader("Excluir conta")
-    st.caption("Essa acao remove seu usuario e os dados relacionados.")
+    st.caption("Essa acao remove permanentemente sua conta e os dados permitidos para exclusao automatica.")
     with st.form(f"form_excluir_conta_{usuario['id']}"):
         confirmar = st.checkbox("Confirmo que desejo excluir minha conta permanentemente.")
         excluir = st.form_submit_button("Excluir conta", use_container_width=True)
@@ -322,7 +328,19 @@ def _render_exclusao_conta(usuario):
         st.error("Confirme a exclusao para continuar.")
         return False
 
-    excluir_usuario(usuario["id"])
+    try:
+        excluir_usuario(usuario["id"])
+    except ExclusaoContaBloqueadaError as exc:
+        st.error(str(exc))
+        return False
+    except ExclusaoContaError:
+        st.error("Nao foi possivel excluir sua conta agora. Tente novamente em alguns instantes ou entre em contato com o suporte.")
+        return False
+    except Exception:
+        LOGGER.exception("[ACCOUNT_DELETE_ERROR] Falha inesperada na tela de perfil usuario_id=%s", usuario["id"])
+        st.error("Nao foi possivel excluir sua conta agora. Tente novamente em alguns instantes ou entre em contato com o suporte.")
+        return False
+
     return True
 
 

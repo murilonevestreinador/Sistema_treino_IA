@@ -929,7 +929,7 @@ def obter_status_interface_atleta(usuario_id):
                 "status": "sem_acesso",
                 "variant": "danger",
                 "titulo": "Seu periodo de teste terminou",
-                "texto": "Para continuar usando o TriLab, escolha um plano ou treine com um treinador parceiro.",
+                "texto": "Continue usando o TriLab escolhendo um plano para liberar seu acesso novamente.",
                 "cta_label": "Ver planos",
                 "cta_destino": "pages/planos.py",
                 "mostrar_no_dashboard": False,

@@ -1,5 +1,6 @@
 import bcrypt
 import hashlib
+import logging
 import os
 import secrets
 from datetime import datetime, timedelta
@@ -8,6 +9,17 @@ from core.banco import conectar
 from core.calendario import inicio_semana_local
 from core.equipamentos import normalizar_ambiente_treino_forca, normalizar_lista_equipamentos
 from core.permissoes import eh_admin, normalizar_status_conta, normalizar_tipo_usuario
+
+
+LOGGER = logging.getLogger("trilab.account")
+
+
+class ExclusaoContaError(Exception):
+    pass
+
+
+class ExclusaoContaBloqueadaError(ExclusaoContaError):
+    pass
 
 
 def _linha_para_dict(linha):
@@ -926,35 +938,308 @@ def listar_usuarios(
     return usuarios
 
 
-def excluir_usuario(usuario_id):
-    conn = conectar()
-    cursor = conn.cursor()
+def _contar_linhas(cursor, sql, params):
+    cursor.execute(sql, params)
+    return int((cursor.fetchone() or {}).get("total") or 0)
 
-    cursor.execute("DELETE FROM recuperacao_senha WHERE usuario_id = %s", (usuario_id,))
-    cursor.execute("DELETE FROM atleta_equipamentos WHERE atleta_id = %s", (usuario_id,))
-    cursor.execute("DELETE FROM preferencias_substituicao_exercicio WHERE atleta_id = %s", (usuario_id,))
-    cursor.execute(
-        "DELETE FROM treinos_realizados WHERE COALESCE(atleta_id, usuario_id) = %s",
+
+def _resumo_financeiro_exclusao(cursor, usuario_id):
+    pagamentos_total = _contar_linhas(
+        cursor,
+        "SELECT COUNT(*) AS total FROM pagamentos WHERE usuario_id = %s",
         (usuario_id,),
     )
-    cursor.execute(
-        "DELETE FROM treinos_gerados WHERE COALESCE(atleta_id, usuario_id) = %s",
+    pagamentos_quitados = _contar_linhas(
+        cursor,
+        "SELECT COUNT(*) AS total FROM pagamentos WHERE usuario_id = %s AND status IN ('pago', 'bonificado', 'atrasado')",
         (usuario_id,),
     )
-    cursor.execute("DELETE FROM convites_treinador_link WHERE treinador_id = %s", (usuario_id,))
-    cursor.execute("DELETE FROM treinador_tema WHERE treinador_id = %s", (usuario_id,))
-    cursor.execute(
+    pagamentos_integrados_gateway = _contar_linhas(
+        cursor,
         """
-        DELETE FROM treinador_atleta
+        SELECT COUNT(*) AS total
+        FROM pagamentos
+        WHERE usuario_id = %s
+          AND (
+              COALESCE(NULLIF(gateway, ''), 'manual') <> 'manual'
+              OR NULLIF(COALESCE(asaas_payment_id, ''), '') IS NOT NULL
+          )
+        """,
+        (usuario_id,),
+    )
+    descontos_total = _contar_linhas(
+        cursor,
+        "SELECT COUNT(*) AS total FROM descontos_aplicados WHERE usuario_id = %s",
+        (usuario_id,),
+    )
+    cobrancas_total = _contar_linhas(
+        cursor,
+        """
+        SELECT COUNT(*) AS total
+        FROM cobrancas_alunos_treinador
         WHERE treinador_id = %s OR atleta_id = %s
         """,
         (usuario_id, usuario_id),
     )
-    cursor.execute("DELETE FROM usuarios WHERE id = %s", (usuario_id,))
+    admin_logs_total = _contar_linhas(
+        cursor,
+        "SELECT COUNT(*) AS total FROM admin_logs WHERE admin_id = %s",
+        (usuario_id,),
+    )
+    cursor.execute(
+        """
+        SELECT
+            COUNT(*) AS total,
+            COUNT(*) FILTER (WHERE COALESCE(status, '') IN ('ativa', 'inadimplente')) AS abertas,
+            COUNT(*) FILTER (
+                WHERE COALESCE(NULLIF(gateway, ''), 'manual') <> 'manual'
+                   OR NULLIF(COALESCE(asaas_subscription_id, ''), '') IS NOT NULL
+            ) AS integradas_gateway
+        FROM assinaturas
+        WHERE usuario_id = %s
+        """,
+        (usuario_id,),
+    )
+    assinaturas = _linha_para_dict(cursor.fetchone()) or {}
+    return {
+        "assinaturas_total": int(assinaturas.get("total") or 0),
+        "assinaturas_abertas": int(assinaturas.get("abertas") or 0),
+        "assinaturas_integradas_gateway": int(assinaturas.get("integradas_gateway") or 0),
+        "pagamentos_total": pagamentos_total,
+        "pagamentos_quitados": pagamentos_quitados,
+        "pagamentos_integrados_gateway": pagamentos_integrados_gateway,
+        "descontos_total": descontos_total,
+        "cobrancas_total": cobrancas_total,
+        "admin_logs_total": admin_logs_total,
+    }
 
-    conn.commit()
-    conn.close()
-    return True
+
+def _validar_exclusao_automatica(cursor, usuario):
+    usuario_id = int(usuario["id"])
+    resumo = _resumo_financeiro_exclusao(cursor, usuario_id)
+
+    if eh_admin(usuario):
+        total_outros_admins = _contar_linhas(
+            cursor,
+            """
+            SELECT COUNT(*) AS total
+            FROM usuarios
+            WHERE id <> %s
+              AND (
+                  COALESCE(is_admin, 0) = 1
+                  OR LOWER(COALESCE(tipo_usuario, '')) = 'admin'
+              )
+            """,
+            (usuario_id,),
+        )
+        if total_outros_admins == 0:
+            LOGGER.warning(
+                "[ACCOUNT_DELETE] Exclusao bloqueada usuario_id=%s motivo=ultimo_admin",
+                usuario_id,
+            )
+            raise ExclusaoContaBloqueadaError(
+                "Nao foi possivel excluir sua conta automaticamente porque ela ainda e necessaria para a administracao do sistema. Entre em contato com o suporte."
+            )
+
+    motivos_bloqueio = []
+    if resumo["pagamentos_quitados"] > 0:
+        motivos_bloqueio.append("pagamentos_quitados")
+    if resumo["pagamentos_integrados_gateway"] > 0:
+        motivos_bloqueio.append("pagamentos_gateway")
+    if resumo["descontos_total"] > 0:
+        motivos_bloqueio.append("descontos")
+    if resumo["cobrancas_total"] > 0:
+        motivos_bloqueio.append("cobrancas")
+    if resumo["admin_logs_total"] > 0:
+        motivos_bloqueio.append("admin_logs")
+    if resumo["assinaturas_abertas"] > 0:
+        motivos_bloqueio.append("assinaturas_abertas")
+    if resumo["assinaturas_integradas_gateway"] > 0:
+        motivos_bloqueio.append("assinaturas_gateway")
+
+    if motivos_bloqueio:
+        LOGGER.warning(
+            "[ACCOUNT_DELETE] Exclusao bloqueada usuario_id=%s motivos=%s resumo=%s",
+            usuario_id,
+            ",".join(motivos_bloqueio),
+            resumo,
+        )
+        raise ExclusaoContaBloqueadaError(
+            "Nao foi possivel excluir sua conta automaticamente porque existe historico financeiro ou operacional que precisa de tratamento manual. Entre em contato com o suporte."
+        )
+
+    return resumo
+
+
+def _executar_delete(cursor, usuario_id, tabela, sql, params, apagados):
+    cursor.execute(sql, params)
+    apagados[tabela] = cursor.rowcount
+    LOGGER.info(
+        "[ACCOUNT_DELETE] Dependencias removidas usuario_id=%s tabela=%s quantidade=%s",
+        usuario_id,
+        tabela,
+        cursor.rowcount,
+    )
+
+
+def excluir_usuario(usuario_id):
+    conn = conectar()
+    resumo = {}
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT id, email, tipo_usuario, is_admin
+            FROM usuarios
+            WHERE id = %s
+            FOR UPDATE
+            """,
+            (usuario_id,),
+        )
+        usuario = _linha_para_dict(cursor.fetchone())
+        if not usuario:
+            raise ExclusaoContaError("Usuario nao encontrado para exclusao.")
+
+        LOGGER.info(
+            "[ACCOUNT_DELETE] Inicio do fluxo usuario_id=%s email=%s tipo=%s",
+            usuario_id,
+            usuario.get("email"),
+            normalizar_tipo_usuario(usuario.get("tipo_usuario"), usuario.get("is_admin")),
+        )
+        resumo = _validar_exclusao_automatica(cursor, usuario)
+        LOGGER.info(
+            "[ACCOUNT_DELETE] Iniciando exclusao usuario_id=%s email=%s tipo=%s resumo=%s",
+            usuario_id,
+            usuario.get("email"),
+            normalizar_tipo_usuario(usuario.get("tipo_usuario"), usuario.get("is_admin")),
+            resumo,
+        )
+
+        apagados = {}
+        _executar_delete(
+            cursor,
+            usuario_id,
+            "descontos_aplicados",
+            """
+            DELETE FROM descontos_aplicados
+            WHERE usuario_id = %s
+               OR assinatura_id IN (SELECT id FROM assinaturas WHERE usuario_id = %s)
+               OR pagamento_id IN (SELECT id FROM pagamentos WHERE usuario_id = %s)
+            """,
+            (usuario_id, usuario_id, usuario_id),
+            apagados,
+        )
+        _executar_delete(cursor, usuario_id, "pagamentos", "DELETE FROM pagamentos WHERE usuario_id = %s", (usuario_id,), apagados)
+        _executar_delete(cursor, usuario_id, "assinaturas", "DELETE FROM assinaturas WHERE usuario_id = %s", (usuario_id,), apagados)
+        _executar_delete(
+            cursor,
+            usuario_id,
+            "cobrancas_alunos_treinador",
+            """
+            DELETE FROM cobrancas_alunos_treinador
+            WHERE treinador_id = %s OR atleta_id = %s
+            """,
+            (usuario_id, usuario_id),
+            apagados,
+        )
+        _executar_delete(cursor, usuario_id, "admin_logs", "DELETE FROM admin_logs WHERE admin_id = %s", (usuario_id,), apagados)
+        _executar_delete(cursor, usuario_id, "sessoes_persistentes", "DELETE FROM sessoes_persistentes WHERE usuario_id = %s", (usuario_id,), apagados)
+        _executar_delete(cursor, usuario_id, "recuperacao_senha", "DELETE FROM recuperacao_senha WHERE usuario_id = %s", (usuario_id,), apagados)
+        _executar_delete(cursor, usuario_id, "atleta_equipamentos", "DELETE FROM atleta_equipamentos WHERE atleta_id = %s", (usuario_id,), apagados)
+        _executar_delete(
+            cursor,
+            usuario_id,
+            "preferencias_substituicao_exercicio",
+            "DELETE FROM preferencias_substituicao_exercicio WHERE atleta_id = %s",
+            (usuario_id,),
+            apagados,
+        )
+        _executar_delete(
+            cursor,
+            usuario_id,
+            "substituicoes_exercicio",
+            "DELETE FROM substituicoes_exercicio WHERE atleta_id = %s OR usuario_id = %s",
+            (usuario_id, usuario_id),
+            apagados,
+        )
+        _executar_delete(
+            cursor,
+            usuario_id,
+            "feedback_exercicio",
+            "DELETE FROM feedback_exercicio WHERE atleta_id = %s OR usuario_id = %s",
+            (usuario_id, usuario_id),
+            apagados,
+        )
+        _executar_delete(
+            cursor,
+            usuario_id,
+            "execucao_exercicio",
+            "DELETE FROM execucao_exercicio WHERE atleta_id = %s OR usuario_id = %s",
+            (usuario_id, usuario_id),
+            apagados,
+        )
+        _executar_delete(
+            cursor,
+            usuario_id,
+            "avaliacao_forca",
+            "DELETE FROM avaliacao_forca WHERE atleta_id = %s OR usuario_id = %s",
+            (usuario_id, usuario_id),
+            apagados,
+        )
+        _executar_delete(
+            cursor,
+            usuario_id,
+            "treinos_realizados",
+            "DELETE FROM treinos_realizados WHERE atleta_id = %s OR usuario_id = %s",
+            (usuario_id, usuario_id),
+            apagados,
+        )
+        _executar_delete(
+            cursor,
+            usuario_id,
+            "treinos_gerados",
+            "DELETE FROM treinos_gerados WHERE atleta_id = %s OR usuario_id = %s",
+            (usuario_id, usuario_id),
+            apagados,
+        )
+        _executar_delete(
+            cursor,
+            usuario_id,
+            "convites_treinador_link",
+            "DELETE FROM convites_treinador_link WHERE treinador_id = %s",
+            (usuario_id,),
+            apagados,
+        )
+        _executar_delete(cursor, usuario_id, "treinador_tema", "DELETE FROM treinador_tema WHERE treinador_id = %s", (usuario_id,), apagados)
+        _executar_delete(
+            cursor,
+            usuario_id,
+            "treinador_atleta",
+            """
+            DELETE FROM treinador_atleta
+            WHERE treinador_id = %s OR atleta_id = %s
+            """,
+            (usuario_id, usuario_id),
+            apagados,
+        )
+        cursor.execute("DELETE FROM usuarios WHERE id = %s", (usuario_id,))
+        if cursor.rowcount == 0:
+            raise ExclusaoContaError("Usuario nao encontrado para exclusao.")
+        apagados["usuarios"] = cursor.rowcount
+        LOGGER.info("[ACCOUNT_DELETE] Dependencias removidas usuario_id=%s tabela=usuarios quantidade=%s", usuario_id, cursor.rowcount)
+
+        conn.commit()
+        LOGGER.info("[ACCOUNT_DELETE] Exclusao concluida usuario_id=%s apagados=%s", usuario_id, apagados)
+        return {"usuario_id": usuario_id, "apagados": apagados, "resumo": resumo}
+    except ExclusaoContaBloqueadaError:
+        conn.rollback()
+        raise
+    except Exception:
+        conn.rollback()
+        LOGGER.exception("[ACCOUNT_DELETE_ERROR] Falha ao excluir usuario_id=%s resumo=%s", usuario_id, resumo)
+        raise ExclusaoContaError("Nao foi possivel concluir a exclusao da conta no momento.")
+    finally:
+        conn.close()
 
 
 def saudacao_usuario(sexo):
