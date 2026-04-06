@@ -149,18 +149,39 @@ def _render_beneficios_html(beneficios):
                 """
             ).strip()
         )
-    return "".join(blocos)
+    return "\n".join(blocos)
 
 
 def _render_textos_html(textos):
-    return "".join(
+    return "\n".join(
         f'<p class="trial-lock-note">{escape(texto)}</p>'
         for texto in (textos or [])
         if texto
     )
 
 
+def _montar_html_painel(titulo, beneficios=None, textos=None):
+    return dedent(
+        f"""
+        <div class="trial-lock-panel">
+            <h3>{escape(titulo or "")}</h3>
+            {_render_beneficios_html(beneficios)}
+            {_render_textos_html(textos)}
+        </div>
+        """
+    ).strip()
+
+
 def _montar_html_bloqueio(conteudo):
+    painel_principal_html = _montar_html_painel(
+        conteudo.get("painel_titulo"),
+        beneficios=conteudo.get("beneficios"),
+        textos=conteudo.get("painel_textos"),
+    )
+    painel_acao_html = _montar_html_painel(
+        conteudo.get("acao_titulo"),
+        textos=conteudo.get("acao_textos"),
+    )
     return dedent(
         f"""
         <div class="trial-lock-shell">
@@ -171,15 +192,8 @@ def _montar_html_bloqueio(conteudo):
                     <p>{escape(conteudo.get("texto") or "")}</p>
                 </div>
                 <div class="trial-lock-body">
-                    <div class="trial-lock-panel">
-                        <h3>{escape(conteudo.get("painel_titulo") or "")}</h3>
-                        {_render_beneficios_html(conteudo.get("beneficios"))}
-                        {_render_textos_html(conteudo.get("painel_textos"))}
-                    </div>
-                    <div class="trial-lock-panel">
-                        <h3>{escape(conteudo.get("acao_titulo") or "")}</h3>
-                        {_render_textos_html(conteudo.get("acao_textos"))}
-                    </div>
+{painel_principal_html}
+{painel_acao_html}
                 </div>
             </div>
         </div>
@@ -257,10 +271,9 @@ def _conteudo_bloqueio_atleta(contexto, usuario):
             },
         ],
         "painel_textos": [],
-        "acao_titulo": "Pronto para voltar",
+        "acao_titulo": "Pronto para voltar?",
         "acao_textos": [
-            f"{primeiro_nome}, seu acesso pode ser liberado em poucos minutos assim que voce concluir a assinatura.",
-            "Se voce ja iniciou uma contratacao, confira o status em Minha Assinatura.",
+            "Seu acesso pode ser liberado assim que a assinatura for concluida.",
         ],
         "cta_primaria": {"label": "Escolher plano", "destino": "pages/planos.py"},
         "cta_secundaria": {"label": "Ver minha assinatura", "destino": "pages/minha_assinatura.py"},
