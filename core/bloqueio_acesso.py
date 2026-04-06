@@ -137,23 +137,21 @@ def _render_beneficios_html(beneficios):
     blocos = []
     for beneficio in beneficios or []:
         blocos.append(
-            dedent(
-                f"""
-                <div class="trial-lock-benefit">
-                    <div class="trial-lock-icon">{escape(str(beneficio.get("icone") or ""))}</div>
-                    <div>
-                        <strong>{escape(beneficio.get("titulo") or "")}</strong><br>
-                        <span class="trial-lock-note">{escape(beneficio.get("texto") or "")}</span>
-                    </div>
-                </div>
-                """
-            ).strip()
+            (
+                f'<div class="trial-lock-benefit">'
+                f'<div class="trial-lock-icon">{escape(str(beneficio.get("icone") or ""))}</div>'
+                f"<div>"
+                f"<strong>{escape(beneficio.get('titulo') or '')}</strong><br>"
+                f'<span class="trial-lock-note">{escape(beneficio.get("texto") or "")}</span>'
+                f"</div>"
+                f"</div>"
+            )
         )
-    return "\n".join(blocos)
+    return "".join(blocos)
 
 
 def _render_textos_html(textos):
-    return "\n".join(
+    return "".join(
         f'<p class="trial-lock-note">{escape(texto)}</p>'
         for texto in (textos or [])
         if texto
@@ -161,15 +159,13 @@ def _render_textos_html(textos):
 
 
 def _montar_html_painel(titulo, beneficios=None, textos=None):
-    return dedent(
-        f"""
-        <div class="trial-lock-panel">
-            <h3>{escape(titulo or "")}</h3>
-            {_render_beneficios_html(beneficios)}
-            {_render_textos_html(textos)}
-        </div>
-        """
-    ).strip()
+    return (
+        f'<div class="trial-lock-panel">'
+        f"<h3>{escape(titulo or '')}</h3>"
+        f"{_render_beneficios_html(beneficios)}"
+        f"{_render_textos_html(textos)}"
+        f"</div>"
+    )
 
 
 def _montar_html_bloqueio(conteudo):
