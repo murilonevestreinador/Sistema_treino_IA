@@ -38,6 +38,10 @@ def conta_ativa(usuario):
     return bool(usuario and normalizar_status_conta(usuario.get("status_conta")) in STATUS_CONTA_COM_ACESSO)
 
 
+def email_verificado(usuario):
+    return bool(usuario and int(usuario.get("email_verificado") or 0) == 1)
+
+
 def validar_admin(usuario):
     if not eh_admin(usuario):
         raise PermissionError("Apenas administradores podem acessar esta area.")

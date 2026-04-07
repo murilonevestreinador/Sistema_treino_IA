@@ -4,7 +4,7 @@ import streamlit as st
 
 from core.area_treinador import tela_area_treinador
 from core.admin import tela_area_admin
-from core.auth import tela_login
+from core.auth import render_bloqueio_email_pendente, render_fluxo_publico_auth, tela_login
 from core.banco import garantir_colunas_e_tabelas
 from core.bloqueio_acesso import render_bloqueio_atleta, render_bloqueio_treinador
 from core.cronograma import gerar_cronograma, gerar_mensagem_usuario
@@ -16,15 +16,16 @@ from core.financeiro import (
     resumo_status_assinatura,
 )
 from core.perfil import tela_meu_perfil
-from core.permissoes import conta_ativa, eh_admin, eh_atleta, eh_treinador
+from core.permissoes import conta_ativa, eh_admin, eh_atleta, eh_treinador, email_verificado
 from core.questionario import tela_questionario
 from core.sessao_persistente import (
     capturar_browser_key_da_url,
     injetar_bridge_navegador,
     preparar_rotacao_browser_key,
-    registrar_sessao_persistente,
     restaurar_usuario_persistente,
     revogar_sessao_persistente_atual,
+    sessao_persistente_atual_valida,
+    tocar_sessao_persistente_atual,
 )
 from core.treinador import (
     buscar_convite_por_token,
@@ -663,15 +664,29 @@ def main():
         if usuario:
             st.session_state["usuario"] = usuario
 
+    if render_fluxo_publico_auth():
+        return
+
     if usuario is None:
         tela_login()
         return
 
-    registrar_sessao_persistente(usuario["id"])
+    if not sessao_persistente_atual_valida(usuario.get("id")):
+        st.session_state["usuario"] = None
+        st.session_state["auth_modo"] = "Login"
+        st.warning("Sua sessao expirou. Entre novamente para continuar.")
+        tela_login()
+        return
+    tocar_sessao_persistente_atual(usuario["id"])
     if not conta_ativa(usuario):
         st.error("Sua conta esta inativa, suspensa ou cancelada. Entre em contato com o suporte.")
         if st.button("Fazer logout", use_container_width=True):
             fazer_logout()
+        return
+
+    if not email_verificado(usuario):
+        render_bloqueio_email_pendente(usuario, fazer_logout)
+        renderizar_rodape()
         return
 
     tema_usuario = _obter_tema_usuario(usuario)

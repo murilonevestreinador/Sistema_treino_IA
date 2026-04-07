@@ -157,6 +157,77 @@ def registrar_sessao_persistente(usuario_id):
     return True
 
 
+def sessao_persistente_atual_valida(usuario_id=None):
+    browser_key = _browser_key_atual()
+    if not browser_key:
+        return False
+
+    conn = conectar()
+    cursor = conn.cursor()
+    if usuario_id:
+        cursor.execute(
+            """
+            SELECT 1
+            FROM sessoes_persistentes
+            WHERE browser_key_hash = %s
+              AND usuario_id = %s
+              AND revogado_em IS NULL
+            LIMIT 1
+            """,
+            (_hash_browser_key(browser_key), usuario_id),
+        )
+    else:
+        cursor.execute(
+            """
+            SELECT 1
+            FROM sessoes_persistentes
+            WHERE browser_key_hash = %s
+              AND revogado_em IS NULL
+            LIMIT 1
+            """,
+            (_hash_browser_key(browser_key),),
+        )
+    valido = cursor.fetchone() is not None
+    conn.close()
+    return valido
+
+
+def tocar_sessao_persistente_atual(usuario_id=None):
+    browser_key = _browser_key_atual()
+    if not browser_key:
+        return False
+
+    conn = conectar()
+    cursor = conn.cursor()
+    if usuario_id:
+        cursor.execute(
+            """
+            UPDATE sessoes_persistentes
+            SET ultimo_acesso = CURRENT_TIMESTAMP,
+                user_agent = %s
+            WHERE browser_key_hash = %s
+              AND usuario_id = %s
+              AND revogado_em IS NULL
+            """,
+            (_user_agent_atual(), _hash_browser_key(browser_key), usuario_id),
+        )
+    else:
+        cursor.execute(
+            """
+            UPDATE sessoes_persistentes
+            SET ultimo_acesso = CURRENT_TIMESTAMP,
+                user_agent = %s
+            WHERE browser_key_hash = %s
+              AND revogado_em IS NULL
+            """,
+            (_user_agent_atual(), _hash_browser_key(browser_key)),
+        )
+    atualizado = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return atualizado
+
+
 def restaurar_usuario_persistente():
     browser_key = _browser_key_atual()
     if not browser_key:
@@ -220,9 +291,30 @@ def revogar_sessao_persistente_atual(usuario_id=None):
               AND revogado_em IS NULL
             """,
             (_hash_browser_key(browser_key),),
-        )
+    )
     conn.commit()
     conn.close()
+
+
+def revogar_sessoes_persistentes_usuario(usuario_id):
+    if not usuario_id:
+        return 0
+
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        UPDATE sessoes_persistentes
+        SET revogado_em = CURRENT_TIMESTAMP
+        WHERE usuario_id = %s
+          AND revogado_em IS NULL
+        """,
+        (usuario_id,),
+    )
+    total = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return total
 
 
 def preparar_rotacao_browser_key():

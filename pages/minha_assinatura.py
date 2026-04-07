@@ -1,5 +1,6 @@
 import streamlit as st
 
+from core.auth import garantir_usuario_em_pagina
 from core.financeiro import (
     atleta_tem_treinador_ativo,
     buscar_assinatura_atual,
@@ -23,13 +24,8 @@ st.set_page_config(page_title="Minha Assinatura", layout="wide")
 inject_app_icons()
 st.title("Minha Assinatura")
 
-usuario = st.session_state.get("usuario")
-if not usuario:
-    st.warning("Voce precisa estar logado para acessar esta pagina.")
-    if st.button("Ir para login", use_container_width=True):
-        st.session_state["auth_modo"] = "Login"
-        _ir_para_app()
-else:
+usuario = garantir_usuario_em_pagina("pagina_minha_assinatura", exigir_email_confirmado=True)
+if usuario:
     assinatura = buscar_assinatura_atual(usuario["id"])
     resumo = resumo_status_assinatura(assinatura)
     atleta_coberto_por_treinador = (

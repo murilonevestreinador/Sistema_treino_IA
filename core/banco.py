@@ -64,6 +64,10 @@ def _criar_tabela_usuarios(cursor):
             apelido TEXT,
             foto_perfil TEXT,
             email TEXT UNIQUE,
+            email_verificado INTEGER DEFAULT 0,
+            email_verificado_em TIMESTAMP NULL,
+            ultimo_envio_verificacao_em TIMESTAMP NULL,
+            ultimo_reset_senha_solicitado_em TIMESTAMP NULL,
             cpf TEXT,
             telefone TEXT,
             cref TEXT,
@@ -101,6 +105,10 @@ def _criar_tabela_usuarios(cursor):
     colunas = {
         "apelido": "TEXT",
         "foto_perfil": "TEXT",
+        "email_verificado": "INTEGER",
+        "email_verificado_em": "TIMESTAMP NULL",
+        "ultimo_envio_verificacao_em": "TIMESTAMP NULL",
+        "ultimo_reset_senha_solicitado_em": "TIMESTAMP NULL",
         "cpf": "TEXT",
         "telefone": "TEXT",
         "cref": "TEXT",
@@ -380,6 +388,63 @@ def _criar_tabela_recuperacao_senha(cursor):
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (usuario_id) REFERENCES usuarios(id)
         )
+        """
+    )
+
+
+def _criar_tabela_email_auth_tokens(cursor):
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS email_auth_tokens (
+            id SERIAL PRIMARY KEY,
+            usuario_id INTEGER NOT NULL,
+            tipo TEXT NOT NULL,
+            token_hash TEXT NOT NULL,
+            email_destino TEXT NOT NULL,
+            expira_em TIMESTAMP NOT NULL,
+            usado_em TIMESTAMP NULL,
+            revogado_em TIMESTAMP NULL,
+            criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            criado_ip TEXT NULL,
+            criado_user_agent TEXT NULL,
+            metadados_json TEXT NULL,
+            FOREIGN KEY (usuario_id) REFERENCES usuarios(id)
+        )
+        """
+    )
+
+    colunas = {
+        "usuario_id": "INTEGER NOT NULL",
+        "tipo": "TEXT NOT NULL",
+        "token_hash": "TEXT NOT NULL",
+        "email_destino": "TEXT NOT NULL",
+        "expira_em": "TIMESTAMP NOT NULL",
+        "usado_em": "TIMESTAMP NULL",
+        "revogado_em": "TIMESTAMP NULL",
+        "criado_em": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+        "criado_ip": "TEXT NULL",
+        "criado_user_agent": "TEXT NULL",
+        "metadados_json": "TEXT NULL",
+    }
+    for nome, definicao in colunas.items():
+        _adicionar_coluna_se_necessario(cursor, "email_auth_tokens", nome, definicao)
+
+    cursor.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_email_auth_tokens_hash_unico
+        ON email_auth_tokens (token_hash)
+        """
+    )
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_email_auth_tokens_usuario_tipo
+        ON email_auth_tokens (usuario_id, tipo, criado_em DESC)
+        """
+    )
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_email_auth_tokens_pendentes
+        ON email_auth_tokens (tipo, expira_em, usado_em, revogado_em)
         """
     )
 
@@ -929,6 +994,21 @@ def _sincronizar_papeis_legados(cursor):
     cursor.execute(
         """
         UPDATE usuarios
+        SET email_verificado = 1
+        WHERE email_verificado IS NULL
+        """
+    )
+    cursor.execute(
+        """
+        UPDATE usuarios
+        SET email_verificado_em = COALESCE(email_verificado_em, data_criacao, CURRENT_TIMESTAMP)
+        WHERE COALESCE(email_verificado, 0) = 1
+          AND email_verificado_em IS NULL
+        """
+    )
+    cursor.execute(
+        """
+        UPDATE usuarios
         SET ambiente_treino_forca = 'academia_completa'
         WHERE (ambiente_treino_forca IS NULL OR btrim(ambiente_treino_forca) = '')
           AND LOWER(COALESCE(tipo_usuario, 'atleta')) = 'atleta'
@@ -1174,6 +1254,7 @@ def garantir_colunas_e_tabelas():
     _migrar_feito_em_para_timestamp(cursor)
     _migrar_data_realizada_para_timestamp(cursor)
     _criar_tabela_recuperacao_senha(cursor)
+    _criar_tabela_email_auth_tokens(cursor)
     _criar_tabela_sessoes_persistentes(cursor)
     _criar_tabela_preferencias_substituicao(cursor)
     _criar_tabela_atleta_equipamentos(cursor)

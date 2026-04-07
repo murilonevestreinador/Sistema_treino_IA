@@ -1,30 +1,62 @@
 import base64
+import logging
 from datetime import datetime
 from pathlib import Path
 
 import streamlit as st
 
+from core.email_tokens import (
+    TOKEN_TIPO_RESET_SENHA,
+    atualizar_email_pendente_verificacao,
+    confirmar_email_por_token,
+    inspecionar_token_email,
+    redefinir_senha_por_token,
+    solicitar_reset_senha_por_email,
+    solicitar_verificacao_email,
+)
 from core.financeiro import criar_trial_assinatura
 from core.lancamento import cadastro_publico_permite_treinador
-from core.permissoes import conta_ativa
-from core.sessao_persistente import registrar_sessao_persistente
+from core.permissoes import conta_ativa, email_verificado
+from core.sessao_persistente import (
+    preparar_rotacao_browser_key,
+    registrar_sessao_persistente,
+    restaurar_usuario_persistente,
+    sessao_persistente_atual_valida,
+    tocar_sessao_persistente_atual,
+)
 from core.treinador import buscar_convite_por_token, definir_vinculo_treinador_atleta
 from core.ui import apply_global_styles, auth_card_end, auth_card_start
 from core.usuarios import (
     autenticar_usuario,
     buscar_usuario_por_email,
+    buscar_usuario_por_id,
     criar_usuario,
+    tentar_bootstrap_primeiro_admin,
     validar_cpf,
     validar_cref,
     validar_telefone,
-    tentar_bootstrap_primeiro_admin,
 )
 
 
+LOGGER = logging.getLogger("trilab.auth")
 ASSETS_DIR = Path.cwd() / "assets"
 LOGO_TRILAB_LADO = ASSETS_DIR / "logo_trilab_lado.png"
 LOGO_TRILAB_CIMA = ASSETS_DIR / "logo_trilab_cima.png"
 CHECKOUT_PAGE = "pages/pagamento_manual.py"
+AUTH_ACTION_PARAM = "auth_action"
+AUTH_TOKEN_PARAM = "token"
+
+
+def _mask_email(valor):
+    texto = str(valor or "").strip()
+    if "@" not in texto:
+        return texto
+    local, dominio = texto.split("@", 1)
+    if len(local) <= 2:
+        local_mask = "*" * len(local)
+    else:
+        local_mask = f"{local[:2]}***"
+    return f"{local_mask}@{dominio}"
 
 
 def _token_convite_da_url():
@@ -42,22 +74,114 @@ def _limpar_convite_da_url():
         pass
 
 
-def _capturar_convite_em_sessao():
-    token_url = _token_convite_da_url()
-    if token_url:
-        st.session_state["convite_treinador_token"] = token_url
+def _auth_action_da_url():
+    try:
+        return (st.query_params.get(AUTH_ACTION_PARAM) or "").strip().lower()
+    except Exception:
+        return ""
 
-    token = (st.session_state.get("convite_treinador_token") or "").strip()
-    if not token:
-        return None
 
-    convite = buscar_convite_por_token(token)
-    if convite:
-        return convite
+def _auth_token_da_url():
+    try:
+        return (st.query_params.get(AUTH_TOKEN_PARAM) or "").strip()
+    except Exception:
+        return ""
 
-    st.session_state.pop("convite_treinador_token", None)
-    _limpar_convite_da_url()
-    return None
+
+def limpar_auth_query_params():
+    try:
+        if AUTH_ACTION_PARAM in st.query_params:
+            del st.query_params[AUTH_ACTION_PARAM]
+        if AUTH_TOKEN_PARAM in st.query_params:
+            del st.query_params[AUTH_TOKEN_PARAM]
+    except Exception:
+        pass
+
+
+def _abrir_app(modo=None):
+    if modo:
+        st.session_state["auth_modo"] = modo
+    try:
+        st.switch_page("app.py")
+    except Exception:
+        st.info("Abra a pagina principal do app para continuar.")
+
+
+def obter_usuario_logado():
+    usuario = st.session_state.get("usuario")
+    if usuario is None:
+        usuario = restaurar_usuario_persistente()
+        if usuario:
+            st.session_state["usuario"] = usuario
+    return usuario
+
+
+def garantir_usuario_em_pagina(chave_contexto, exigir_email_confirmado=False, permitir_publico=False):
+    usuario = obter_usuario_logado()
+    if usuario is None:
+        if permitir_publico:
+            return None
+        st.warning("Voce precisa estar logado para acessar esta pagina.")
+        if st.button("Ir para login", use_container_width=True, key=f"{chave_contexto}_ir_login"):
+            _abrir_app("Login")
+        st.stop()
+
+    if not sessao_persistente_atual_valida(usuario.get("id")):
+        st.session_state["usuario"] = None
+        st.warning("Sua sessao expirou. Entre novamente para continuar.")
+        if st.button("Entrar novamente", use_container_width=True, key=f"{chave_contexto}_sessao_expirada"):
+            _abrir_app("Login")
+        st.stop()
+
+    tocar_sessao_persistente_atual(usuario["id"])
+    usuario = buscar_usuario_por_id(usuario["id"]) or usuario
+    st.session_state["usuario"] = usuario
+
+    if not conta_ativa(usuario):
+        st.error("Sua conta esta inativa, suspensa ou cancelada. Fale com o suporte.")
+        if st.button("Voltar para o app", use_container_width=True, key=f"{chave_contexto}_conta_inativa"):
+            _abrir_app()
+        st.stop()
+
+    if exigir_email_confirmado and not email_verificado(usuario):
+        st.warning("Confirme seu e-mail no app antes de continuar.")
+        st.caption("Enquanto isso, voce pode reenviar o link, corrigir o e-mail ou sair da conta na tela principal.")
+        if st.button("Ir para confirmar e-mail", type="primary", use_container_width=True, key=f"{chave_contexto}_confirmar_email"):
+            _abrir_app()
+        st.stop()
+
+    return usuario
+
+
+def _headers_requisicao():
+    try:
+        headers = getattr(st.context, "headers", {}) or {}
+    except Exception:
+        headers = {}
+    return headers
+
+
+def _ip_requisicao():
+    headers = _headers_requisicao()
+    candidatos = [
+        headers.get("x-forwarded-for"),
+        headers.get("X-Forwarded-For"),
+        headers.get("x-real-ip"),
+        headers.get("X-Real-Ip"),
+    ]
+    for valor in candidatos:
+        if valor:
+            return str(valor).split(",")[0].strip()[:200]
+    return ""
+
+
+def _user_agent_requisicao():
+    headers = _headers_requisicao()
+    for chave in ("user-agent", "User-Agent"):
+        valor = headers.get(chave)
+        if valor:
+            return str(valor)[:500]
+    return ""
 
 
 def _logo_auth_html():
@@ -102,6 +226,40 @@ def _aplicar_auth_mode():
         st.caption("Entre na sua conta para continuar para o checkout.")
 
 
+def _capturar_convite_em_sessao():
+    token_url = _token_convite_da_url()
+    if token_url:
+        st.session_state["convite_treinador_token"] = token_url
+
+    token = (st.session_state.get("convite_treinador_token") or "").strip()
+    if not token:
+        return None
+
+    convite = buscar_convite_por_token(token)
+    if convite:
+        return convite
+
+    st.session_state.pop("convite_treinador_token", None)
+    _limpar_convite_da_url()
+    return None
+
+
+def _mensagem_email_pendente():
+    notice = st.session_state.pop("email_pending_notice", None)
+    if not notice:
+        return
+    status = notice.get("status")
+    mensagem = notice.get("mensagem")
+    if not mensagem:
+        return
+    if status in {"envio_falhou", "rate_limited", "erro"}:
+        st.warning(mensagem)
+    elif status in {"confirmado", "ja_verificado"}:
+        st.success(mensagem)
+    else:
+        st.info(mensagem)
+
+
 def tela_login():
     _capturar_convite_em_sessao()
     apply_global_styles()
@@ -132,35 +290,37 @@ def _tela_login_tab():
         senha = st.text_input("Senha", type="password", key="login_senha", placeholder="Digite sua senha")
         enviar = st.form_submit_button("Entrar", use_container_width=True)
 
-    if enviar:
-        if not email.strip() or not senha.strip():
-            st.warning("Preencha e-mail e senha.")
-            return
+    if not enviar:
+        return
+    if not email.strip() or not senha.strip():
+        st.warning("Preencha e-mail e senha.")
+        return
 
-        usuario = autenticar_usuario(email, senha)
-        if not usuario:
-            st.warning("E-mail ou senha incorretos.")
-            return
-        if not conta_ativa(usuario):
-            st.warning("Sua conta esta inativa, suspensa ou cancelada. Fale com o suporte.")
-            return
+    usuario = autenticar_usuario(email, senha)
+    if not usuario:
+        st.warning("E-mail ou senha incorretos.")
+        return
+    if not conta_ativa(usuario):
+        st.warning("Sua conta esta inativa, suspensa ou cancelada. Fale com o suporte.")
+        return
 
-        usuario = tentar_bootstrap_primeiro_admin(usuario["id"], usuario["email"])
+    usuario = tentar_bootstrap_primeiro_admin(usuario["id"], usuario["email"])
 
-        convite_token = (st.session_state.get("convite_treinador_token") or "").strip()
-        if convite_token and usuario.get("tipo_usuario") != "atleta":
-            st.warning("Este link de convite \u00e9 v\u00e1lido apenas para atletas.")
-            st.session_state.pop("convite_treinador_token", None)
-            _limpar_convite_da_url()
-        elif convite_token:
-            st.session_state["convite_treinador_resposta_pendente"] = convite_token
+    convite_token = (st.session_state.get("convite_treinador_token") or "").strip()
+    if convite_token and usuario.get("tipo_usuario") != "atleta":
+        st.warning("Este link de convite e valido apenas para atletas.")
+        st.session_state.pop("convite_treinador_token", None)
+        _limpar_convite_da_url()
+    elif convite_token:
+        st.session_state["convite_treinador_resposta_pendente"] = convite_token
 
-        st.session_state["usuario"] = usuario
-        registrar_sessao_persistente(usuario["id"])
-        st.session_state.setdefault("mostrar_overview", False)
-        if _ir_para_checkout_se_pendente():
-            return
-        st.rerun()
+    st.session_state["usuario"] = usuario
+    registrar_sessao_persistente(usuario["id"])
+    st.session_state.setdefault("mostrar_overview", False)
+    if email_verificado(usuario) and _ir_para_checkout_se_pendente():
+        return
+    st.rerun()
+
 
 def _tela_cadastro_tab():
     if cadastro_publico_permite_treinador():
@@ -199,8 +359,6 @@ def _tela_cadastro_tab():
     if not enviar:
         return
 
-    # O backend continua suportando treinador, mas o fluxo publico do lancamento
-    # fica restrito a atletas para evitar cadastro novo desse perfil pela interface.
     if not cadastro_publico_permite_treinador():
         tipo_usuario = "atleta"
 
@@ -256,32 +414,56 @@ def _tela_cadastro_tab():
                 "aceitou_termos": 1,
                 "aceitou_privacidade": 1,
                 "data_consentimento": datetime.now().isoformat(timespec="seconds"),
+                "email_verificado": 0,
+                "email_verificado_em": None,
             }
         )
         criar_trial_assinatura(usuario_id, tipo_usuario)
     except Exception as exc:
-        st.warning(f"Erro ao criar usuario: {exc}")
+        LOGGER.exception("[EMAIL_VERIFY] Falha ao criar usuario email=%s erro=%s", email.strip().lower(), exc)
+        st.warning("Nao foi possivel concluir o cadastro agora. Tente novamente em alguns instantes.")
         return
 
-    usuario = autenticar_usuario(email, senha)
+    usuario = buscar_usuario_por_id(usuario_id)
+    LOGGER.info(
+        "[EMAIL_VERIFY] Conta criada com e-mail pendente usuario_id=%s email=%s tipo_usuario=%s",
+        usuario_id,
+        _mask_email(email),
+        tipo_usuario,
+    )
     convite_token = (st.session_state.get("convite_treinador_token") or "").strip()
     convite = buscar_convite_por_token(convite_token) if convite_token and tipo_usuario == "atleta" else None
     if convite:
         definir_vinculo_treinador_atleta(convite["treinador_id"], usuario_id, status="ativo")
-        st.success(f"Conta criada e vinculada automaticamente a {convite['treinador_nome']}.")
         st.session_state.pop("convite_treinador_token", None)
         st.session_state.pop("convite_treinador_resposta_pendente", None)
         _limpar_convite_da_url()
-    else:
-        st.success("Conta criada com sucesso.")
 
-    if usuario:
-        st.session_state["usuario"] = usuario
-        registrar_sessao_persistente(usuario["id"])
-        st.session_state.setdefault("mostrar_overview", False)
-        if _ir_para_checkout_se_pendente():
-            return
-    st.info("Sua conta foi criada. Continue para o checkout ou use a aba 'Entrar' se preferir.")
+    try:
+        resultado_email = solicitar_verificacao_email(
+            usuario_id,
+            criado_ip=_ip_requisicao(),
+            criado_user_agent=_user_agent_requisicao(),
+            origem="cadastro",
+        )
+    except Exception as exc:
+        LOGGER.exception(
+            "[EMAIL_VERIFY] Falha ao solicitar verificacao inicial usuario_id=%s erro=%s",
+            usuario_id,
+            exc,
+        )
+        resultado_email = {
+            "status": "envio_falhou",
+            "mensagem": "Conta criada. Nao conseguimos enviar o e-mail agora, mas voce pode reenviar na proxima tela.",
+        }
+    st.session_state["usuario"] = usuario
+    registrar_sessao_persistente(usuario["id"])
+    st.session_state.setdefault("mostrar_overview", False)
+    st.session_state["email_pending_notice"] = {
+        "status": resultado_email.get("status"),
+        "mensagem": resultado_email.get("mensagem") or "Conta criada. Confirme seu e-mail para liberar o acesso.",
+    }
+    st.rerun()
 
 
 def _tela_recuperacao_tab():
@@ -291,10 +473,232 @@ def _tela_recuperacao_tab():
 
     if not enviar:
         return
-
     if not email.strip():
         st.warning("Informe o e-mail da conta.")
         return
 
-    st.info("Fluxo em construcao.")
-    print(f"[TriLab] Recuperacao solicitada para: {email.strip().lower()}")
+    try:
+        resultado = solicitar_reset_senha_por_email(
+            email,
+            criado_ip=_ip_requisicao(),
+            criado_user_agent=_user_agent_requisicao(),
+        )
+        LOGGER.info("[EMAIL_RESET] Solicitacao publica recebida status=%s", resultado.get("status"))
+    except Exception as exc:
+        LOGGER.exception("[EMAIL_RESET] Falha ao iniciar recuperacao por e-mail erro=%s", exc)
+        resultado = {
+            "mensagem": "Se existir uma conta com esse e-mail, enviaremos as instrucoes para redefinir a senha.",
+        }
+    st.info(resultado.get("mensagem") or "Se existir uma conta com esse e-mail, enviaremos as instrucoes para redefinir a senha.")
+
+
+def _botao_continuar_pos_auth(label="Voltar para entrar"):
+    if st.button(label, use_container_width=True):
+        limpar_auth_query_params()
+        st.session_state["auth_modo"] = "Login"
+        st.rerun()
+
+
+def render_fluxo_publico_auth():
+    action = _auth_action_da_url()
+    if action not in {"verify_email", "reset_password"}:
+        return False
+
+    apply_global_styles()
+    st.markdown(_logo_auth_html(), unsafe_allow_html=True)
+
+    if action == "verify_email":
+        auth_card_start("Confirmacao de e-mail", "Validando o link enviado para sua conta.")
+        _render_confirmacao_email_publica()
+        auth_card_end()
+        return True
+
+    auth_card_start("Redefinir senha", "Use o link do e-mail para criar uma nova senha.")
+    _render_reset_publico()
+    auth_card_end()
+    return True
+
+
+def _render_confirmacao_email_publica():
+    token = _auth_token_da_url()
+    if not token:
+        st.error("Link invalido.")
+        _botao_continuar_pos_auth()
+        return
+
+    try:
+        resultado = confirmar_email_por_token(token)
+    except Exception as exc:
+        LOGGER.exception("[EMAIL_VERIFY] Falha ao confirmar token publico erro=%s", exc)
+        resultado = {
+            "ok": False,
+            "mensagem": "Nao foi possivel validar este link agora. Tente reenviar a confirmacao em alguns instantes.",
+        }
+    if resultado.get("ok"):
+        usuario_resultado = resultado.get("usuario")
+        usuario_sessao = st.session_state.get("usuario")
+        if usuario_sessao and usuario_resultado and int(usuario_sessao.get("id") or 0) == int(usuario_resultado.get("id") or 0):
+            st.session_state["usuario"] = usuario_resultado
+        st.success(resultado.get("mensagem") or "E-mail confirmado com sucesso.")
+        if st.button("Continuar para o app", type="primary", use_container_width=True):
+            limpar_auth_query_params()
+            if _tem_checkout_pendente() and usuario_resultado and email_verificado(usuario_resultado):
+                _ir_para_checkout_se_pendente()
+                return
+            st.rerun()
+        return
+
+    st.warning(resultado.get("mensagem") or "Nao foi possivel validar este link.")
+    st.caption("Entre na sua conta para reenviar um novo link de confirmacao, se precisar.")
+    _botao_continuar_pos_auth("Voltar para entrar")
+
+
+def _render_reset_publico():
+    token = _auth_token_da_url()
+    if not token:
+        st.error("Link invalido.")
+        _botao_continuar_pos_auth()
+        return
+
+    try:
+        diagnostico = inspecionar_token_email(token, TOKEN_TIPO_RESET_SENHA)
+    except Exception as exc:
+        LOGGER.exception("[EMAIL_RESET] Falha ao inspecionar token publico erro=%s", exc)
+        diagnostico = {
+            "ok": False,
+            "mensagem": "Nao foi possivel validar este link agora. Solicite um novo e-mail de recuperacao.",
+        }
+    if not diagnostico.get("ok"):
+        st.warning(diagnostico.get("mensagem") or "Nao foi possivel validar este link.")
+        st.caption("Solicite um novo e-mail de recuperacao na tela de login.")
+        _botao_continuar_pos_auth("Voltar para entrar")
+        return
+
+    with st.form("form_reset_publico"):
+        nova_senha = st.text_input("Nova senha", type="password")
+        confirmar_senha = st.text_input("Confirmar nova senha", type="password")
+        salvar = st.form_submit_button("Salvar nova senha", use_container_width=True)
+
+    if not salvar:
+        return
+    if not nova_senha:
+        st.error("Informe a nova senha.")
+        return
+    if not confirmar_senha:
+        st.error("Confirme a nova senha.")
+        return
+    if nova_senha != confirmar_senha:
+        st.error("A confirmacao da nova senha nao confere.")
+        return
+
+    try:
+        resultado = redefinir_senha_por_token(token, nova_senha)
+    except Exception as exc:
+        LOGGER.exception("[EMAIL_RESET] Falha ao redefinir senha por token erro=%s", exc)
+        resultado = {
+            "ok": False,
+            "mensagem": "Nao foi possivel redefinir a senha agora. Solicite um novo link e tente novamente.",
+        }
+    if not resultado.get("ok"):
+        st.error(resultado.get("mensagem") or "Nao foi possivel redefinir a senha.")
+        return
+
+    usuario_sessao = st.session_state.get("usuario")
+    if usuario_sessao and int(usuario_sessao.get("id") or 0) == int(resultado.get("usuario_id") or 0):
+        st.session_state.pop("usuario", None)
+        preparar_rotacao_browser_key()
+    st.success(resultado.get("mensagem") or "Senha atualizada com sucesso.")
+    if st.button("Ir para entrar", type="primary", use_container_width=True):
+        limpar_auth_query_params()
+        st.session_state["auth_modo"] = "Login"
+        st.rerun()
+
+
+def render_bloqueio_email_pendente(usuario, on_logout):
+    usuario_atual = buscar_usuario_por_id(usuario["id"]) or usuario
+    st.session_state["usuario"] = usuario_atual
+    if email_verificado(usuario_atual):
+        st.rerun()
+
+    st.title("Confirme seu e-mail")
+    _mensagem_email_pendente()
+    st.info(
+        "Para liberar o acesso ao TriLab, confirme o link enviado para "
+        f"{usuario_atual.get('email') or 'o e-mail cadastrado'}."
+    )
+    st.write("Enquanto isso, voce pode reenviar o e-mail, corrigir o endereco informado ou sair da conta.")
+
+    col_reenviar, col_status, col_sair = st.columns(3)
+    with col_reenviar:
+        if st.button("Reenviar e-mail", type="primary", use_container_width=True):
+            try:
+                resultado = solicitar_verificacao_email(
+                    usuario_atual["id"],
+                    criado_ip=_ip_requisicao(),
+                    criado_user_agent=_user_agent_requisicao(),
+                    origem="reenvio_manual",
+                )
+            except Exception as exc:
+                LOGGER.exception(
+                    "[EMAIL_VERIFY] Falha ao reenviar verificacao usuario_id=%s erro=%s",
+                    usuario_atual["id"],
+                    exc,
+                )
+                resultado = {
+                    "status": "erro",
+                    "mensagem": "Nao foi possivel reenviar o e-mail agora. Tente novamente em alguns instantes.",
+                }
+            st.session_state["email_pending_notice"] = {
+                "status": resultado.get("status"),
+                "mensagem": resultado.get("mensagem"),
+            }
+            st.rerun()
+    with col_status:
+        if st.button("Ja confirmei", use_container_width=True):
+            usuario_refresh = buscar_usuario_por_id(usuario_atual["id"])
+            if usuario_refresh and email_verificado(usuario_refresh):
+                st.session_state["usuario"] = usuario_refresh
+                st.session_state["email_pending_notice"] = {
+                    "status": "confirmado",
+                    "mensagem": "E-mail confirmado com sucesso. Seu acesso foi liberado.",
+                }
+                st.rerun()
+            st.info("Ainda nao encontramos a confirmacao. Tente novamente em alguns instantes.")
+    with col_sair:
+        if st.button("Sair", use_container_width=True):
+            on_logout()
+
+    with st.form(f"form_corrigir_email_{usuario_atual['id']}"):
+        novo_email = st.text_input("Corrigir e-mail", value=usuario_atual.get("email") or "", placeholder="voce@exemplo.com")
+        salvar_email = st.form_submit_button("Salvar e reenviar link", use_container_width=True)
+
+    if not salvar_email:
+        return
+
+    try:
+        resultado = atualizar_email_pendente_verificacao(
+            usuario_atual["id"],
+            novo_email,
+            criado_ip=_ip_requisicao(),
+            criado_user_agent=_user_agent_requisicao(),
+        )
+    except ValueError as exc:
+        st.error(str(exc))
+        return
+    except Exception as exc:
+        LOGGER.exception(
+            "[EMAIL_VERIFY] Falha ao atualizar email pendente usuario_id=%s erro=%s",
+            usuario_atual["id"],
+            exc,
+        )
+        st.error("Nao foi possivel atualizar o e-mail agora. Tente novamente em alguns instantes.")
+        return
+
+    usuario_refresh = resultado.get("usuario") or buscar_usuario_por_id(usuario_atual["id"])
+    if usuario_refresh:
+        st.session_state["usuario"] = usuario_refresh
+    st.session_state["email_pending_notice"] = {
+        "status": resultado.get("status"),
+        "mensagem": resultado.get("mensagem") or "Enviamos um novo link para o e-mail atualizado.",
+    }
+    st.rerun()

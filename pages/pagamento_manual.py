@@ -4,6 +4,7 @@ import logging
 import streamlit as st
 import streamlit.components.v1 as components
 
+from core.auth import garantir_usuario_em_pagina
 from core.financeiro import (
     aplicar_desconto,
     assinar_plano_manual,
@@ -56,13 +57,8 @@ inject_app_icons()
 st.title("Checkout")
 st.write("Revise o plano escolhido, aplique um cupom se quiser e siga com a contratacao.")
 
-usuario = st.session_state.get("usuario")
-if not usuario:
-    st.warning("Voce precisa estar logado para testar a ativacao manual.")
-    if st.button("Ir para login", use_container_width=True):
-        st.session_state["auth_modo"] = "Login"
-        _ir_para("app.py")
-else:
+usuario = garantir_usuario_em_pagina("pagina_pagamento_manual", exigir_email_confirmado=True)
+if usuario:
     diagnostico_checkout = diagnosticar_dados_checkout(usuario)
     plano_codigo = st.session_state.get("plano_checkout")
     plano = buscar_plano_por_codigo(plano_codigo) if plano_codigo else None

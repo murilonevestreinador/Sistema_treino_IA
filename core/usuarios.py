@@ -226,6 +226,10 @@ def _usuario_sem_senha(usuario, incluir_contexto_treino=False):
     usuario_limpo["is_admin"] = int(usuario_limpo.get("is_admin") or 0)
     usuario_limpo["aceitou_termos"] = int(usuario_limpo.get("aceitou_termos") or 0)
     usuario_limpo["aceitou_privacidade"] = int(usuario_limpo.get("aceitou_privacidade") or 0)
+    usuario_limpo["email_verificado"] = int(usuario_limpo.get("email_verificado") or 0)
+    usuario_limpo["email_verificado_em"] = usuario_limpo.get("email_verificado_em")
+    usuario_limpo["ultimo_envio_verificacao_em"] = usuario_limpo.get("ultimo_envio_verificacao_em")
+    usuario_limpo["ultimo_reset_senha_solicitado_em"] = usuario_limpo.get("ultimo_reset_senha_solicitado_em")
     usuario_limpo["cpf"] = normalizar_cpf(usuario_limpo.get("cpf") or usuario_limpo.get("cpf_cnpj")) or None
     usuario_limpo["telefone"] = normalizar_telefone(usuario_limpo.get("telefone") or usuario_limpo.get("mobilePhone")) or None
     usuario_limpo["cpf_cnpj"] = usuario_limpo["cpf"]
@@ -306,12 +310,12 @@ def criar_usuario(dados):
     cursor.execute(
         """
         INSERT INTO usuarios (
-            nome, apelido, foto_perfil, email, cpf, telefone, cref, senha, sexo, tipo_usuario, status_conta, onboarding_completo, is_admin,
+            nome, apelido, foto_perfil, email, email_verificado, email_verificado_em, cpf, telefone, cref, senha, sexo, tipo_usuario, status_conta, onboarding_completo, is_admin,
             idade, peso, altura, objetivo, distancia_principal, tempo_pratica,
             treinos_corrida_semana, tem_prova, data_prova, distancia_prova,
             treinos_musculacao_semana, local_treino, ambiente_treino_forca, experiencia_musculacao,
             historico_lesao, dor_atual, aceitou_termos, aceitou_privacidade, data_consentimento
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING id
         """,
         (
@@ -319,6 +323,8 @@ def criar_usuario(dados):
             (dados.get("apelido") or "").strip() or None,
             dados.get("foto_perfil"),
             (dados.get("email") or "").strip().lower(),
+            int(bool(dados.get("email_verificado", 0))),
+            dados.get("email_verificado_em"),
             contato["cpf"],
             contato["telefone"],
             cref_msg,
@@ -1144,6 +1150,7 @@ def excluir_usuario(usuario_id):
         )
         _executar_delete(cursor, usuario_id, "admin_logs", "DELETE FROM admin_logs WHERE admin_id = %s", (usuario_id,), apagados)
         _executar_delete(cursor, usuario_id, "sessoes_persistentes", "DELETE FROM sessoes_persistentes WHERE usuario_id = %s", (usuario_id,), apagados)
+        _executar_delete(cursor, usuario_id, "email_auth_tokens", "DELETE FROM email_auth_tokens WHERE usuario_id = %s", (usuario_id,), apagados)
         _executar_delete(cursor, usuario_id, "recuperacao_senha", "DELETE FROM recuperacao_senha WHERE usuario_id = %s", (usuario_id,), apagados)
         _executar_delete(cursor, usuario_id, "atleta_equipamentos", "DELETE FROM atleta_equipamentos WHERE atleta_id = %s", (usuario_id,), apagados)
         _executar_delete(
