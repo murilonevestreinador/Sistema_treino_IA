@@ -495,8 +495,23 @@ def _tela_recuperacao_tab():
 def _botao_continuar_pos_auth(label="Voltar para entrar"):
     if st.button(label, use_container_width=True):
         limpar_auth_query_params()
-        st.session_state["auth_modo"] = "Login"
-        st.rerun()
+        _abrir_app("Login")
+
+
+def _render_auth_shell(titulo, subtitulo, renderizador):
+    apply_global_styles()
+    st.markdown(_logo_auth_html(), unsafe_allow_html=True)
+    auth_card_start(titulo, subtitulo)
+    renderizador()
+    auth_card_end()
+
+
+def render_pagina_verificacao_email():
+    _render_auth_shell("Confirmacao de e-mail", "Validando o link enviado para sua conta.", _render_confirmacao_email_publica)
+
+
+def render_pagina_reset_senha():
+    _render_auth_shell("Redefinir senha", "Use o link do e-mail para criar uma nova senha.", _render_reset_publico)
 
 
 def render_fluxo_publico_auth():
@@ -504,18 +519,11 @@ def render_fluxo_publico_auth():
     if action not in {"verify_email", "reset_password"}:
         return False
 
-    apply_global_styles()
-    st.markdown(_logo_auth_html(), unsafe_allow_html=True)
-
     if action == "verify_email":
-        auth_card_start("Confirmacao de e-mail", "Validando o link enviado para sua conta.")
-        _render_confirmacao_email_publica()
-        auth_card_end()
+        render_pagina_verificacao_email()
         return True
 
-    auth_card_start("Redefinir senha", "Use o link do e-mail para criar uma nova senha.")
-    _render_reset_publico()
-    auth_card_end()
+    render_pagina_reset_senha()
     return True
 
 
@@ -545,7 +553,7 @@ def _render_confirmacao_email_publica():
             if _tem_checkout_pendente() and usuario_resultado and email_verificado(usuario_resultado):
                 _ir_para_checkout_se_pendente()
                 return
-            st.rerun()
+            _abrir_app()
         return
 
     st.warning(resultado.get("mensagem") or "Nao foi possivel validar este link.")
@@ -610,8 +618,7 @@ def _render_reset_publico():
     st.success(resultado.get("mensagem") or "Senha atualizada com sucesso.")
     if st.button("Ir para entrar", type="primary", use_container_width=True):
         limpar_auth_query_params()
-        st.session_state["auth_modo"] = "Login"
-        st.rerun()
+        _abrir_app("Login")
 
 
 def render_bloqueio_email_pendente(usuario, on_logout):

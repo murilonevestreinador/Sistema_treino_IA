@@ -281,14 +281,28 @@ def solicitar_verificacao_email(
     finally:
         conn.close()
 
-    link = montar_link_publico(
-        {
-            "auth_action": "verify_email",
-            "token": novo_token["token"],
-        },
-        base_url=base_url,
-    )
-    envio = enviar_email_verificacao(usuario.get("nome"), usuario.get("email"), link, novo_token["expira_em"])
+    try:
+        link = montar_link_publico(
+            {
+                "token": novo_token["token"],
+            },
+            base_url=base_url,
+            caminho="/verificar-email",
+        )
+        envio = enviar_email_verificacao(usuario.get("nome"), usuario.get("email"), link, novo_token["expira_em"])
+    except Exception as exc:
+        LOGGER.exception(
+            "[EMAIL_VERIFY] Falha ao preparar/enviar e-mail usuario_id=%s email=%s erro=%s",
+            usuario_id,
+            _mask_email(usuario.get("email")),
+            exc,
+        )
+        return {
+            "ok": False,
+            "status": "envio_falhou",
+            "mensagem": "Sua conta foi criada, mas nao conseguimos enviar o e-mail agora. Voce pode reenviar daqui a pouco.",
+            "usuario": buscar_usuario_por_id(usuario_id),
+        }
     if not envio.get("ok"):
         LOGGER.warning(
             "[EMAIL_VERIFY] Falha no envio usuario_id=%s email=%s provider=%s",
@@ -526,14 +540,23 @@ def solicitar_reset_senha_por_email(
     finally:
         conn.close()
 
-    link = montar_link_publico(
-        {
-            "auth_action": "reset_password",
-            "token": novo_token["token"],
-        },
-        base_url=base_url,
-    )
-    envio = enviar_email_reset_senha(usuario.get("nome"), usuario.get("email"), link, novo_token["expira_em"])
+    try:
+        link = montar_link_publico(
+            {
+                "token": novo_token["token"],
+            },
+            base_url=base_url,
+            caminho="/redefinir-senha",
+        )
+        envio = enviar_email_reset_senha(usuario.get("nome"), usuario.get("email"), link, novo_token["expira_em"])
+    except Exception as exc:
+        LOGGER.exception(
+            "[EMAIL_RESET] Falha ao preparar/enviar reset usuario_id=%s email=%s erro=%s",
+            usuario["id"],
+            _mask_email(usuario.get("email")),
+            exc,
+        )
+        return {"ok": True, "status": "envio_falhou", "mensagem": mensagem_neutra}
     if not envio.get("ok"):
         LOGGER.warning(
             "[EMAIL_RESET] Falha no envio usuario_id=%s email=%s provider=%s",

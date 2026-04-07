@@ -5,13 +5,14 @@ import smtplib
 import ssl
 from datetime import datetime
 from email.message import EmailMessage
+from html import escape
 from urllib.parse import urlencode
 
 import requests
 
 
-DEFAULT_PUBLIC_APP_URL = "https://trilab-treinamento.onrender.com"
 LOGGER = logging.getLogger("trilab.email.service")
+RESEND_API_URL = "https://api.resend.com/emails"
 
 
 def _bool_env(nome, padrao=False):
@@ -33,32 +34,48 @@ def _mask_email(valor):
     return f"{local_mask}@{dominio}"
 
 
-def resolver_url_base_publica():
+def resolver_url_base_publica(obrigatorio=False):
+    # Em producao, configure APP_BASE_URL com a URL publica usada nos links transacionais.
     candidatos = [
-        os.getenv("APP_BASE_URL", ""),
-        os.getenv("RENDER_EXTERNAL_URL", ""),
-        os.getenv("PUBLIC_APP_URL", ""),
-        DEFAULT_PUBLIC_APP_URL,
+        ("APP_BASE_URL", os.getenv("APP_BASE_URL", "")),
+        ("PUBLIC_APP_URL", os.getenv("PUBLIC_APP_URL", "")),
+        ("RENDER_EXTERNAL_URL", os.getenv("RENDER_EXTERNAL_URL", "")),
     ]
 
-    for url in candidatos:
+    for nome_env, url in candidatos:
         url_limpa = (url or "").strip().rstrip("/")
         if url_limpa:
+            if nome_env != "APP_BASE_URL":
+                LOGGER.warning(
+                    "[EMAIL_SERVICE] Usando %s como fallback de URL publica. Configure APP_BASE_URL em producao.",
+                    nome_env,
+                )
             return url_limpa
 
     hostname_render = (os.getenv("RENDER_EXTERNAL_HOSTNAME", "") or "").strip().strip("/")
     if hostname_render:
+        LOGGER.warning(
+            "[EMAIL_SERVICE] Usando RENDER_EXTERNAL_HOSTNAME como fallback de URL publica. Configure APP_BASE_URL em producao."
+        )
         return f"https://{hostname_render}"
-    return DEFAULT_PUBLIC_APP_URL
+
+    if obrigatorio:
+        raise RuntimeError("APP_BASE_URL e obrigatoria para envio de e-mail transacional.")
+    return ""
 
 
-def montar_link_publico(query_params, base_url=None):
-    url_base = (base_url or resolver_url_base_publica()).strip().rstrip("/")
+def montar_link_publico(query_params=None, base_url=None, caminho=""):
+    envio_real = _provider_normalizado() not in {"disabled", "log"}
+    url_base = (base_url or resolver_url_base_publica(obrigatorio=envio_real)).strip().rstrip("/")
+    caminho_limpo = (caminho or "").strip()
+    if caminho_limpo and not caminho_limpo.startswith("/"):
+        caminho_limpo = f"/{caminho_limpo}"
     query = urlencode({chave: valor for chave, valor in (query_params or {}).items() if valor not in (None, "")})
+    destino = f"{url_base}{caminho_limpo}" if url_base else (caminho_limpo or "/")
     if not query:
-        return url_base
-    separador = "&" if "?" in url_base else "?"
-    return f"{url_base}{separador}{query}"
+        return destino
+    separador = "&" if "?" in destino else "?"
+    return f"{destino}{separador}{query}"
 
 
 def _provider_normalizado():
@@ -67,7 +84,7 @@ def _provider_normalizado():
         return "log"
     if not _bool_env("EMAIL_ENABLED", False):
         return "disabled"
-    return provider or "smtp"
+    return provider or "resend"
 
 
 def _email_from():
@@ -78,24 +95,35 @@ def _email_reply_to():
     return (os.getenv("EMAIL_REPLY_TO") or "").strip() or None
 
 
+def _resend_api_key():
+    return (os.getenv("RESEND_API_KEY") or "").strip()
+
+
 def _email_layout_html(titulo, texto, cta_label=None, cta_link=None, rodape=None):
     bloco_cta = ""
     if cta_label and cta_link:
+        cta_link_seguro = escape(str(cta_link), quote=True)
         bloco_cta = (
             f'<p style="margin:24px 0;">'
-            f'<a href="{cta_link}" '
+            f'<a href="{cta_link_seguro}" '
             f'style="display:inline-block;padding:12px 18px;border-radius:999px;'
-            f'background:#E73529;color:#ffffff;text-decoration:none;font-weight:700;">{cta_label}</a>'
+            f'background:#E73529;color:#ffffff;text-decoration:none;font-weight:700;">{escape(str(cta_label))}</a>'
+            f"</p>"
+            f'<p style="margin:10px 0 0;color:#64748b;font-size:13px;line-height:1.6;">'
+            f'Se o botao nao abrir, copie e cole este link no navegador:<br>'
+            f'<a href="{cta_link_seguro}" style="color:#023363;word-break:break-all;">{cta_link_seguro}</a>'
             f"</p>"
         )
-    rodape_html = f'<p style="margin-top:24px;color:#64748b;font-size:13px;">{rodape}</p>' if rodape else ""
+    rodape_html = (
+        f'<p style="margin-top:24px;color:#64748b;font-size:13px;">{escape(str(rodape))}</p>' if rodape else ""
+    )
     return (
         '<div style="font-family:Segoe UI,Arial,sans-serif;max-width:620px;margin:0 auto;'
         'padding:24px;border:1px solid #d9e2ec;border-radius:20px;background:#ffffff;">'
         '<div style="margin-bottom:16px;font-size:12px;font-weight:700;letter-spacing:.08em;'
         'text-transform:uppercase;color:#023363;">TriLab TREINAMENTO</div>'
-        f'<h2 style="margin:0 0 12px;color:#0f172a;">{titulo}</h2>'
-        f'<p style="margin:0;color:#475569;line-height:1.7;">{texto}</p>'
+        f'<h2 style="margin:0 0 12px;color:#0f172a;">{escape(str(titulo))}</h2>'
+        f'<p style="margin:0;color:#475569;line-height:1.7;">{escape(str(texto))}</p>'
         f"{bloco_cta}"
         f"{rodape_html}"
         "</div>"
@@ -154,12 +182,14 @@ def _enviar_via_smtp(destino, assunto, html, texto=None):
 
 
 def _enviar_via_resend(destino, assunto, html, texto=None):
-    api_key = (os.getenv("EMAIL_API_KEY") or "").strip()
+    api_key = _resend_api_key()
     remetente = _email_from()
     reply_to = _email_reply_to()
 
-    if not api_key or not remetente:
-        raise RuntimeError("EMAIL_API_KEY e EMAIL_FROM sao obrigatorios para o provider resend.")
+    if not api_key:
+        raise RuntimeError("RESEND_API_KEY e obrigatoria para o provider resend.")
+    if not remetente:
+        raise RuntimeError("EMAIL_FROM e obrigatorio para o provider resend.")
 
     payload = {
         "from": remetente,
@@ -172,8 +202,15 @@ def _enviar_via_resend(destino, assunto, html, texto=None):
     if reply_to:
         payload["reply_to"] = reply_to
 
+    LOGGER.info(
+        "[EMAIL_SERVICE] Tentando envio via Resend destino=%s assunto=%s remetente_configurado=%s reply_to_configurado=%s",
+        _mask_email(destino),
+        assunto,
+        bool(remetente),
+        bool(reply_to),
+    )
     resposta = requests.post(
-        "https://api.resend.com/emails",
+        RESEND_API_URL,
         headers={
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
@@ -182,7 +219,8 @@ def _enviar_via_resend(destino, assunto, html, texto=None):
         timeout=15,
     )
     if resposta.status_code >= 400:
-        raise RuntimeError(f"Resend retornou HTTP {resposta.status_code}.")
+        corpo_erro = (resposta.text or "").strip().replace("\n", " ")[:500]
+        raise RuntimeError(f"Resend retornou HTTP {resposta.status_code}: {corpo_erro}")
 
     try:
         corpo = resposta.json()
@@ -193,6 +231,12 @@ def _enviar_via_resend(destino, assunto, html, texto=None):
 
 def enviar_email(destino, assunto, html, texto=None, metadados=None):
     provider = _provider_normalizado()
+    LOGGER.info(
+        "[EMAIL_SERVICE] Provider configurado=%s destino=%s tipo=%s",
+        provider,
+        _mask_email(destino),
+        (metadados or {}).get("tipo"),
+    )
     if provider == "disabled":
         LOGGER.warning(
             "[EMAIL_SERVICE] Envio desabilitado destino=%s assunto=%s provider=%s",
@@ -207,8 +251,10 @@ def enviar_email(destino, assunto, html, texto=None, metadados=None):
             resultado = _enviar_via_log(destino, assunto, html, texto=texto, metadados=metadados)
         elif provider == "resend":
             resultado = _enviar_via_resend(destino, assunto, html, texto=texto)
-        else:
+        elif provider == "smtp":
             resultado = _enviar_via_smtp(destino, assunto, html, texto=texto)
+        else:
+            raise RuntimeError(f"EMAIL_PROVIDER invalido: {provider}. Use resend, smtp ou log.")
         LOGGER.info(
             "[EMAIL_SERVICE] E-mail enviado destino=%s assunto=%s provider=%s message_id=%s",
             _mask_email(destino),
