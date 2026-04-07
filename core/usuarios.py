@@ -19,7 +19,10 @@ class ExclusaoContaError(Exception):
 
 
 class ExclusaoContaBloqueadaError(ExclusaoContaError):
-    pass
+    def __init__(self, mensagem, motivo=None, detalhes=None):
+        super().__init__(mensagem)
+        self.motivo = motivo
+        self.detalhes = detalhes or {}
 
 
 def _linha_para_dict(linha):
@@ -1044,7 +1047,9 @@ def _validar_exclusao_automatica(cursor, usuario):
                 usuario_id,
             )
             raise ExclusaoContaBloqueadaError(
-                "Nao foi possivel excluir sua conta automaticamente porque ela ainda e necessaria para a administracao do sistema. Entre em contato com o suporte."
+                "Nao foi possivel excluir sua conta automaticamente porque ela ainda e necessaria para a administracao do sistema. Entre em contato com o suporte.",
+                motivo="ultimo_admin",
+                detalhes=resumo,
             )
 
     motivos_bloqueio = []
@@ -1071,7 +1076,9 @@ def _validar_exclusao_automatica(cursor, usuario):
             resumo,
         )
         raise ExclusaoContaBloqueadaError(
-            "Nao foi possivel excluir sua conta automaticamente porque existe historico financeiro ou operacional que precisa de tratamento manual. Entre em contato com o suporte."
+            "Nao foi possivel excluir sua conta automaticamente porque existe historico financeiro ou operacional que precisa de tratamento manual. Entre em contato com o suporte.",
+            motivo=",".join(motivos_bloqueio),
+            detalhes=resumo,
         )
 
     return resumo
@@ -1247,6 +1254,191 @@ def excluir_usuario(usuario_id):
         raise ExclusaoContaError("Nao foi possivel concluir a exclusao da conta no momento.")
     finally:
         conn.close()
+
+
+def _buscar_contexto_exclusao_admin(admin_id, usuario_id):
+    conn = conectar()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            """
+            SELECT id, nome, email, tipo_usuario, is_admin, status_conta
+            FROM usuarios
+            WHERE id = %s
+            """,
+            (admin_id,),
+        )
+        admin = _linha_para_dict(cursor.fetchone())
+        cursor.execute(
+            """
+            SELECT id, nome, email, tipo_usuario, is_admin, status_conta
+            FROM usuarios
+            WHERE id = %s
+            """,
+            (usuario_id,),
+        )
+        usuario = _linha_para_dict(cursor.fetchone())
+        return admin, usuario
+    finally:
+        conn.close()
+
+
+def _registrar_log_admin_exclusao(admin_id, usuario_id, acao, detalhes):
+    if int(admin_id or 0) == int(usuario_id or 0):
+        LOGGER.info(
+            "[ADMIN_DELETE] Auditoria em admin_logs ignorada para autoexclusao admin_id=%s alvo_id=%s acao=%s detalhes=%s",
+            admin_id,
+            usuario_id,
+            acao,
+            detalhes,
+        )
+        return
+
+    conn = None
+    try:
+        conn = conectar()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO admin_logs (admin_id, acao, alvo_tipo, alvo_id, detalhes)
+            VALUES (%s, %s, %s, %s, %s)
+            """,
+            (admin_id, acao, "usuario", usuario_id, detalhes),
+        )
+        conn.commit()
+    except Exception:
+        if conn:
+            conn.rollback()
+        LOGGER.exception(
+            "[ADMIN_DELETE_ERROR] Falha ao registrar auditoria admin_id=%s alvo_id=%s acao=%s detalhes=%s",
+            admin_id,
+            usuario_id,
+            acao,
+            detalhes,
+        )
+    finally:
+        if conn:
+            conn.close()
+
+
+def _detalhes_admin_delete(admin, usuario):
+    tipo_alvo = normalizar_tipo_usuario(usuario.get("tipo_usuario"), usuario.get("is_admin"))
+    status_alvo = normalizar_status_conta(usuario.get("status_conta"))
+    return (
+        f"admin_email={admin.get('email')}; "
+        f"alvo_email={usuario.get('email')}; "
+        f"alvo_nome={usuario.get('nome')}; "
+        f"alvo_tipo={tipo_alvo}; "
+        f"alvo_status={status_alvo}"
+    )
+
+
+def excluir_usuario_por_admin(admin_id, usuario_id):
+    try:
+        admin_id = int(admin_id)
+        usuario_id = int(usuario_id)
+    except (TypeError, ValueError):
+        LOGGER.warning("[ADMIN_DELETE] Tentativa invalida admin_id=%s alvo_id=%s", admin_id, usuario_id)
+        raise ExclusaoContaError("Usuario nao encontrado para exclusao.")
+
+    admin, usuario = _buscar_contexto_exclusao_admin(admin_id, usuario_id)
+    if not eh_admin(admin):
+        LOGGER.warning("[ADMIN_DELETE] Acesso negado admin_id=%s alvo_id=%s", admin_id, usuario_id)
+        raise PermissionError("Apenas administradores podem excluir usuarios.")
+
+    if not usuario:
+        detalhes = f"admin_email={admin.get('email')}; resultado=nao_encontrado"
+        LOGGER.warning("[ADMIN_DELETE] Usuario alvo nao encontrado admin_id=%s alvo_id=%s", admin_id, usuario_id)
+        _registrar_log_admin_exclusao(admin_id, usuario_id, "[ADMIN_DELETE] usuario nao encontrado para exclusao", detalhes)
+        raise ExclusaoContaError("Usuario nao encontrado para exclusao.")
+
+    detalhes_base = _detalhes_admin_delete(admin, usuario)
+    if admin_id == usuario_id:
+        LOGGER.warning(
+            "[ADMIN_DELETE] Autoexclusao bloqueada admin_id=%s admin_email=%s",
+            admin_id,
+            admin.get("email"),
+        )
+        raise ExclusaoContaBloqueadaError(
+            "Por seguranca, exclua sua propria conta pelo perfil ou solicite a acao a outro administrador.",
+            motivo="autoexclusao_admin",
+        )
+
+    LOGGER.info(
+        "[ADMIN_DELETE] Tentativa de exclusao admin_id=%s admin_email=%s alvo_id=%s alvo_email=%s alvo_tipo=%s",
+        admin_id,
+        admin.get("email"),
+        usuario_id,
+        usuario.get("email"),
+        normalizar_tipo_usuario(usuario.get("tipo_usuario"), usuario.get("is_admin")),
+    )
+    _registrar_log_admin_exclusao(
+        admin_id,
+        usuario_id,
+        "[ADMIN_DELETE] tentou excluir usuario",
+        f"{detalhes_base}; resultado=tentativa",
+    )
+
+    try:
+        resultado = excluir_usuario(usuario_id)
+    except ExclusaoContaBloqueadaError as exc:
+        motivo = getattr(exc, "motivo", None) or "regra_central"
+        detalhes_bloqueio = getattr(exc, "detalhes", None) or {}
+        LOGGER.warning(
+            "[ADMIN_DELETE] Exclusao bloqueada admin_id=%s alvo_id=%s motivo=%s detalhes=%s",
+            admin_id,
+            usuario_id,
+            motivo,
+            detalhes_bloqueio,
+        )
+        _registrar_log_admin_exclusao(
+            admin_id,
+            usuario_id,
+            "[ADMIN_DELETE] exclusao bloqueada",
+            f"{detalhes_base}; resultado=bloqueado; motivo={motivo}; detalhes={detalhes_bloqueio}",
+        )
+        raise
+    except ExclusaoContaError as exc:
+        LOGGER.error(
+            "[ADMIN_DELETE_ERROR] Falha controlada na exclusao admin_id=%s alvo_id=%s mensagem=%s",
+            admin_id,
+            usuario_id,
+            str(exc),
+        )
+        _registrar_log_admin_exclusao(
+            admin_id,
+            usuario_id,
+            "[ADMIN_DELETE_ERROR] falha ao excluir usuario",
+            f"{detalhes_base}; resultado=erro; mensagem={str(exc)}",
+        )
+        raise
+    except Exception as exc:
+        LOGGER.exception(
+            "[ADMIN_DELETE_ERROR] Falha inesperada na exclusao admin_id=%s alvo_id=%s",
+            admin_id,
+            usuario_id,
+        )
+        _registrar_log_admin_exclusao(
+            admin_id,
+            usuario_id,
+            "[ADMIN_DELETE_ERROR] falha inesperada ao excluir usuario",
+            f"{detalhes_base}; resultado=erro_inesperado; mensagem={str(exc)}",
+        )
+        raise ExclusaoContaError("Nao foi possivel concluir a exclusao da conta no momento.")
+
+    LOGGER.info(
+        "[ADMIN_DELETE] Exclusao concluida admin_id=%s alvo_id=%s apagados=%s",
+        admin_id,
+        usuario_id,
+        resultado.get("apagados"),
+    )
+    _registrar_log_admin_exclusao(
+        admin_id,
+        usuario_id,
+        "[ADMIN_DELETE] usuario excluido",
+        f"{detalhes_base}; resultado=sucesso; apagados={resultado.get('apagados')}",
+    )
+    return resultado
 
 
 def saudacao_usuario(sexo):

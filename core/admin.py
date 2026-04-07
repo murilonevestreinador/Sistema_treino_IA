@@ -18,8 +18,11 @@ from core.financeiro import (
 from core.pagamentos_gateway import resumo_operacional_asaas, testar_conexao_asaas, validar_configuracao_asaas
 from core.permissoes import validar_admin
 from core.usuarios import (
+    ExclusaoContaBloqueadaError,
+    ExclusaoContaError,
     alterar_papel_usuario_por_admin,
     atualizar_status_conta,
+    excluir_usuario_por_admin,
     listar_usuarios,
     redefinir_senha_usuario,
 )
@@ -433,7 +436,73 @@ def _render_dashboard():
         st.info("Sem dados operacionais.")
 
 
+def _render_exclusao_usuario_admin(admin, usuario):
+    usuario_id = int(usuario["id"])
+    email_alvo = (usuario.get("email") or "").strip()
+    confirmacao_esperada = email_alvo.lower() or str(usuario_id)
+    rotulo_confirmacao = "Digite o e-mail do usuario para confirmar" if email_alvo else "Digite o ID do usuario para confirmar"
+
+    st.divider()
+    with st.expander("Zona de risco: excluir usuario", expanded=False):
+        st.warning(
+            "Esta acao remove a conta definitivamente quando a regra central permitir. "
+            "Contas com historico financeiro, assinaturas ou vinculos criticos serao bloqueadas."
+        )
+        st.write(f"Nome: {usuario.get('nome') or '-'}")
+        st.write(f"E-mail: {email_alvo or '-'}")
+        st.write(f"Tipo: {usuario.get('tipo_usuario') or '-'}")
+        st.write(f"Status: {usuario.get('status_conta') or 'ativo'}")
+
+        if int(admin.get("id") or 0) == usuario_id:
+            st.info("Para excluir sua propria conta, use o fluxo do perfil ou solicite a acao a outro administrador.")
+            return
+
+        with st.form(f"form_admin_excluir_usuario_{usuario_id}"):
+            confirmar = st.checkbox("Confirmo que desejo excluir esta conta permanentemente.")
+            valor_confirmacao = st.text_input(rotulo_confirmacao, value="")
+            excluir = st.form_submit_button("Excluir usuario", use_container_width=True)
+
+        if not excluir:
+            return
+        if not confirmar:
+            st.error("Confirme a exclusao para continuar.")
+            return
+        if valor_confirmacao.strip().lower() != confirmacao_esperada:
+            st.error("Digite exatamente o identificador solicitado para confirmar a exclusao.")
+            return
+
+        try:
+            excluir_usuario_por_admin(admin["id"], usuario_id)
+        except PermissionError:
+            st.error("Apenas administradores podem excluir usuarios.")
+            return
+        except ExclusaoContaBloqueadaError as exc:
+            if getattr(exc, "motivo", None) == "autoexclusao_admin":
+                st.error(str(exc))
+            else:
+                st.error("Nao foi possivel excluir esta conta porque ela possui historico ou vinculos que exigem preservacao.")
+                st.caption("A tentativa foi registrada no backend para auditoria.")
+            return
+        except ExclusaoContaError:
+            st.error("Nao foi possivel concluir a exclusao agora. Tente novamente.")
+            return
+        except Exception:
+            st.error("Nao foi possivel concluir a exclusao agora. Tente novamente.")
+            return
+
+        st.session_state["mensagem_admin_usuarios"] = ("sucesso", "Usuario excluido com sucesso.")
+        st.rerun()
+
+
 def _render_usuarios(admin):
+    mensagem = st.session_state.pop("mensagem_admin_usuarios", None)
+    if mensagem:
+        tipo_mensagem, texto_mensagem = mensagem
+        if tipo_mensagem == "sucesso":
+            st.success(texto_mensagem)
+        else:
+            st.info(texto_mensagem)
+
     col_busca, col_tipo, col_status = st.columns([2.2, 1, 1])
     with col_busca:
         busca = st.text_input("Buscar por nome ou email")
@@ -489,6 +558,8 @@ def _render_usuarios(admin):
             redefinir_senha_usuario(usuario_id, senha)
             registrar_log_admin(admin["id"], "redefiniu senha", "usuario", usuario_id, usuario["email"])
             st.warning(f"Senha temporaria: {senha}")
+
+    _render_exclusao_usuario_admin(admin, usuario)
 
 
 def _render_treinadores():
