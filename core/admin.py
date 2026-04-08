@@ -1,3 +1,4 @@
+import logging
 from datetime import date, datetime, timedelta
 import secrets
 
@@ -26,6 +27,9 @@ from core.usuarios import (
     listar_usuarios,
     redefinir_senha_usuario,
 )
+
+
+LOGGER = logging.getLogger("trilab.admin")
 
 
 def _fetch_all(sql, params=()):
@@ -438,22 +442,34 @@ def _render_dashboard():
 
 def _render_exclusao_usuario_admin(admin, usuario):
     usuario_id = int(usuario["id"])
+    nome_alvo = (usuario.get("nome") or "").strip() or "-"
     email_alvo = (usuario.get("email") or "").strip()
+    tipo_alvo = (usuario.get("tipo_usuario") or "-").strip()
+    status_alvo = (usuario.get("status_conta") or "ativo").strip()
     confirmacao_esperada = email_alvo.lower() or str(usuario_id)
     rotulo_confirmacao = "Digite o e-mail do usuario para confirmar" if email_alvo else "Digite o ID do usuario para confirmar"
 
     st.divider()
-    with st.expander("Zona de risco: excluir usuario", expanded=False):
+    st.markdown("### Acoes criticas")
+    st.caption("Use esta area apenas para manutencao administrativa. A regra central decide se a exclusao pode prosseguir.")
+
+    with st.expander(f"Excluir usuario selecionado: {nome_alvo}", expanded=False):
         st.warning(
             "Esta acao remove a conta definitivamente quando a regra central permitir. "
             "Contas com historico financeiro, assinaturas ou vinculos criticos serao bloqueadas."
         )
-        st.write(f"Nome: {usuario.get('nome') or '-'}")
+        st.write(f"Nome: {nome_alvo}")
         st.write(f"E-mail: {email_alvo or '-'}")
-        st.write(f"Tipo: {usuario.get('tipo_usuario') or '-'}")
-        st.write(f"Status: {usuario.get('status_conta') or 'ativo'}")
+        st.write(f"Tipo: {tipo_alvo}")
+        st.write(f"Status: {status_alvo}")
 
         if int(admin.get("id") or 0) == usuario_id:
+            LOGGER.warning(
+                "[ADMIN_DELETE] UI bloqueou autoexclusao admin_id=%s alvo_id=%s alvo_email=%s",
+                admin.get("id"),
+                usuario_id,
+                email_alvo,
+            )
             st.info("Para excluir sua propria conta, use o fluxo do perfil ou solicite a acao a outro administrador.")
             return
 
@@ -465,28 +481,67 @@ def _render_exclusao_usuario_admin(admin, usuario):
         if not excluir:
             return
         if not confirmar:
+            LOGGER.warning(
+                "[ADMIN_DELETE] Confirmacao incompleta admin_id=%s alvo_id=%s alvo_email=%s motivo=checkbox",
+                admin.get("id"),
+                usuario_id,
+                email_alvo,
+            )
             st.error("Confirme a exclusao para continuar.")
             return
         if valor_confirmacao.strip().lower() != confirmacao_esperada:
+            LOGGER.warning(
+                "[ADMIN_DELETE] Confirmacao invalida admin_id=%s alvo_id=%s alvo_email=%s",
+                admin.get("id"),
+                usuario_id,
+                email_alvo,
+            )
             st.error("Digite exatamente o identificador solicitado para confirmar a exclusao.")
             return
 
         try:
             excluir_usuario_por_admin(admin["id"], usuario_id)
         except PermissionError:
+            LOGGER.warning(
+                "[ADMIN_DELETE] UI recebeu acesso negado admin_id=%s alvo_id=%s alvo_email=%s",
+                admin.get("id"),
+                usuario_id,
+                email_alvo,
+            )
             st.error("Apenas administradores podem excluir usuarios.")
             return
         except ExclusaoContaBloqueadaError as exc:
+            LOGGER.warning(
+                "[ADMIN_DELETE] UI exibiu bloqueio admin_id=%s alvo_id=%s alvo_email=%s motivo=%s",
+                admin.get("id"),
+                usuario_id,
+                email_alvo,
+                getattr(exc, "motivo", None),
+            )
             if getattr(exc, "motivo", None) == "autoexclusao_admin":
                 st.error(str(exc))
             else:
                 st.error("Nao foi possivel excluir esta conta porque ela possui historico ou vinculos que exigem preservacao.")
                 st.caption("A tentativa foi registrada no backend para auditoria.")
             return
-        except ExclusaoContaError:
+        except ExclusaoContaError as exc:
+            LOGGER.warning(
+                "[ADMIN_DELETE_ERROR] Falha controlada na UI admin_id=%s alvo_id=%s alvo_email=%s mensagem=%s",
+                admin.get("id"),
+                usuario_id,
+                email_alvo,
+                str(exc),
+            )
             st.error("Nao foi possivel concluir a exclusao agora. Tente novamente.")
             return
-        except Exception:
+        except Exception as exc:
+            LOGGER.exception(
+                "[ADMIN_DELETE_ERROR] Falha inesperada na UI admin_id=%s alvo_id=%s alvo_email=%s erro=%s",
+                admin.get("id"),
+                usuario_id,
+                email_alvo,
+                exc,
+            )
             st.error("Nao foi possivel concluir a exclusao agora. Tente novamente.")
             return
 
@@ -520,6 +575,20 @@ def _render_usuarios(admin):
         return
     usuario_id = st.selectbox("Selecionar usuario", [u["id"] for u in usuarios], format_func=lambda valor: next(f"{u['nome']} ({u['email']})" for u in usuarios if u["id"] == valor))
     usuario = next(u for u in usuarios if u["id"] == usuario_id)
+
+    st.markdown("### Usuario selecionado")
+    st.dataframe(pd.DataFrame([{
+        "ID": usuario["id"],
+        "Nome": usuario.get("nome") or "-",
+        "Email": usuario.get("email") or "-",
+        "Tipo": usuario.get("tipo_usuario") or "-",
+        "Status conta": usuario.get("status_conta", "ativo"),
+        "Plano": usuario.get("plano_nome") or "-",
+        "Assinatura": usuario.get("assinatura_status") or "-",
+    }]), use_container_width=True, hide_index=True)
+    st.caption("As acoes abaixo afetam somente o usuario selecionado.")
+
+    st.markdown("### Acoes administrativas")
     col1, col2, col3 = st.columns(3)
     with col1:
         novo_status = st.selectbox("Novo status", ["ativo", "inativo", "suspenso", "cancelado"], index=["ativo", "inativo", "suspenso", "cancelado"].index(usuario.get("status_conta", "ativo")))
