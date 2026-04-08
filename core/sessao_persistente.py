@@ -1,5 +1,6 @@
 import hashlib
 import json
+import logging
 import secrets
 
 import streamlit as st
@@ -9,6 +10,7 @@ from core.banco import conectar
 from core.usuarios import buscar_usuario_por_id
 
 
+LOGGER = logging.getLogger("trilab.session")
 QUERY_PARAM_BROWSER_KEY = "bk"
 QUERY_PARAM_BROWSER_SYNC = "bk_sync"
 SESSION_KEY_BROWSER = "browser_key"
@@ -16,6 +18,7 @@ SESSION_KEY_RESET_NONCE = "browser_key_reset_nonce"
 LOCAL_STORAGE_BROWSER_KEY = "trilab_browser_key"
 SESSION_STORAGE_BROWSER_SYNC = "trilab_browser_key_synced"
 SESSION_STORAGE_RESET_NONCE = "trilab_browser_key_reset_nonce"
+ADMIN_DIAGNOSTIC_EMAIL = "murilo_nevescontato@hotmail.com"
 
 
 def _hash_browser_key(browser_key):
@@ -24,6 +27,15 @@ def _hash_browser_key(browser_key):
 
 def _browser_key_atual():
     return (st.session_state.get(SESSION_KEY_BROWSER) or "").strip()
+
+
+def browser_key_disponivel():
+    return bool(_browser_key_atual())
+
+
+def _email_admin_diagnostico(usuario=None, email=None):
+    email_normalizado = (email or (usuario or {}).get("email") or "").strip().lower()
+    return email_normalizado == ADMIN_DIAGNOSTIC_EMAIL
 
 
 def _user_agent_atual():
@@ -48,6 +60,7 @@ def injetar_bridge_navegador():
         "session_storage_sync": SESSION_STORAGE_BROWSER_SYNC,
         "session_storage_reset": SESSION_STORAGE_RESET_NONCE,
         "reset_nonce": reset_nonce,
+        "browser_key_presente": browser_key_disponivel(),
     }
     components.html(
         f"""
@@ -90,8 +103,9 @@ def injetar_bridge_navegador():
         const browserKeyUrl = url.searchParams.get(cfg.query_param_key) || "";
         const browserSyncUrl = url.searchParams.get(cfg.query_param_sync) || "";
         const browserSincronizado = sessionStorageRef.getItem(cfg.session_storage_sync) || "";
+        const backendPrecisaSincronizar = !cfg.browser_key_presente;
 
-        if (!browserKeyUrl && browserSincronizado !== browserKey) {{
+        if (!browserKeyUrl && (backendPrecisaSincronizar || browserSincronizado !== browserKey)) {{
             url.searchParams.set(cfg.query_param_key, browserKey);
             url.searchParams.set(cfg.query_param_sync, "1");
             parentWindow.location.replace(url.toString());
@@ -121,9 +135,17 @@ def capturar_browser_key_da_url():
     return browser_key or _browser_key_atual()
 
 
-def registrar_sessao_persistente(usuario_id):
+def registrar_sessao_persistente(usuario_id, usuario=None, contexto=None):
     browser_key = _browser_key_atual()
     if not browser_key or not usuario_id:
+        if _email_admin_diagnostico(usuario):
+            LOGGER.warning(
+                "[ADMIN_SESSION] Falha ao criar sessao persistente email=%s usuario_id=%s contexto=%s motivo=%s",
+                usuario.get("email"),
+                usuario_id,
+                contexto or "-",
+                "browser_key_ausente" if not browser_key else "usuario_id_ausente",
+            )
         return False
 
     conn = conectar()
@@ -154,7 +176,60 @@ def registrar_sessao_persistente(usuario_id):
     )
     conn.commit()
     conn.close()
+    if _email_admin_diagnostico(usuario):
+        LOGGER.warning(
+            "[ADMIN_SESSION] Sessao persistente criada/atualizada email=%s usuario_id=%s contexto=%s",
+            usuario.get("email"),
+            usuario_id,
+            contexto or "-",
+        )
     return True
+
+
+def diagnosticar_sessao_persistente_atual(usuario_id=None):
+    browser_key = _browser_key_atual()
+    diagnostico = {
+        "browser_key_presente": bool(browser_key),
+        "usuario_id_esperado": usuario_id,
+        "status": "browser_key_ausente" if not browser_key else "desconhecido",
+        "sessao_usuario_id": None,
+        "revogada": None,
+        "ultimo_acesso": None,
+    }
+    if not browser_key:
+        return diagnostico
+
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT usuario_id, revogado_em, ultimo_acesso
+        FROM sessoes_persistentes
+        WHERE browser_key_hash = %s
+        LIMIT 1
+        """,
+        (_hash_browser_key(browser_key),),
+    )
+    sessao = cursor.fetchone()
+    conn.close()
+
+    if not sessao:
+        diagnostico["status"] = "sessao_nao_encontrada"
+        diagnostico["revogada"] = False
+        return diagnostico
+
+    diagnostico["sessao_usuario_id"] = sessao.get("usuario_id")
+    diagnostico["revogada"] = sessao.get("revogado_em") is not None
+    diagnostico["ultimo_acesso"] = sessao.get("ultimo_acesso")
+    if sessao.get("revogado_em"):
+        diagnostico["status"] = "sessao_revogada"
+        return diagnostico
+    if usuario_id and int(sessao.get("usuario_id") or 0) != int(usuario_id or 0):
+        diagnostico["status"] = "usuario_divergente"
+        return diagnostico
+
+    diagnostico["status"] = "valida"
+    return diagnostico
 
 
 def sessao_persistente_atual_valida(usuario_id=None):
@@ -190,6 +265,35 @@ def sessao_persistente_atual_valida(usuario_id=None):
     valido = cursor.fetchone() is not None
     conn.close()
     return valido
+
+
+def garantir_sessao_persistente_atual(usuario, contexto=None):
+    usuario_id = (usuario or {}).get("id")
+    if sessao_persistente_atual_valida(usuario_id):
+        return True
+
+    diagnostico = diagnosticar_sessao_persistente_atual(usuario_id)
+    if diagnostico.get("status") == "sessao_nao_encontrada":
+        criada = registrar_sessao_persistente(usuario_id, usuario=usuario, contexto=contexto)
+        if criada and sessao_persistente_atual_valida(usuario_id):
+            if _email_admin_diagnostico(usuario):
+                LOGGER.warning(
+                    "[ADMIN_SESSION] Sessao persistente recriada apos diagnostico email=%s usuario_id=%s contexto=%s",
+                    usuario.get("email"),
+                    usuario_id,
+                    contexto or "-",
+                )
+            return True
+
+    if _email_admin_diagnostico(usuario):
+        LOGGER.warning(
+            "[ADMIN_SESSION] Sessao persistente invalida email=%s usuario_id=%s contexto=%s diagnostico=%s",
+            usuario.get("email"),
+            usuario_id,
+            contexto or "-",
+            diagnostico,
+        )
+    return False
 
 
 def tocar_sessao_persistente_atual(usuario_id=None):

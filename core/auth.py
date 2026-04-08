@@ -18,10 +18,14 @@ from core.financeiro import criar_trial_assinatura
 from core.lancamento import cadastro_publico_permite_treinador
 from core.permissoes import conta_ativa, email_verificado
 from core.sessao_persistente import (
+    browser_key_disponivel,
+    capturar_browser_key_da_url,
+    diagnosticar_sessao_persistente_atual,
+    garantir_sessao_persistente_atual,
+    injetar_bridge_navegador,
     preparar_rotacao_browser_key,
     registrar_sessao_persistente,
     restaurar_usuario_persistente,
-    sessao_persistente_atual_valida,
     tocar_sessao_persistente_atual,
 )
 from core.treinador import buscar_convite_por_token, definir_vinculo_treinador_atleta
@@ -39,6 +43,7 @@ from core.usuarios import (
 
 
 LOGGER = logging.getLogger("trilab.auth")
+ADMIN_DIAGNOSTIC_EMAIL = "murilo_nevescontato@hotmail.com"
 ASSETS_DIR = Path.cwd() / "assets"
 LOGO_TRILAB_LADO = ASSETS_DIR / "logo_trilab_lado.png"
 LOGO_TRILAB_CIMA = ASSETS_DIR / "logo_trilab_cima.png"
@@ -57,6 +62,14 @@ def _mask_email(valor):
     else:
         local_mask = f"{local[:2]}***"
     return f"{local_mask}@{dominio}"
+
+
+def _email_admin_diagnostico(email):
+    return (email or "").strip().lower() == ADMIN_DIAGNOSTIC_EMAIL
+
+
+def _usuario_admin_diagnostico(usuario):
+    return bool(usuario and _email_admin_diagnostico(usuario.get("email")))
 
 
 def _token_convite_da_url():
@@ -108,6 +121,7 @@ def _abrir_app(modo=None):
 
 
 def obter_usuario_logado():
+    capturar_browser_key_da_url()
     usuario = st.session_state.get("usuario")
     if usuario is None:
         usuario = restaurar_usuario_persistente()
@@ -117,6 +131,8 @@ def obter_usuario_logado():
 
 
 def garantir_usuario_em_pagina(chave_contexto, exigir_email_confirmado=False, permitir_publico=False):
+    injetar_bridge_navegador()
+    capturar_browser_key_da_url()
     usuario = obter_usuario_logado()
     if usuario is None:
         if permitir_publico:
@@ -126,7 +142,7 @@ def garantir_usuario_em_pagina(chave_contexto, exigir_email_confirmado=False, pe
             _abrir_app("Login")
         st.stop()
 
-    if not sessao_persistente_atual_valida(usuario.get("id")):
+    if not garantir_sessao_persistente_atual(usuario, contexto=chave_contexto):
         st.session_state["usuario"] = None
         st.warning("Sua sessao expirou. Entre novamente para continuar.")
         if st.button("Entrar novamente", use_container_width=True, key=f"{chave_contexto}_sessao_expirada"):
@@ -296,15 +312,42 @@ def _tela_login_tab():
         st.warning("Preencha e-mail e senha.")
         return
 
+    email_normalizado = email.strip().lower()
+    if _email_admin_diagnostico(email_normalizado):
+        LOGGER.warning(
+            "[ADMIN_AUTH] Tentativa de login admin email=%s browser_key_presente=%s",
+            email_normalizado,
+            browser_key_disponivel(),
+        )
+
     usuario = autenticar_usuario(email, senha)
     if not usuario:
+        if _email_admin_diagnostico(email_normalizado):
+            LOGGER.warning("[ADMIN_AUTH] Falha de autenticacao admin email=%s motivo=credenciais_invalidas", email_normalizado)
         st.warning("E-mail ou senha incorretos.")
         return
     if not conta_ativa(usuario):
+        if _usuario_admin_diagnostico(usuario):
+            LOGGER.warning(
+                "[ADMIN_AUTH] Login admin bloqueado por status_conta email=%s usuario_id=%s status_conta=%s",
+                usuario.get("email"),
+                usuario.get("id"),
+                usuario.get("status_conta"),
+            )
         st.warning("Sua conta esta inativa, suspensa ou cancelada. Fale com o suporte.")
         return
 
     usuario = tentar_bootstrap_primeiro_admin(usuario["id"], usuario["email"])
+    if _usuario_admin_diagnostico(usuario):
+        LOGGER.warning(
+            "[ADMIN_AUTH] Admin autenticado email=%s usuario_id=%s tipo_usuario=%s is_admin=%s status_conta=%s email_verificado=%s",
+            usuario.get("email"),
+            usuario.get("id"),
+            usuario.get("tipo_usuario"),
+            usuario.get("is_admin"),
+            usuario.get("status_conta"),
+            usuario.get("email_verificado"),
+        )
 
     convite_token = (st.session_state.get("convite_treinador_token") or "").strip()
     if convite_token and usuario.get("tipo_usuario") != "atleta":
@@ -314,8 +357,19 @@ def _tela_login_tab():
     elif convite_token:
         st.session_state["convite_treinador_resposta_pendente"] = convite_token
 
+    sessao_registrada = registrar_sessao_persistente(usuario["id"], usuario=usuario, contexto="login")
+    if not sessao_registrada:
+        if _usuario_admin_diagnostico(usuario):
+            LOGGER.warning(
+                "[ADMIN_SESSION] Login admin sem sessao persistente email=%s usuario_id=%s diagnostico=%s",
+                usuario.get("email"),
+                usuario.get("id"),
+                diagnosticar_sessao_persistente_atual(usuario.get("id")),
+            )
+        st.warning("Nao foi possivel iniciar sua sessao. Recarregue a pagina e tente novamente.")
+        return
+
     st.session_state["usuario"] = usuario
-    registrar_sessao_persistente(usuario["id"])
     st.session_state.setdefault("mostrar_overview", False)
     if email_verificado(usuario) and _ir_para_checkout_se_pendente():
         return
@@ -456,8 +510,12 @@ def _tela_cadastro_tab():
             "status": "envio_falhou",
             "mensagem": "Conta criada. Nao conseguimos enviar o e-mail agora, mas voce pode reenviar na proxima tela.",
         }
+    sessao_registrada = registrar_sessao_persistente(usuario["id"], usuario=usuario, contexto="cadastro")
+    if not sessao_registrada:
+        st.warning("Conta criada, mas nao foi possivel iniciar sua sessao agora. Recarregue a pagina e faca login.")
+        return
+
     st.session_state["usuario"] = usuario
-    registrar_sessao_persistente(usuario["id"])
     st.session_state.setdefault("mostrar_overview", False)
     st.session_state["email_pending_notice"] = {
         "status": resultado_email.get("status"),

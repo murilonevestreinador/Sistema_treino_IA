@@ -1,3 +1,4 @@
+import logging
 from datetime import date, datetime
 
 import streamlit as st
@@ -20,11 +21,12 @@ from core.permissoes import conta_ativa, eh_admin, eh_atleta, eh_treinador, emai
 from core.questionario import tela_questionario
 from core.sessao_persistente import (
     capturar_browser_key_da_url,
+    diagnosticar_sessao_persistente_atual,
+    garantir_sessao_persistente_atual,
     injetar_bridge_navegador,
     preparar_rotacao_browser_key,
     restaurar_usuario_persistente,
     revogar_sessao_persistente_atual,
-    sessao_persistente_atual_valida,
     tocar_sessao_persistente_atual,
 )
 from core.treinador import (
@@ -41,6 +43,12 @@ from core.usuarios import redefinir_objetivo_atleta
 
 
 st.set_page_config(page_title="TriLab TREINAMENTO", layout="wide")
+LOGGER = logging.getLogger("trilab.app")
+ADMIN_DIAGNOSTIC_EMAIL = "murilo_nevescontato@hotmail.com"
+
+
+def _usuario_admin_diagnostico(usuario):
+    return bool(usuario and (usuario.get("email") or "").strip().lower() == ADMIN_DIAGNOSTIC_EMAIL)
 
 
 def _aplicar_estilo_shell_app():
@@ -671,7 +679,14 @@ def main():
         tela_login()
         return
 
-    if not sessao_persistente_atual_valida(usuario.get("id")):
+    if not garantir_sessao_persistente_atual(usuario, contexto="app_main"):
+        if _usuario_admin_diagnostico(usuario):
+            LOGGER.warning(
+                "[ADMIN_SESSION] App invalidou sessao admin email=%s usuario_id=%s diagnostico=%s",
+                usuario.get("email"),
+                usuario.get("id"),
+                diagnosticar_sessao_persistente_atual(usuario.get("id")),
+            )
         st.session_state["usuario"] = None
         st.session_state["auth_modo"] = "Login"
         st.warning("Sua sessao expirou. Entre novamente para continuar.")
@@ -712,6 +727,14 @@ def main():
         return
 
     if eh_admin(usuario):
+        if _usuario_admin_diagnostico(usuario):
+            LOGGER.warning(
+                "[ADMIN_ACCESS] Admin autorizado email=%s usuario_id=%s tipo_usuario=%s is_admin=%s",
+                usuario.get("email"),
+                usuario.get("id"),
+                usuario.get("tipo_usuario"),
+                usuario.get("is_admin"),
+            )
         tela_area_admin(usuario)
         renderizar_rodape()
         return
