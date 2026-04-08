@@ -1324,6 +1324,29 @@ def processar_webhook_asaas(payload, headers):
 
         assinatura = _buscar_assinatura_por_gateway(cursor, payment.get("subscription"), payment.get("subscription"))
         if evento in EVENTOS_PAGAMENTO:
+            if not assinatura:
+                usuario_gateway = _buscar_usuario_por_customer(cursor, payment.get("customer"))
+                status_sem_usuario = EVENTOS_PAGAMENTO.get(evento.upper(), "pendente")
+                if not usuario_gateway and status_sem_usuario not in STATUS_QUITADOS:
+                    _atualizar_evento_processamento(cursor, evento_id, "ignorado")
+                    conn.commit()
+                    LOGGER.warning(
+                        "[ASAAS_WEBHOOK] Evento nao consolidado ignorado sem usuario local: evento=%s payment_id=%s subscription=%s customer=%s status=%s",
+                        evento,
+                        payment.get("id"),
+                        payment.get("subscription"),
+                        payment.get("customer"),
+                        status_sem_usuario,
+                    )
+                    return {
+                        "ok": True,
+                        "status_code": 200,
+                        "mensagem": "Evento nao consolidado ignorado sem usuario local.",
+                        "evento": evento,
+                        "status_pagamento": status_sem_usuario,
+                        "idempotente": False,
+                        "dedupe_key": dedupe_key,
+                    }
             pagamento_id, status_pagamento = _upsert_pagamento_webhook(cursor, payment, assinatura)
             _atualizar_assinatura_por_pagamento(cursor, assinatura, payment, status_pagamento)
         else:

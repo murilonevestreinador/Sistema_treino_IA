@@ -520,8 +520,10 @@ def _render_exclusao_usuario_admin(admin, usuario):
             )
             if getattr(exc, "motivo", None) == "autoexclusao_admin":
                 st.error(str(exc))
+            elif getattr(exc, "motivo", None) == "cancelamento_gateway_falhou":
+                st.error(str(exc))
             else:
-                st.error("Nao foi possivel excluir esta conta porque ela possui historico ou vinculos que exigem preservacao.")
+                st.error("Nao foi possivel excluir esta conta porque ela possui historico financeiro consolidado que precisa ser preservado.")
                 st.caption("A tentativa foi registrada no backend para auditoria.")
             return
         except ExclusaoContaError as exc:

@@ -13,6 +13,49 @@ from core.permissoes import eh_admin, normalizar_status_conta, normalizar_tipo_u
 
 
 LOGGER = logging.getLogger("trilab.account")
+STATUS_FINANCEIROS_CONSOLIDADOS_EXCLUSAO = {
+    "pago",
+    "bonificado",
+    "recebido",
+    "aprovado",
+    "confirmado",
+    "quitado",
+    "paid",
+    "received",
+    "approved",
+    "confirmed",
+}
+STATUS_PAGAMENTOS_PENDENTES_EXCLUSAO = {
+    "pendente",
+    "atrasado",
+    "cancelado",
+    "cancelada",
+    "estornado",
+    "vencido",
+    "vencida",
+    "overdue",
+    "pending",
+    "cancelled",
+    "canceled",
+    "refunded",
+}
+STATUS_ASSINATURAS_EXCLUIVEIS = {
+    "trial",
+    "pendente",
+    "inadimplente",
+    "expirada",
+    "cancelada",
+    "cancelado",
+}
+STATUS_COBRANCAS_PENDENTES_EXCLUSAO = STATUS_PAGAMENTOS_PENDENTES_EXCLUSAO | {
+    "aberta",
+    "aberto",
+    "em_aberto",
+}
+EVENTOS_WEBHOOK_CONSOLIDADOS_EXCLUSAO = {
+    "PAYMENT_CONFIRMED",
+    "PAYMENT_RECEIVED",
+}
 
 
 class ExclusaoContaError(Exception):
@@ -959,28 +1002,80 @@ def _resumo_financeiro_exclusao(cursor, usuario_id):
         "SELECT COUNT(*) AS total FROM pagamentos WHERE usuario_id = %s",
         (usuario_id,),
     )
-    pagamentos_quitados = _contar_linhas(
-        cursor,
-        "SELECT COUNT(*) AS total FROM pagamentos WHERE usuario_id = %s AND status IN ('pago', 'bonificado', 'atrasado')",
-        (usuario_id,),
-    )
-    pagamentos_integrados_gateway = _contar_linhas(
+    pagamentos_consolidados = _contar_linhas(
         cursor,
         """
         SELECT COUNT(*) AS total
         FROM pagamentos
         WHERE usuario_id = %s
           AND (
-              COALESCE(NULLIF(gateway, ''), 'manual') <> 'manual'
-              OR NULLIF(COALESCE(asaas_payment_id, ''), '') IS NOT NULL
+              LOWER(COALESCE(status, '')) = ANY(%s)
+              OR data_pagamento IS NOT NULL
           )
         """,
-        (usuario_id,),
+        (usuario_id, list(STATUS_FINANCEIROS_CONSOLIDADOS_EXCLUSAO)),
+    )
+    pagamentos_pendentes = _contar_linhas(
+        cursor,
+        """
+        SELECT COUNT(*) AS total
+        FROM pagamentos
+        WHERE usuario_id = %s
+          AND data_pagamento IS NULL
+          AND LOWER(COALESCE(status, '')) = ANY(%s)
+        """,
+        (usuario_id, list(STATUS_PAGAMENTOS_PENDENTES_EXCLUSAO)),
+    )
+    pagamentos_status_desconhecido = _contar_linhas(
+        cursor,
+        """
+        SELECT COUNT(*) AS total
+        FROM pagamentos
+        WHERE usuario_id = %s
+          AND data_pagamento IS NULL
+          AND LOWER(COALESCE(status, '')) <> ALL(%s)
+          AND LOWER(COALESCE(status, '')) <> ALL(%s)
+        """,
+        (
+            usuario_id,
+            list(STATUS_FINANCEIROS_CONSOLIDADOS_EXCLUSAO),
+            list(STATUS_PAGAMENTOS_PENDENTES_EXCLUSAO),
+        ),
+    )
+    pagamentos_gateway_pendentes = _contar_linhas(
+        cursor,
+        """
+        SELECT COUNT(*) AS total
+        FROM pagamentos
+        WHERE usuario_id = %s
+          AND data_pagamento IS NULL
+          AND LOWER(COALESCE(status, '')) = ANY(%s)
+          AND (
+              COALESCE(NULLIF(gateway, ''), 'manual') <> 'manual'
+              OR NULLIF(COALESCE(asaas_payment_id, ''), '') IS NOT NULL
+              OR NULLIF(COALESCE(gateway_reference, ''), '') IS NOT NULL
+          )
+        """,
+        (usuario_id, list(STATUS_PAGAMENTOS_PENDENTES_EXCLUSAO)),
     )
     descontos_total = _contar_linhas(
         cursor,
         "SELECT COUNT(*) AS total FROM descontos_aplicados WHERE usuario_id = %s",
         (usuario_id,),
+    )
+    descontos_consolidados = _contar_linhas(
+        cursor,
+        """
+        SELECT COUNT(*) AS total
+        FROM descontos_aplicados d
+        JOIN pagamentos p ON p.id = d.pagamento_id
+        WHERE d.usuario_id = %s
+          AND (
+              LOWER(COALESCE(p.status, '')) = ANY(%s)
+              OR p.data_pagamento IS NOT NULL
+          )
+        """,
+        (usuario_id, list(STATUS_FINANCEIROS_CONSOLIDADOS_EXCLUSAO)),
     )
     cobrancas_total = _contar_linhas(
         cursor,
@@ -991,6 +1086,47 @@ def _resumo_financeiro_exclusao(cursor, usuario_id):
         """,
         (usuario_id, usuario_id),
     )
+    cobrancas_consolidadas = _contar_linhas(
+        cursor,
+        """
+        SELECT COUNT(*) AS total
+        FROM cobrancas_alunos_treinador
+        WHERE (treinador_id = %s OR atleta_id = %s)
+          AND (
+              LOWER(COALESCE(status, '')) = ANY(%s)
+              OR data_pagamento IS NOT NULL
+          )
+        """,
+        (usuario_id, usuario_id, list(STATUS_FINANCEIROS_CONSOLIDADOS_EXCLUSAO)),
+    )
+    cobrancas_pendentes = _contar_linhas(
+        cursor,
+        """
+        SELECT COUNT(*) AS total
+        FROM cobrancas_alunos_treinador
+        WHERE (treinador_id = %s OR atleta_id = %s)
+          AND data_pagamento IS NULL
+          AND LOWER(COALESCE(status, '')) = ANY(%s)
+        """,
+        (usuario_id, usuario_id, list(STATUS_COBRANCAS_PENDENTES_EXCLUSAO)),
+    )
+    cobrancas_status_desconhecido = _contar_linhas(
+        cursor,
+        """
+        SELECT COUNT(*) AS total
+        FROM cobrancas_alunos_treinador
+        WHERE (treinador_id = %s OR atleta_id = %s)
+          AND data_pagamento IS NULL
+          AND LOWER(COALESCE(status, '')) <> ALL(%s)
+          AND LOWER(COALESCE(status, '')) <> ALL(%s)
+        """,
+        (
+            usuario_id,
+            usuario_id,
+            list(STATUS_FINANCEIROS_CONSOLIDADOS_EXCLUSAO),
+            list(STATUS_COBRANCAS_PENDENTES_EXCLUSAO),
+        ),
+    )
     admin_logs_total = _contar_linhas(
         cursor,
         "SELECT COUNT(*) AS total FROM admin_logs WHERE admin_id = %s",
@@ -1000,27 +1136,72 @@ def _resumo_financeiro_exclusao(cursor, usuario_id):
         """
         SELECT
             COUNT(*) AS total,
-            COUNT(*) FILTER (WHERE COALESCE(status, '') IN ('ativa', 'inadimplente')) AS abertas,
+            COUNT(*) FILTER (WHERE LOWER(COALESCE(status, '')) = ANY(%s)) AS excluiveis,
             COUNT(*) FILTER (
-                WHERE COALESCE(NULLIF(gateway, ''), 'manual') <> 'manual'
-                   OR NULLIF(COALESCE(asaas_subscription_id, ''), '') IS NOT NULL
-            ) AS integradas_gateway
+                WHERE LOWER(COALESCE(status, '')) <> ALL(%s)
+            ) AS status_consolidado_ou_desconhecido,
+            COUNT(*) FILTER (
+                WHERE LOWER(COALESCE(status, '')) = ANY(%s)
+                  AND (
+                      COALESCE(NULLIF(gateway, ''), 'manual') <> 'manual'
+                      OR NULLIF(COALESCE(asaas_subscription_id, ''), '') IS NOT NULL
+                      OR NULLIF(COALESCE(gateway_reference, ''), '') IS NOT NULL
+                  )
+            ) AS integradas_gateway_pendentes
         FROM assinaturas
         WHERE usuario_id = %s
         """,
-        (usuario_id,),
+        (
+            list(STATUS_ASSINATURAS_EXCLUIVEIS),
+            list(STATUS_ASSINATURAS_EXCLUIVEIS),
+            list(STATUS_ASSINATURAS_EXCLUIVEIS),
+            usuario_id,
+        ),
     )
     assinaturas = _linha_para_dict(cursor.fetchone()) or {}
+    webhooks_consolidados = _contar_linhas(
+        cursor,
+        """
+        SELECT COUNT(*) AS total
+        FROM webhook_eventos_asaas w
+        WHERE UPPER(COALESCE(w.evento, '')) = ANY(%s)
+          AND (
+              EXISTS (
+                  SELECT 1
+                  FROM pagamentos p
+                  WHERE p.usuario_id = %s
+                    AND NULLIF(COALESCE(p.asaas_payment_id, ''), '') IS NOT NULL
+                    AND p.asaas_payment_id = w.asaas_payment_id
+              )
+              OR EXISTS (
+                  SELECT 1
+                  FROM assinaturas a
+                  WHERE a.usuario_id = %s
+                    AND NULLIF(COALESCE(a.asaas_subscription_id, ''), '') IS NOT NULL
+                    AND a.asaas_subscription_id = w.asaas_subscription_id
+              )
+          )
+        """,
+        (list(EVENTOS_WEBHOOK_CONSOLIDADOS_EXCLUSAO), usuario_id, usuario_id),
+    )
     return {
         "assinaturas_total": int(assinaturas.get("total") or 0),
-        "assinaturas_abertas": int(assinaturas.get("abertas") or 0),
-        "assinaturas_integradas_gateway": int(assinaturas.get("integradas_gateway") or 0),
+        "assinaturas_excluiveis": int(assinaturas.get("excluiveis") or 0),
+        "assinaturas_status_consolidado_ou_desconhecido": int(assinaturas.get("status_consolidado_ou_desconhecido") or 0),
+        "assinaturas_integradas_gateway_pendentes": int(assinaturas.get("integradas_gateway_pendentes") or 0),
         "pagamentos_total": pagamentos_total,
-        "pagamentos_quitados": pagamentos_quitados,
-        "pagamentos_integrados_gateway": pagamentos_integrados_gateway,
+        "pagamentos_consolidados": pagamentos_consolidados,
+        "pagamentos_pendentes": pagamentos_pendentes,
+        "pagamentos_status_desconhecido": pagamentos_status_desconhecido,
+        "pagamentos_gateway_pendentes": pagamentos_gateway_pendentes,
         "descontos_total": descontos_total,
+        "descontos_consolidados": descontos_consolidados,
         "cobrancas_total": cobrancas_total,
+        "cobrancas_consolidadas": cobrancas_consolidadas,
+        "cobrancas_pendentes": cobrancas_pendentes,
+        "cobrancas_status_desconhecido": cobrancas_status_desconhecido,
         "admin_logs_total": admin_logs_total,
+        "webhooks_consolidados": webhooks_consolidados,
     }
 
 
@@ -1053,35 +1234,51 @@ def _validar_exclusao_automatica(cursor, usuario):
                 detalhes=resumo,
             )
 
+    LOGGER.info(
+        "[ADMIN_DELETE_FINANCE] Diagnostico financeiro exclusao usuario_id=%s resumo=%s",
+        usuario_id,
+        resumo,
+    )
+
     motivos_bloqueio = []
-    if resumo["pagamentos_quitados"] > 0:
-        motivos_bloqueio.append("pagamentos_quitados")
-    if resumo["pagamentos_integrados_gateway"] > 0:
-        motivos_bloqueio.append("pagamentos_gateway")
-    if resumo["descontos_total"] > 0:
-        motivos_bloqueio.append("descontos")
-    if resumo["cobrancas_total"] > 0:
-        motivos_bloqueio.append("cobrancas")
+    if resumo["pagamentos_consolidados"] > 0:
+        motivos_bloqueio.append("pagamentos_consolidados")
+    if resumo["pagamentos_status_desconhecido"] > 0:
+        motivos_bloqueio.append("pagamentos_status_desconhecido")
+    if resumo["descontos_consolidados"] > 0:
+        motivos_bloqueio.append("descontos_consolidados")
+    if resumo["cobrancas_consolidadas"] > 0:
+        motivos_bloqueio.append("cobrancas_consolidadas")
+    if resumo["cobrancas_status_desconhecido"] > 0:
+        motivos_bloqueio.append("cobrancas_status_desconhecido")
     if resumo["admin_logs_total"] > 0:
         motivos_bloqueio.append("admin_logs")
-    if resumo["assinaturas_abertas"] > 0:
-        motivos_bloqueio.append("assinaturas_abertas")
-    if resumo["assinaturas_integradas_gateway"] > 0:
-        motivos_bloqueio.append("assinaturas_gateway")
+    if resumo["assinaturas_status_consolidado_ou_desconhecido"] > 0:
+        motivos_bloqueio.append("assinaturas_status_consolidado_ou_desconhecido")
+    if resumo["webhooks_consolidados"] > 0:
+        motivos_bloqueio.append("webhooks_consolidados")
 
     if motivos_bloqueio:
         LOGGER.warning(
-            "[ACCOUNT_DELETE] Exclusao bloqueada usuario_id=%s motivos=%s resumo=%s",
+            "[ADMIN_DELETE_FINANCE] Exclusao bloqueada por historico consolidado usuario_id=%s motivos=%s resumo=%s",
             usuario_id,
             ",".join(motivos_bloqueio),
             resumo,
         )
         raise ExclusaoContaBloqueadaError(
-            "Nao foi possivel excluir sua conta automaticamente porque existe historico financeiro ou operacional que precisa de tratamento manual. Entre em contato com o suporte.",
+            "Nao foi possivel excluir esta conta porque ela possui historico financeiro consolidado que precisa ser preservado.",
             motivo=",".join(motivos_bloqueio),
             detalhes=resumo,
         )
 
+    LOGGER.info(
+        "[ADMIN_DELETE_FINANCE] Exclusao permitida usuario_id=%s pendencias_assinaturas=%s pendencias_pagamentos=%s pendencias_cobrancas=%s gateway_pendente=%s",
+        usuario_id,
+        resumo["assinaturas_excluiveis"],
+        resumo["pagamentos_pendentes"],
+        resumo["cobrancas_pendentes"],
+        resumo["assinaturas_integradas_gateway_pendentes"] + resumo["pagamentos_gateway_pendentes"],
+    )
     return resumo
 
 
@@ -1094,6 +1291,161 @@ def _executar_delete(cursor, usuario_id, tabela, sql, params, apagados):
         tabela,
         cursor.rowcount,
     )
+
+
+def _gateway_erro_ignorado_cancelamento(mensagem):
+    texto = (mensagem or "").strip().lower()
+    if not texto:
+        return False
+    return any(
+        termo in texto
+        for termo in (
+            "not found",
+            "nao encontrado",
+            "não encontrado",
+            "inexistente",
+            "does not exist",
+            "ja remov",
+            "já remov",
+            "ja cancel",
+            "já cancel",
+        )
+    )
+
+
+def _cancelar_assinaturas_gateway_pendentes(usuario_id, assinaturas):
+    resultados = []
+    referencias_processadas = set()
+    if not assinaturas:
+        return resultados
+
+    from core.pagamentos_gateway import cancelar_assinatura_gateway
+
+    for assinatura in assinaturas:
+        gateway = (assinatura.get("gateway") or "").strip().lower()
+        referencia = (assinatura.get("asaas_subscription_id") or assinatura.get("gateway_reference") or "").strip()
+        status = (assinatura.get("status") or "").strip().lower()
+        if gateway != "asaas" or status == "cancelada" or not referencia or referencia in referencias_processadas:
+            continue
+
+        referencias_processadas.add(referencia)
+        LOGGER.info(
+            "[ADMIN_DELETE_GATEWAY] Cancelando assinatura pendente no gateway usuario_id=%s assinatura_id=%s referencia=%s status=%s",
+            usuario_id,
+            assinatura.get("id"),
+            referencia,
+            status,
+        )
+        resultado = cancelar_assinatura_gateway(referencia)
+        resultados.append(
+            {
+                "assinatura_id": assinatura.get("id"),
+                "gateway_reference": referencia,
+                "status_local": status,
+                "resultado": resultado,
+            }
+        )
+        if resultado.get("ok"):
+            LOGGER.info(
+                "[ADMIN_DELETE_GATEWAY] Assinatura pendente cancelada no gateway usuario_id=%s assinatura_id=%s referencia=%s",
+                usuario_id,
+                assinatura.get("id"),
+                referencia,
+            )
+            continue
+
+        mensagem = resultado.get("mensagem") or resultado.get("erro") or ""
+        if _gateway_erro_ignorado_cancelamento(mensagem):
+            LOGGER.warning(
+                "[ADMIN_DELETE_GATEWAY] Cancelamento tratado como ja resolvido usuario_id=%s assinatura_id=%s referencia=%s mensagem=%s",
+                usuario_id,
+                assinatura.get("id"),
+                referencia,
+                mensagem,
+            )
+            continue
+
+        LOGGER.warning(
+            "[ADMIN_DELETE_GATEWAY] Falha ao cancelar assinatura pendente usuario_id=%s assinatura_id=%s referencia=%s resultado=%s",
+            usuario_id,
+            assinatura.get("id"),
+            referencia,
+            resultado,
+        )
+        raise ExclusaoContaBloqueadaError(
+            "Nao foi possivel cancelar a assinatura pendente no gateway antes da exclusao. Tente novamente em alguns instantes.",
+            motivo="cancelamento_gateway_falhou",
+            detalhes={"assinatura_id": assinatura.get("id"), "gateway_reference": referencia, "resultado": resultado},
+        )
+
+    return resultados
+
+
+def _preparar_financeiro_pendente_para_exclusao(cursor, usuario_id, resumo):
+    cursor.execute(
+        """
+        SELECT id, status, gateway, gateway_reference, asaas_subscription_id
+        FROM assinaturas
+        WHERE usuario_id = %s
+          AND LOWER(COALESCE(status, '')) = ANY(%s)
+        ORDER BY id
+        """,
+        (usuario_id, list(STATUS_ASSINATURAS_EXCLUIVEIS)),
+    )
+    assinaturas_pendentes = [dict(item) for item in cursor.fetchall()]
+    cancelamentos_gateway = _cancelar_assinaturas_gateway_pendentes(usuario_id, assinaturas_pendentes)
+
+    cursor.execute(
+        """
+        UPDATE pagamentos
+        SET status = 'cancelado'
+        WHERE usuario_id = %s
+          AND data_pagamento IS NULL
+          AND LOWER(COALESCE(status, '')) = ANY(%s)
+        """,
+        (usuario_id, list(STATUS_PAGAMENTOS_PENDENTES_EXCLUSAO)),
+    )
+    pagamentos_cancelados = cursor.rowcount
+
+    cursor.execute(
+        """
+        UPDATE cobrancas_alunos_treinador
+        SET status = 'cancelado'
+        WHERE (treinador_id = %s OR atleta_id = %s)
+          AND data_pagamento IS NULL
+          AND LOWER(COALESCE(status, '')) = ANY(%s)
+        """,
+        (usuario_id, usuario_id, list(STATUS_COBRANCAS_PENDENTES_EXCLUSAO)),
+    )
+    cobrancas_canceladas = cursor.rowcount
+
+    cursor.execute(
+        """
+        UPDATE assinaturas
+        SET status = 'cancelada',
+            renovacao_automatica = 0,
+            data_fim = COALESCE(data_fim, CURRENT_DATE::text)
+        WHERE usuario_id = %s
+          AND LOWER(COALESCE(status, '')) = ANY(%s)
+        """,
+        (usuario_id, list(STATUS_ASSINATURAS_EXCLUIVEIS)),
+    )
+    assinaturas_canceladas = cursor.rowcount
+
+    limpeza = {
+        "assinaturas_pendentes": len(assinaturas_pendentes),
+        "assinaturas_canceladas_localmente": assinaturas_canceladas,
+        "pagamentos_pendentes_cancelados": pagamentos_cancelados,
+        "cobrancas_pendentes_canceladas": cobrancas_canceladas,
+        "cancelamentos_gateway": cancelamentos_gateway,
+        "resumo": resumo,
+    }
+    LOGGER.info(
+        "[ADMIN_DELETE_FINANCE] Pendencias financeiras preparadas para exclusao usuario_id=%s limpeza=%s",
+        usuario_id,
+        limpeza,
+    )
+    return limpeza
 
 
 def excluir_usuario(usuario_id):
@@ -1121,12 +1473,14 @@ def excluir_usuario(usuario_id):
             normalizar_tipo_usuario(usuario.get("tipo_usuario"), usuario.get("is_admin")),
         )
         resumo = _validar_exclusao_automatica(cursor, usuario)
+        limpeza_financeira = _preparar_financeiro_pendente_para_exclusao(cursor, usuario_id, resumo)
         LOGGER.info(
-            "[ACCOUNT_DELETE] Iniciando exclusao usuario_id=%s email=%s tipo=%s resumo=%s",
+            "[ACCOUNT_DELETE] Iniciando exclusao usuario_id=%s email=%s tipo=%s resumo=%s limpeza_financeira=%s",
             usuario_id,
             usuario.get("email"),
             normalizar_tipo_usuario(usuario.get("tipo_usuario"), usuario.get("is_admin")),
             resumo,
+            limpeza_financeira,
         )
 
         apagados = {}
@@ -1245,7 +1599,7 @@ def excluir_usuario(usuario_id):
 
         conn.commit()
         LOGGER.info("[ACCOUNT_DELETE] Exclusao concluida usuario_id=%s apagados=%s", usuario_id, apagados)
-        return {"usuario_id": usuario_id, "apagados": apagados, "resumo": resumo}
+        return {"usuario_id": usuario_id, "apagados": apagados, "resumo": resumo, "limpeza_financeira": limpeza_financeira}
     except ExclusaoContaBloqueadaError:
         conn.rollback()
         raise
