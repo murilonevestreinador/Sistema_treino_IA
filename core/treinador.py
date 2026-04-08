@@ -6,7 +6,7 @@ from core.banco import conectar
 from core.theme import TRILAB_DEFAULT_THEME, normalizar_hex
 from core.usuarios import buscar_usuario_por_email, buscar_usuario_por_id
 
-DEFAULT_PUBLIC_APP_URL = "https://trilab-treinamento.onrender.com"
+DEFAULT_PUBLIC_APP_URL = "https://app.trilabtreinamento.com"
 DEFAULT_TEMA_TREINADOR = dict(TRILAB_DEFAULT_THEME)
 STATUS_VINCULO_ATIVO = "ativo"
 STATUS_VINCULO_PENDENTE = "pendente"
@@ -25,9 +25,9 @@ def vinculo_esta_ativo(item):
 def _resolver_url_base_publica():
     candidatos = [
         os.getenv("APP_BASE_URL", ""),
-        os.getenv("RENDER_EXTERNAL_URL", ""),
         os.getenv("PUBLIC_APP_URL", ""),
         DEFAULT_PUBLIC_APP_URL,
+        os.getenv("RENDER_EXTERNAL_URL", ""),
     ]
 
     for url in candidatos:

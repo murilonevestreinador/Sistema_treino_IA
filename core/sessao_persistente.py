@@ -33,6 +33,14 @@ def browser_key_disponivel():
     return bool(_browser_key_atual())
 
 
+def _sessao_basica_autenticada(usuario_id):
+    usuario_sessao = st.session_state.get("usuario") or {}
+    try:
+        return bool(usuario_id and int(usuario_sessao.get("id") or 0) == int(usuario_id or 0))
+    except (TypeError, ValueError):
+        return False
+
+
 def _email_admin_diagnostico(usuario=None, email=None):
     email_normalizado = (email or (usuario or {}).get("email") or "").strip().lower()
     return email_normalizado == ADMIN_DIAGNOSTIC_EMAIL
@@ -137,51 +145,92 @@ def capturar_browser_key_da_url():
 
 def registrar_sessao_persistente(usuario_id, usuario=None, contexto=None):
     browser_key = _browser_key_atual()
+    email = (usuario or {}).get("email")
+    contexto_log = contexto or "-"
+    LOGGER.info(
+        "[SESSION_PERSISTENCE] Registrando sessao persistente email=%s usuario_id=%s contexto=%s browser_key_presente=%s",
+        email,
+        usuario_id,
+        contexto_log,
+        bool(browser_key),
+    )
     if not browser_key or not usuario_id:
+        LOGGER.warning(
+            "[SESSION_PERSISTENCE_ERROR] Falha ao criar sessao persistente email=%s usuario_id=%s contexto=%s motivo=%s",
+            email,
+            usuario_id,
+            contexto_log,
+            "browser_key_ausente" if not browser_key else "usuario_id_ausente",
+        )
         if _email_admin_diagnostico(usuario):
             LOGGER.warning(
                 "[ADMIN_SESSION] Falha ao criar sessao persistente email=%s usuario_id=%s contexto=%s motivo=%s",
-                usuario.get("email"),
+                email,
                 usuario_id,
-                contexto or "-",
+                contexto_log,
                 "browser_key_ausente" if not browser_key else "usuario_id_ausente",
             )
         return False
 
-    conn = conectar()
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-        INSERT INTO sessoes_persistentes (
-            usuario_id,
-            browser_key_hash,
-            user_agent,
-            ultimo_acesso,
-            revogado_em
+    conn = None
+    try:
+        conn = conectar()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO sessoes_persistentes (
+                usuario_id,
+                browser_key_hash,
+                user_agent,
+                ultimo_acesso,
+                revogado_em
+            )
+            VALUES (%s, %s, %s, CURRENT_TIMESTAMP, NULL)
+            ON CONFLICT (browser_key_hash) DO UPDATE
+            SET usuario_id = EXCLUDED.usuario_id,
+                user_agent = EXCLUDED.user_agent,
+                ultimo_acesso = CURRENT_TIMESTAMP,
+                revogado_em = NULL
+            """,
+            (usuario_id, _hash_browser_key(browser_key), _user_agent_atual()),
         )
-        VALUES (%s, %s, %s, CURRENT_TIMESTAMP, NULL)
-        ON CONFLICT (browser_key_hash) DO UPDATE
-        SET usuario_id = EXCLUDED.usuario_id,
-            user_agent = EXCLUDED.user_agent,
-            ultimo_acesso = CURRENT_TIMESTAMP,
-            revogado_em = NULL
-        """,
-        (usuario_id, _hash_browser_key(browser_key), _user_agent_atual()),
+        cursor.execute(
+            """
+            DELETE FROM sessoes_persistentes
+            WHERE ultimo_acesso < CURRENT_TIMESTAMP - INTERVAL '180 days'
+            """
+        )
+        conn.commit()
+    except Exception as exc:
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        LOGGER.exception(
+            "[SESSION_PERSISTENCE_ERROR] Excecao ao criar sessao persistente email=%s usuario_id=%s contexto=%s erro=%s",
+            email,
+            usuario_id,
+            contexto_log,
+            exc,
+        )
+        return False
+    finally:
+        if conn:
+            conn.close()
+
+    LOGGER.info(
+        "[SESSION_PERSISTENCE] Sessao persistente criada/atualizada email=%s usuario_id=%s contexto=%s",
+        email,
+        usuario_id,
+        contexto_log,
     )
-    cursor.execute(
-        """
-        DELETE FROM sessoes_persistentes
-        WHERE ultimo_acesso < CURRENT_TIMESTAMP - INTERVAL '180 days'
-        """
-    )
-    conn.commit()
-    conn.close()
     if _email_admin_diagnostico(usuario):
         LOGGER.warning(
             "[ADMIN_SESSION] Sessao persistente criada/atualizada email=%s usuario_id=%s contexto=%s",
-            usuario.get("email"),
+            email,
             usuario_id,
-            contexto or "-",
+            contexto_log,
         )
     return True
 
@@ -197,25 +246,48 @@ def diagnosticar_sessao_persistente_atual(usuario_id=None):
         "ultimo_acesso": None,
     }
     if not browser_key:
+        LOGGER.warning(
+            "[SESSION_PERSISTENCE] Diagnostico sem browser_key usuario_id=%s status=%s",
+            usuario_id,
+            diagnostico["status"],
+        )
         return diagnostico
 
-    conn = conectar()
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-        SELECT usuario_id, revogado_em, ultimo_acesso
-        FROM sessoes_persistentes
-        WHERE browser_key_hash = %s
-        LIMIT 1
-        """,
-        (_hash_browser_key(browser_key),),
-    )
-    sessao = cursor.fetchone()
-    conn.close()
+    conn = None
+    try:
+        conn = conectar()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT usuario_id, revogado_em, ultimo_acesso
+            FROM sessoes_persistentes
+            WHERE browser_key_hash = %s
+            LIMIT 1
+            """,
+            (_hash_browser_key(browser_key),),
+        )
+        sessao = cursor.fetchone()
+    except Exception as exc:
+        diagnostico["status"] = "erro_diagnostico"
+        diagnostico["erro"] = str(exc)
+        LOGGER.exception(
+            "[SESSION_PERSISTENCE_ERROR] Excecao no diagnostico de sessao persistente usuario_id=%s erro=%s",
+            usuario_id,
+            exc,
+        )
+        return diagnostico
+    finally:
+        if conn:
+            conn.close()
 
     if not sessao:
         diagnostico["status"] = "sessao_nao_encontrada"
         diagnostico["revogada"] = False
+        LOGGER.warning(
+            "[SESSION_PERSISTENCE] Diagnostico sessao nao encontrada usuario_id=%s status=%s",
+            usuario_id,
+            diagnostico["status"],
+        )
         return diagnostico
 
     diagnostico["sessao_usuario_id"] = sessao.get("usuario_id")
@@ -229,6 +301,13 @@ def diagnosticar_sessao_persistente_atual(usuario_id=None):
         return diagnostico
 
     diagnostico["status"] = "valida"
+    LOGGER.info(
+        "[SESSION_PERSISTENCE] Diagnostico sessao persistente usuario_id=%s status=%s sessao_usuario_id=%s revogada=%s",
+        usuario_id,
+        diagnostico["status"],
+        diagnostico["sessao_usuario_id"],
+        diagnostico["revogada"],
+    )
     return diagnostico
 
 
@@ -237,62 +316,97 @@ def sessao_persistente_atual_valida(usuario_id=None):
     if not browser_key:
         return False
 
-    conn = conectar()
-    cursor = conn.cursor()
-    if usuario_id:
-        cursor.execute(
-            """
-            SELECT 1
-            FROM sessoes_persistentes
-            WHERE browser_key_hash = %s
-              AND usuario_id = %s
-              AND revogado_em IS NULL
-            LIMIT 1
-            """,
-            (_hash_browser_key(browser_key), usuario_id),
+    conn = None
+    try:
+        conn = conectar()
+        cursor = conn.cursor()
+        if usuario_id:
+            cursor.execute(
+                """
+                SELECT 1
+                FROM sessoes_persistentes
+                WHERE browser_key_hash = %s
+                  AND usuario_id = %s
+                  AND revogado_em IS NULL
+                LIMIT 1
+                """,
+                (_hash_browser_key(browser_key), usuario_id),
+            )
+        else:
+            cursor.execute(
+                """
+                SELECT 1
+                FROM sessoes_persistentes
+                WHERE browser_key_hash = %s
+                  AND revogado_em IS NULL
+                LIMIT 1
+                """,
+                (_hash_browser_key(browser_key),),
+            )
+        return cursor.fetchone() is not None
+    except Exception as exc:
+        LOGGER.exception(
+            "[SESSION_PERSISTENCE_ERROR] Excecao ao validar sessao persistente usuario_id=%s erro=%s",
+            usuario_id,
+            exc,
         )
-    else:
-        cursor.execute(
-            """
-            SELECT 1
-            FROM sessoes_persistentes
-            WHERE browser_key_hash = %s
-              AND revogado_em IS NULL
-            LIMIT 1
-            """,
-            (_hash_browser_key(browser_key),),
-        )
-    valido = cursor.fetchone() is not None
-    conn.close()
-    return valido
+        return False
+    finally:
+        if conn:
+            conn.close()
 
 
 def garantir_sessao_persistente_atual(usuario, contexto=None):
     usuario_id = (usuario or {}).get("id")
+    email = (usuario or {}).get("email")
+    contexto_log = contexto or "-"
     if sessao_persistente_atual_valida(usuario_id):
+        LOGGER.info(
+            "[SESSION_PERSISTENCE] Sessao persistente valida email=%s usuario_id=%s contexto=%s",
+            email,
+            usuario_id,
+            contexto_log,
+        )
         return True
 
     diagnostico = diagnosticar_sessao_persistente_atual(usuario_id)
-    if diagnostico.get("status") == "sessao_nao_encontrada":
+    if diagnostico.get("status") in {"sessao_nao_encontrada", "usuario_divergente"}:
         criada = registrar_sessao_persistente(usuario_id, usuario=usuario, contexto=contexto)
         if criada and sessao_persistente_atual_valida(usuario_id):
             if _email_admin_diagnostico(usuario):
                 LOGGER.warning(
                     "[ADMIN_SESSION] Sessao persistente recriada apos diagnostico email=%s usuario_id=%s contexto=%s",
-                    usuario.get("email"),
+                    email,
                     usuario_id,
-                    contexto or "-",
+                    contexto_log,
                 )
             return True
+
+    if diagnostico.get("status") != "sessao_revogada" and _sessao_basica_autenticada(usuario_id):
+        LOGGER.warning(
+            "[SESSION_PERSISTENCE_ERROR] Persistencia indisponivel, mantendo sessao basica autenticada email=%s usuario_id=%s contexto=%s diagnostico=%s",
+            email,
+            usuario_id,
+            contexto_log,
+            diagnostico,
+        )
+        return True
 
     if _email_admin_diagnostico(usuario):
         LOGGER.warning(
             "[ADMIN_SESSION] Sessao persistente invalida email=%s usuario_id=%s contexto=%s diagnostico=%s",
-            usuario.get("email"),
+            email,
             usuario_id,
-            contexto or "-",
+            contexto_log,
             diagnostico,
         )
+    LOGGER.warning(
+        "[LOGIN_BLOCK] Sessao persistente invalida bloqueou acesso email=%s usuario_id=%s contexto=%s diagnostico=%s",
+        email,
+        usuario_id,
+        contexto_log,
+        diagnostico,
+    )
     return False
 
 
@@ -301,35 +415,51 @@ def tocar_sessao_persistente_atual(usuario_id=None):
     if not browser_key:
         return False
 
-    conn = conectar()
-    cursor = conn.cursor()
-    if usuario_id:
-        cursor.execute(
-            """
-            UPDATE sessoes_persistentes
-            SET ultimo_acesso = CURRENT_TIMESTAMP,
-                user_agent = %s
-            WHERE browser_key_hash = %s
-              AND usuario_id = %s
-              AND revogado_em IS NULL
-            """,
-            (_user_agent_atual(), _hash_browser_key(browser_key), usuario_id),
+    conn = None
+    try:
+        conn = conectar()
+        cursor = conn.cursor()
+        if usuario_id:
+            cursor.execute(
+                """
+                UPDATE sessoes_persistentes
+                SET ultimo_acesso = CURRENT_TIMESTAMP,
+                    user_agent = %s
+                WHERE browser_key_hash = %s
+                  AND usuario_id = %s
+                  AND revogado_em IS NULL
+                """,
+                (_user_agent_atual(), _hash_browser_key(browser_key), usuario_id),
+            )
+        else:
+            cursor.execute(
+                """
+                UPDATE sessoes_persistentes
+                SET ultimo_acesso = CURRENT_TIMESTAMP,
+                    user_agent = %s
+                WHERE browser_key_hash = %s
+                  AND revogado_em IS NULL
+                """,
+                (_user_agent_atual(), _hash_browser_key(browser_key)),
+            )
+        atualizado = cursor.rowcount > 0
+        conn.commit()
+        return atualizado
+    except Exception as exc:
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        LOGGER.exception(
+            "[SESSION_PERSISTENCE_ERROR] Excecao ao atualizar sessao persistente usuario_id=%s erro=%s",
+            usuario_id,
+            exc,
         )
-    else:
-        cursor.execute(
-            """
-            UPDATE sessoes_persistentes
-            SET ultimo_acesso = CURRENT_TIMESTAMP,
-                user_agent = %s
-            WHERE browser_key_hash = %s
-              AND revogado_em IS NULL
-            """,
-            (_user_agent_atual(), _hash_browser_key(browser_key)),
-        )
-    atualizado = cursor.rowcount > 0
-    conn.commit()
-    conn.close()
-    return atualizado
+        return False
+    finally:
+        if conn:
+            conn.close()
 
 
 def restaurar_usuario_persistente():
@@ -337,35 +467,55 @@ def restaurar_usuario_persistente():
     if not browser_key:
         return None
 
-    conn = conectar()
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-        SELECT usuario_id
-        FROM sessoes_persistentes
-        WHERE browser_key_hash = %s
-          AND revogado_em IS NULL
-        LIMIT 1
-        """,
-        (_hash_browser_key(browser_key),),
-    )
-    sessao = cursor.fetchone()
-    if not sessao:
-        conn.close()
-        return None
+    conn = None
+    try:
+        conn = conectar()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT usuario_id
+            FROM sessoes_persistentes
+            WHERE browser_key_hash = %s
+              AND revogado_em IS NULL
+            LIMIT 1
+            """,
+            (_hash_browser_key(browser_key),),
+        )
+        sessao = cursor.fetchone()
+        if not sessao:
+            return None
 
-    cursor.execute(
-        """
-        UPDATE sessoes_persistentes
-        SET ultimo_acesso = CURRENT_TIMESTAMP,
-            user_agent = %s
-        WHERE browser_key_hash = %s
-        """,
-        (_user_agent_atual(), _hash_browser_key(browser_key)),
-    )
-    conn.commit()
-    conn.close()
-    return buscar_usuario_por_id(sessao["usuario_id"])
+        cursor.execute(
+            """
+            UPDATE sessoes_persistentes
+            SET ultimo_acesso = CURRENT_TIMESTAMP,
+                user_agent = %s
+            WHERE browser_key_hash = %s
+            """,
+            (_user_agent_atual(), _hash_browser_key(browser_key)),
+        )
+        conn.commit()
+        usuario = buscar_usuario_por_id(sessao["usuario_id"])
+        LOGGER.info(
+            "[SESSION_PERSISTENCE] Usuario restaurado por sessao persistente usuario_id=%s encontrado=%s",
+            sessao["usuario_id"],
+            bool(usuario),
+        )
+        return usuario
+    except Exception as exc:
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        LOGGER.exception(
+            "[SESSION_PERSISTENCE_ERROR] Excecao ao restaurar usuario por sessao persistente erro=%s",
+            exc,
+        )
+        return None
+    finally:
+        if conn:
+            conn.close()
 
 
 def revogar_sessao_persistente_atual(usuario_id=None):

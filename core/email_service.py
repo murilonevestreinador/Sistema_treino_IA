@@ -10,16 +10,11 @@ from urllib.parse import urlencode
 
 import requests
 
+from core.env import bool_env
 
 LOGGER = logging.getLogger("trilab.email.service")
 RESEND_API_URL = "https://api.resend.com/emails"
-
-
-def _bool_env(nome, padrao=False):
-    valor = (os.getenv(nome) or "").strip().lower()
-    if not valor:
-        return padrao
-    return valor in {"1", "true", "yes", "on", "sim"}
+DEFAULT_PUBLIC_APP_URL = "https://app.trilabtreinamento.com"
 
 
 def _mask_email(valor):
@@ -39,6 +34,7 @@ def resolver_url_base_publica(obrigatorio=False):
     candidatos = [
         ("APP_BASE_URL", os.getenv("APP_BASE_URL", "")),
         ("PUBLIC_APP_URL", os.getenv("PUBLIC_APP_URL", "")),
+        ("DEFAULT_PUBLIC_APP_URL", DEFAULT_PUBLIC_APP_URL),
         ("RENDER_EXTERNAL_URL", os.getenv("RENDER_EXTERNAL_URL", "")),
     ]
 
@@ -80,11 +76,16 @@ def montar_link_publico(query_params=None, base_url=None, caminho=""):
 
 def _provider_normalizado():
     provider = (os.getenv("EMAIL_PROVIDER") or "").strip().lower()
+    email_habilitado = bool_env("EMAIL_ENABLED", False, logger=LOGGER, contexto="email_provider")
+    if not email_habilitado:
+        return "disabled"
     if provider == "log":
         return "log"
-    if not _bool_env("EMAIL_ENABLED", False):
-        return "disabled"
     return provider or "resend"
+
+
+def email_envio_habilitado():
+    return _provider_normalizado() != "disabled"
 
 
 def _email_from():
@@ -147,8 +148,8 @@ def _enviar_via_smtp(destino, assunto, html, texto=None):
     password = os.getenv("SMTP_PASSWORD") or ""
     remetente = _email_from()
     reply_to = _email_reply_to()
-    usar_tls = _bool_env("SMTP_USE_TLS", True)
-    usar_ssl = _bool_env("SMTP_USE_SSL", False)
+    usar_tls = bool_env("SMTP_USE_TLS", True, logger=LOGGER, contexto="smtp")
+    usar_ssl = bool_env("SMTP_USE_SSL", False, logger=LOGGER, contexto="smtp")
 
     if not host or not remetente:
         raise RuntimeError("SMTP_HOST e EMAIL_FROM sao obrigatorios para envio SMTP.")

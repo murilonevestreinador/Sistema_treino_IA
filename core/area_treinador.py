@@ -39,7 +39,7 @@ try:
 except ImportError:
     sort_items = None
 
-DEFAULT_PUBLIC_APP_URL = "https://trilab-treinamento.onrender.com"
+DEFAULT_PUBLIC_APP_URL = "https://app.trilabtreinamento.com"
 
 SEXO_FILTROS = {
     "Todos": None,
@@ -595,8 +595,9 @@ def _render_convite(treinador):
     base_url = (
         st.session_state.get("convite_base_url")
         or os.getenv("APP_BASE_URL")
-        or os.getenv("RENDER_EXTERNAL_URL")
         or os.getenv("PUBLIC_APP_URL")
+        or DEFAULT_PUBLIC_APP_URL
+        or os.getenv("RENDER_EXTERNAL_URL")
         or (
             f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME').strip('/')}"
             if os.getenv("RENDER_EXTERNAL_HOSTNAME")

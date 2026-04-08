@@ -14,6 +14,8 @@ from core.email_tokens import (
     solicitar_reset_senha_por_email,
     solicitar_verificacao_email,
 )
+from core.email_service import email_envio_habilitado
+from core.env import bool_env, raw_env
 from core.financeiro import criar_trial_assinatura
 from core.lancamento import cadastro_publico_permite_treinador
 from core.permissoes import conta_ativa, email_verificado
@@ -72,6 +74,27 @@ def _usuario_admin_diagnostico(usuario):
     return bool(usuario and _email_admin_diagnostico(usuario.get("email")))
 
 
+def email_verificacao_obrigatoria():
+    if raw_env("EMAIL_VERIFICATION_REQUIRED") is not None:
+        obrigatoria = bool_env(
+            "EMAIL_VERIFICATION_REQUIRED",
+            False,
+            logger=LOGGER,
+            contexto="email_verification_required",
+        )
+        origem = "EMAIL_VERIFICATION_REQUIRED"
+    else:
+        obrigatoria = email_envio_habilitado()
+        origem = "EMAIL_PROVIDER/EMAIL_ENABLED"
+
+    LOGGER.info(
+        "[EMAIL_VERIFY_FLOW] Verificacao de e-mail obrigatoria=%s origem=%s",
+        obrigatoria,
+        origem,
+    )
+    return obrigatoria
+
+
 def _token_convite_da_url():
     try:
         return (st.query_params.get("convite") or "").strip()
@@ -127,6 +150,7 @@ def obter_usuario_logado():
         usuario = restaurar_usuario_persistente()
         if usuario:
             st.session_state["usuario"] = usuario
+            st.session_state["usuario_origem"] = "sessao_persistente"
     return usuario
 
 
@@ -159,7 +183,13 @@ def garantir_usuario_em_pagina(chave_contexto, exigir_email_confirmado=False, pe
             _abrir_app()
         st.stop()
 
-    if exigir_email_confirmado and not email_verificado(usuario):
+    if exigir_email_confirmado and email_verificacao_obrigatoria() and not email_verificado(usuario):
+        LOGGER.warning(
+            "[LOGIN_BLOCK] Pagina bloqueada por e-mail pendente email=%s usuario_id=%s contexto=%s",
+            usuario.get("email"),
+            usuario.get("id"),
+            chave_contexto,
+        )
         st.warning("Confirme seu e-mail no app antes de continuar.")
         st.caption("Enquanto isso, voce pode reenviar o link, corrigir o e-mail ou sair da conta na tela principal.")
         if st.button("Ir para confirmar e-mail", type="primary", use_container_width=True, key=f"{chave_contexto}_confirmar_email"):
@@ -313,6 +343,11 @@ def _tela_login_tab():
         return
 
     email_normalizado = email.strip().lower()
+    LOGGER.info(
+        "[AUTH_FLOW] Tentativa de login email=%s browser_key_presente=%s",
+        email_normalizado,
+        browser_key_disponivel(),
+    )
     if _email_admin_diagnostico(email_normalizado):
         LOGGER.warning(
             "[ADMIN_AUTH] Tentativa de login admin email=%s browser_key_presente=%s",
@@ -322,11 +357,18 @@ def _tela_login_tab():
 
     usuario = autenticar_usuario(email, senha)
     if not usuario:
+        LOGGER.warning("[LOGIN_BLOCK] Login bloqueado email=%s motivo=credenciais_invalidas", email_normalizado)
         if _email_admin_diagnostico(email_normalizado):
             LOGGER.warning("[ADMIN_AUTH] Falha de autenticacao admin email=%s motivo=credenciais_invalidas", email_normalizado)
         st.warning("E-mail ou senha incorretos.")
         return
     if not conta_ativa(usuario):
+        LOGGER.warning(
+            "[LOGIN_BLOCK] Login bloqueado email=%s usuario_id=%s motivo=conta_inativa status_conta=%s",
+            usuario.get("email"),
+            usuario.get("id"),
+            usuario.get("status_conta"),
+        )
         if _usuario_admin_diagnostico(usuario):
             LOGGER.warning(
                 "[ADMIN_AUTH] Login admin bloqueado por status_conta email=%s usuario_id=%s status_conta=%s",
@@ -348,6 +390,14 @@ def _tela_login_tab():
             usuario.get("status_conta"),
             usuario.get("email_verificado"),
         )
+    LOGGER.info(
+        "[AUTH_FLOW] Credenciais validas email=%s usuario_id=%s tipo_usuario=%s status_conta=%s email_verificado=%s",
+        usuario.get("email"),
+        usuario.get("id"),
+        usuario.get("tipo_usuario"),
+        usuario.get("status_conta"),
+        usuario.get("email_verificado"),
+    )
 
     convite_token = (st.session_state.get("convite_treinador_token") or "").strip()
     if convite_token and usuario.get("tipo_usuario") != "atleta":
@@ -359,19 +409,31 @@ def _tela_login_tab():
 
     sessao_registrada = registrar_sessao_persistente(usuario["id"], usuario=usuario, contexto="login")
     if not sessao_registrada:
+        diagnostico = diagnosticar_sessao_persistente_atual(usuario.get("id"))
+        LOGGER.warning(
+            "[SESSION_PERSISTENCE_ERROR] Login seguira com sessao basica email=%s usuario_id=%s diagnostico=%s",
+            usuario.get("email"),
+            usuario.get("id"),
+            diagnostico,
+        )
         if _usuario_admin_diagnostico(usuario):
             LOGGER.warning(
                 "[ADMIN_SESSION] Login admin sem sessao persistente email=%s usuario_id=%s diagnostico=%s",
                 usuario.get("email"),
                 usuario.get("id"),
-                diagnosticar_sessao_persistente_atual(usuario.get("id")),
+                diagnostico,
             )
-        st.warning("Nao foi possivel iniciar sua sessao. Recarregue a pagina e tente novamente.")
-        return
 
     st.session_state["usuario"] = usuario
+    st.session_state["usuario_origem"] = "credenciais"
+    LOGGER.info(
+        "[AUTH_FLOW] Sessao basica criada email=%s usuario_id=%s sessao_persistente=%s",
+        usuario.get("email"),
+        usuario.get("id"),
+        sessao_registrada,
+    )
     st.session_state.setdefault("mostrar_overview", False)
-    if email_verificado(usuario) and _ir_para_checkout_se_pendente():
+    if (email_verificado(usuario) or not email_verificacao_obrigatoria()) and _ir_para_checkout_se_pendente():
         return
     st.rerun()
 
@@ -493,34 +555,57 @@ def _tela_cadastro_tab():
         st.session_state.pop("convite_treinador_resposta_pendente", None)
         _limpar_convite_da_url()
 
-    try:
-        resultado_email = solicitar_verificacao_email(
+    verificacao_obrigatoria = email_verificacao_obrigatoria()
+    if verificacao_obrigatoria:
+        try:
+            resultado_email = solicitar_verificacao_email(
+                usuario_id,
+                criado_ip=_ip_requisicao(),
+                criado_user_agent=_user_agent_requisicao(),
+                origem="cadastro",
+            )
+        except Exception as exc:
+            LOGGER.exception(
+                "[EMAIL_VERIFY_FLOW] Falha ao solicitar verificacao inicial usuario_id=%s erro=%s",
+                usuario_id,
+                exc,
+            )
+            resultado_email = {
+                "status": "envio_falhou",
+                "mensagem": "Conta criada. Nao conseguimos enviar o e-mail agora, mas voce pode reenviar na proxima tela.",
+            }
+    else:
+        LOGGER.info(
+            "[EMAIL_VERIFY_FLOW] Verificacao inicial ignorada usuario_id=%s motivo=email_nao_obrigatorio",
             usuario_id,
-            criado_ip=_ip_requisicao(),
-            criado_user_agent=_user_agent_requisicao(),
-            origem="cadastro",
-        )
-    except Exception as exc:
-        LOGGER.exception(
-            "[EMAIL_VERIFY] Falha ao solicitar verificacao inicial usuario_id=%s erro=%s",
-            usuario_id,
-            exc,
         )
         resultado_email = {
-            "status": "envio_falhou",
-            "mensagem": "Conta criada. Nao conseguimos enviar o e-mail agora, mas voce pode reenviar na proxima tela.",
+            "status": "desabilitado",
+            "mensagem": None,
         }
     sessao_registrada = registrar_sessao_persistente(usuario["id"], usuario=usuario, contexto="cadastro")
     if not sessao_registrada:
-        st.warning("Conta criada, mas nao foi possivel iniciar sua sessao agora. Recarregue a pagina e faca login.")
-        return
+        LOGGER.warning(
+            "[SESSION_PERSISTENCE_ERROR] Cadastro seguira com sessao basica email=%s usuario_id=%s diagnostico=%s",
+            usuario.get("email"),
+            usuario.get("id"),
+            diagnosticar_sessao_persistente_atual(usuario.get("id")),
+        )
 
     st.session_state["usuario"] = usuario
+    st.session_state["usuario_origem"] = "cadastro"
+    LOGGER.info(
+        "[AUTH_FLOW] Sessao basica criada apos cadastro email=%s usuario_id=%s sessao_persistente=%s",
+        usuario.get("email"),
+        usuario.get("id"),
+        sessao_registrada,
+    )
     st.session_state.setdefault("mostrar_overview", False)
-    st.session_state["email_pending_notice"] = {
-        "status": resultado_email.get("status"),
-        "mensagem": resultado_email.get("mensagem") or "Conta criada. Confirme seu e-mail para liberar o acesso.",
-    }
+    if verificacao_obrigatoria:
+        st.session_state["email_pending_notice"] = {
+            "status": resultado_email.get("status"),
+            "mensagem": resultado_email.get("mensagem") or "Conta criada. Confirme seu e-mail para liberar o acesso.",
+        }
     st.rerun()
 
 
@@ -684,6 +769,13 @@ def render_bloqueio_email_pendente(usuario, on_logout):
     st.session_state["usuario"] = usuario_atual
     if email_verificado(usuario_atual):
         st.rerun()
+
+    LOGGER.warning(
+        "[EMAIL_VERIFY_FLOW] Acesso limitado por e-mail pendente email=%s usuario_id=%s tipo_usuario=%s",
+        usuario_atual.get("email"),
+        usuario_atual.get("id"),
+        usuario_atual.get("tipo_usuario"),
+    )
 
     st.title("Confirme seu e-mail")
     _mensagem_email_pendente()

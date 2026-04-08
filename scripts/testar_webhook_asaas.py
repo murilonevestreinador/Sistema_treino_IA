@@ -6,7 +6,7 @@ import sys
 import requests
 
 
-DEFAULT_URL = "https://trilab-treinamento.onrender.com/webhooks/asaas"
+DEFAULT_URL = "https://app.trilabtreinamento.com/webhooks/asaas"
 PAYLOAD_TESTE = {
     "manual_test": True,
     "event": "PAYMENT_RECEIVED",

@@ -5,7 +5,7 @@ import streamlit as st
 
 from core.area_treinador import tela_area_treinador
 from core.admin import tela_area_admin
-from core.auth import render_bloqueio_email_pendente, render_fluxo_publico_auth, tela_login
+from core.auth import email_verificacao_obrigatoria, render_bloqueio_email_pendente, render_fluxo_publico_auth, tela_login
 from core.banco import garantir_colunas_e_tabelas
 from core.bloqueio_acesso import render_bloqueio_atleta, render_bloqueio_treinador
 from core.cronograma import gerar_cronograma, gerar_mensagem_usuario
@@ -671,6 +671,7 @@ def main():
         usuario = restaurar_usuario_persistente()
         if usuario:
             st.session_state["usuario"] = usuario
+            st.session_state["usuario_origem"] = "sessao_persistente"
 
     if render_fluxo_publico_auth():
         return
@@ -699,10 +700,24 @@ def main():
             fazer_logout()
         return
 
-    if not email_verificado(usuario):
+    verificacao_email_obrigatoria = email_verificacao_obrigatoria()
+    if verificacao_email_obrigatoria and not email_verificado(usuario):
+        LOGGER.warning(
+            "[LOGIN_BLOCK] Acesso ao app bloqueado por e-mail pendente email=%s usuario_id=%s tipo_usuario=%s",
+            usuario.get("email"),
+            usuario.get("id"),
+            usuario.get("tipo_usuario"),
+        )
         render_bloqueio_email_pendente(usuario, fazer_logout)
         renderizar_rodape()
         return
+    if not verificacao_email_obrigatoria and not email_verificado(usuario):
+        LOGGER.warning(
+            "[EMAIL_VERIFY_FLOW] E-mail pendente nao bloqueou login porque verificacao nao esta obrigatoria email=%s usuario_id=%s tipo_usuario=%s",
+            usuario.get("email"),
+            usuario.get("id"),
+            usuario.get("tipo_usuario"),
+        )
 
     tema_usuario = _obter_tema_usuario(usuario)
     st.session_state["tema_app"] = tema_usuario
