@@ -85,7 +85,7 @@ def email_verificacao_obrigatoria():
     envio_habilitado = email_envio_habilitado()
 
     LOGGER.info(
-        "[EMAIL_VERIFY_FLOW] Enforcement ignorado na fase_1 obrigatoria_configurada=%s env_configurada=%s email_enabled=%s enforcement_aplicado=%s",
+        "[EMAIL_VERIFY_FLOW] Enforcement ignorado na fase_2 obrigatoria_configurada=%s env_configurada=%s email_enabled=%s enforcement_aplicado=%s",
         obrigatoria_configurada,
         env_configurada,
         envio_habilitado,
@@ -303,6 +303,35 @@ def _mensagem_email_pendente():
         st.success(mensagem)
     else:
         st.info(mensagem)
+
+
+def _registrar_notice_email_pendente(resultado=None, mensagem_padrao=None):
+    resultado = resultado or {}
+    mensagem = resultado.get("mensagem") or mensagem_padrao
+    if not mensagem:
+        return
+    st.session_state["email_pending_notice"] = {
+        "status": resultado.get("status") or "info",
+        "mensagem": mensagem,
+    }
+
+
+def render_aviso_email_pendente_passivo(usuario):
+    if not usuario or email_verificado(usuario):
+        st.session_state.pop("email_pending_notice", None)
+        return
+
+    notice = st.session_state.pop("email_pending_notice", None)
+    if not notice or not notice.get("mensagem"):
+        return
+
+    status = notice.get("status")
+    mensagem = notice.get("mensagem")
+    if status in {"envio_falhou", "rate_limited", "erro"}:
+        st.warning(mensagem)
+    else:
+        st.info(mensagem)
+    st.caption("O acesso continua normal nesta fase. Se precisar, voce pode reenviar ou corrigir o e-mail em Meu perfil.")
 
 
 def tela_login():
@@ -554,9 +583,14 @@ def _tela_cadastro_tab():
         st.session_state.pop("convite_treinador_resposta_pendente", None)
         _limpar_convite_da_url()
 
-    verificacao_obrigatoria = email_verificacao_obrigatoria()
-    if verificacao_obrigatoria:
+    resultado_email = None
+    if email_envio_habilitado():
         try:
+            LOGGER.info(
+                "[EMAIL_VERIFY_FLOW] Disparando verificacao inicial apos cadastro usuario_id=%s email=%s",
+                usuario_id,
+                _mask_email(email),
+            )
             resultado_email = solicitar_verificacao_email(
                 usuario_id,
                 criado_ip=_ip_requisicao(),
@@ -575,12 +609,12 @@ def _tela_cadastro_tab():
             }
     else:
         LOGGER.info(
-            "[EMAIL_VERIFY_FLOW] Envio automatico de verificacao apos cadastro desabilitado na fase_1 usuario_id=%s",
+            "[EMAIL_VERIFY_FLOW] Envio automatico de verificacao nao executado usuario_id=%s motivo=email_disabled",
             usuario_id,
         )
         resultado_email = {
-            "status": "fase1_passiva",
-            "mensagem": None,
+            "status": "envio_desabilitado",
+            "mensagem": "Conta criada com sucesso. O envio de e-mail esta indisponivel no momento, mas seu acesso continua normal.",
         }
     sessao_registrada = registrar_sessao_persistente(usuario["id"], usuario=usuario, contexto="cadastro")
     if not sessao_registrada:
@@ -600,11 +634,11 @@ def _tela_cadastro_tab():
         sessao_registrada,
     )
     st.session_state.setdefault("mostrar_overview", False)
-    if verificacao_obrigatoria:
-        st.session_state["email_pending_notice"] = {
-            "status": resultado_email.get("status"),
-            "mensagem": resultado_email.get("mensagem") or "Conta criada. Confirme seu e-mail para liberar o acesso.",
-        }
+    if not email_verificado(usuario):
+        _registrar_notice_email_pendente(
+            resultado_email,
+            mensagem_padrao="Conta criada. Enviamos um link para confirmar seu e-mail.",
+        )
     st.rerun()
 
 
@@ -797,10 +831,10 @@ def render_bloqueio_email_pendente(usuario, on_logout):
     st.title("Confirme seu e-mail")
     _mensagem_email_pendente()
     st.info(
-        "Para liberar o acesso ao TriLab, confirme o link enviado para "
+        "Para concluir a confirmacao do seu e-mail, use o link enviado para "
         f"{usuario_atual.get('email') or 'o e-mail cadastrado'}."
     )
-    st.write("Enquanto isso, voce pode reenviar o e-mail, corrigir o endereco informado ou sair da conta.")
+    st.write("Voce pode reenviar o e-mail, corrigir o endereco informado ou sair da conta.")
 
     col_reenviar, col_status, col_sair = st.columns(3)
     with col_reenviar:
@@ -834,7 +868,7 @@ def render_bloqueio_email_pendente(usuario, on_logout):
                 st.session_state["usuario"] = usuario_refresh
                 st.session_state["email_pending_notice"] = {
                     "status": "confirmado",
-                    "mensagem": "E-mail confirmado com sucesso. Seu acesso foi liberado.",
+                    "mensagem": "E-mail confirmado com sucesso.",
                 }
                 st.rerun()
             st.info("Ainda nao encontramos a confirmacao. Tente novamente em alguns instantes.")

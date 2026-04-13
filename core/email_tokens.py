@@ -381,6 +381,7 @@ def solicitar_verificacao_email(
     criado_user_agent=None,
     origem="manual",
 ):
+    LOGGER.info("[EMAIL_VERIFY] Solicitacao recebida usuario_id=%s origem=%s", usuario_id, origem)
     conn = conectar()
     try:
         cursor = conn.cursor()
@@ -594,7 +595,7 @@ def confirmar_email_por_token(token):
     return {
         "ok": True,
         "status": "confirmado",
-        "mensagem": "E-mail confirmado com sucesso. Seu acesso foi liberado.",
+        "mensagem": "E-mail confirmado com sucesso.",
         "usuario": usuario,
     }
 
@@ -608,6 +609,7 @@ def solicitar_reset_senha_por_email(
 ):
     mensagem_neutra = "Se existir uma conta com esse e-mail, enviaremos as instrucoes para redefinir a senha."
     email_normalizado = _normalizar_email(email)
+    LOGGER.info("[EMAIL_RESET] Solicitacao recebida email=%s", _mask_email(email_normalizado))
     if not email_normalizado:
         return {"ok": True, "status": "ignorado", "mensagem": mensagem_neutra}
 
@@ -635,16 +637,15 @@ def solicitar_reset_senha_por_email(
             LOGGER.info("[EMAIL_RESET] Solicitacao ignorada email=%s motivo=nao_encontrado", _mask_email(email_normalizado))
             return {"ok": True, "status": "ignorado", "mensagem": mensagem_neutra}
 
-        if int(usuario.get("email_verificado") or 0) != 1:
-            conn.rollback()
-            LOGGER.info("[EMAIL_RESET] Solicitacao ignorada usuario_id=%s motivo=email_nao_verificado", usuario["id"])
-            return {"ok": True, "status": "ignorado", "mensagem": mensagem_neutra}
-
         restante = _segundos_restantes_limite(usuario.get("ultimo_reset_senha_solicitado_em"), RATE_LIMIT_EMAIL_SEGUNDOS)
         if restante > 0 and not force:
             conn.rollback()
             LOGGER.info("[EMAIL_RESET] Solicitacao limitada usuario_id=%s restante=%s", usuario["id"], restante)
-            return {"ok": True, "status": "rate_limited", "mensagem": mensagem_neutra}
+            return {
+                "ok": True,
+                "status": "rate_limited",
+                "mensagem": f"{mensagem_neutra} Aguarde um pouco antes de solicitar novamente.",
+            }
 
         _revogar_tokens_pendentes(cursor, usuario["id"], TOKEN_TIPO_RESET_SENHA, motivo="novo_link")
         novo_token = _inserir_token(

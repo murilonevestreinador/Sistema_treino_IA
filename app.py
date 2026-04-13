@@ -5,7 +5,13 @@ import streamlit as st
 
 from core.area_treinador import tela_area_treinador
 from core.admin import tela_area_admin
-from core.auth import email_verificacao_obrigatoria, render_bloqueio_email_pendente, render_fluxo_publico_auth, tela_login
+from core.auth import (
+    email_verificacao_obrigatoria,
+    render_aviso_email_pendente_passivo,
+    render_bloqueio_email_pendente,
+    render_fluxo_publico_auth,
+    tela_login,
+)
 from core.banco import garantir_colunas_e_tabelas
 from core.bloqueio_acesso import render_bloqueio_atleta, render_bloqueio_treinador
 from core.cronograma import gerar_cronograma, gerar_mensagem_usuario
@@ -733,6 +739,7 @@ def main():
     renderizar_sidebar(usuario, assinatura)
     renderizar_menu_superior(usuario)
     renderizar_convite_treinador(usuario)
+    render_aviso_email_pendente_passivo(usuario)
 
     if st.session_state.get("secao_app") == "perfil":
         conta_excluida = tela_meu_perfil(usuario)

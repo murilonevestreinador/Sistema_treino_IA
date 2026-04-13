@@ -6,6 +6,8 @@ from pathlib import Path
 import streamlit as st
 
 from core.cronograma import gerar_cronograma, obter_semana_atual
+from core.email_service import email_envio_habilitado
+from core.email_tokens import atualizar_email_pendente_verificacao, solicitar_verificacao_email
 from core.equipamentos import (
     AMBIENTES_TREINO_FORCA,
     EQUIPAMENTO_OPCOES,
@@ -14,6 +16,7 @@ from core.equipamentos import (
     rotulo_ambiente_treino,
     rotulo_equipamento,
 )
+from core.permissoes import email_verificado
 from core.treinador import (
     buscar_tema_treinador,
     listar_treinadores_do_atleta,
@@ -28,6 +31,7 @@ from core.usuarios import (
     ExclusaoContaError,
     alterar_senha_usuario_autenticado,
     atualizar_perfil_usuario,
+    buscar_usuario_por_id,
     diagnosticar_dados_checkout,
     excluir_usuario,
     formatar_cpf,
@@ -190,6 +194,92 @@ def _render_form_perfil(usuario):
         st.session_state["usuario"] = usuario_atualizado
         st.session_state["mensagem_perfil"] = "Perfil atualizado com sucesso."
         st.rerun()
+
+
+def _render_status_email(usuario):
+    st.subheader("E-mail da conta")
+
+    notice = st.session_state.pop("perfil_email_notice", None)
+    if notice and notice.get("mensagem"):
+        status = notice.get("status")
+        mensagem = notice.get("mensagem")
+        if status in {"envio_falhou", "rate_limited", "erro"}:
+            st.warning(mensagem)
+        elif status in {"confirmado", "ja_verificado"}:
+            st.success(mensagem)
+        else:
+            st.info(mensagem)
+
+    st.write(f"E-mail cadastrado: {usuario.get('email') or '-'}")
+    if email_verificado(usuario):
+        st.success("Seu e-mail ja esta confirmado.")
+        if usuario.get("email_verificado_em"):
+            st.caption(f"Confirmado em: {usuario.get('email_verificado_em')}")
+        return
+
+    st.info("Seu e-mail ainda nao foi confirmado. O acesso continua normal nesta fase.")
+    if not email_envio_habilitado():
+        st.warning("O envio de e-mail esta indisponivel no momento. Voce ainda pode usar a plataforma normalmente.")
+        return
+
+    col_reenviar, col_status = st.columns([1.4, 1])
+    with col_reenviar:
+        if st.button("Reenviar e-mail de verificacao", use_container_width=True, key=f"perfil_reenviar_email_{usuario['id']}"):
+            try:
+                resultado = solicitar_verificacao_email(usuario["id"], origem="perfil_reenvio")
+            except Exception:
+                LOGGER.exception("[EMAIL_VERIFY] Falha ao reenviar verificacao no perfil usuario_id=%s", usuario["id"])
+                resultado = {
+                    "status": "erro",
+                    "mensagem": "Nao foi possivel reenviar o e-mail agora. Tente novamente em alguns instantes.",
+                }
+            usuario_refresh = resultado.get("usuario") or st.session_state.get("usuario") or usuario
+            st.session_state["usuario"] = usuario_refresh
+            st.session_state["perfil_email_notice"] = {
+                "status": resultado.get("status"),
+                "mensagem": resultado.get("mensagem"),
+            }
+            st.session_state["email_pending_notice"] = {
+                "status": resultado.get("status"),
+                "mensagem": resultado.get("mensagem"),
+            }
+            st.rerun()
+    with col_status:
+        if usuario.get("ultimo_envio_verificacao_em"):
+            st.caption(f"Ultimo envio: {usuario.get('ultimo_envio_verificacao_em')}")
+
+    with st.form(f"form_email_verificacao_{usuario['id']}"):
+        novo_email = st.text_input(
+            "Corrigir e-mail e reenviar",
+            value=usuario.get("email") or "",
+            placeholder="voce@exemplo.com",
+        )
+        salvar_email = st.form_submit_button("Salvar e reenviar link", use_container_width=True)
+
+    if not salvar_email:
+        return
+
+    try:
+        resultado = atualizar_email_pendente_verificacao(usuario["id"], novo_email)
+    except ValueError as exc:
+        st.error(str(exc))
+        return
+    except Exception:
+        LOGGER.exception("[EMAIL_VERIFY] Falha ao atualizar e-mail pendente no perfil usuario_id=%s", usuario["id"])
+        st.error("Nao foi possivel atualizar o e-mail agora. Tente novamente em alguns instantes.")
+        return
+
+    usuario_refresh = resultado.get("usuario") or st.session_state.get("usuario") or usuario
+    st.session_state["usuario"] = usuario_refresh
+    st.session_state["perfil_email_notice"] = {
+        "status": resultado.get("status"),
+        "mensagem": resultado.get("mensagem") or "Enviamos um novo link para o e-mail atualizado.",
+    }
+    st.session_state["email_pending_notice"] = {
+        "status": resultado.get("status"),
+        "mensagem": resultado.get("mensagem") or "Enviamos um novo link para o e-mail atualizado.",
+    }
+    st.rerun()
 
 
 def _salvar_logo_treinador(arquivo_upload):
@@ -370,6 +460,8 @@ def _render_alterar_senha(usuario):
 
 
 def tela_meu_perfil(usuario):
+    usuario = buscar_usuario_por_id(usuario["id"]) or usuario
+    st.session_state["usuario"] = usuario
     st.title("Meu perfil")
 
     mensagem = st.session_state.pop("mensagem_perfil", None)
@@ -377,6 +469,7 @@ def tela_meu_perfil(usuario):
         st.success(mensagem)
 
     _render_form_perfil(usuario)
+    _render_status_email(st.session_state.get("usuario") or usuario)
     _render_alterar_senha(usuario)
     _render_personalizacao_treinador(usuario)
     _render_vinculo_atleta(usuario)
