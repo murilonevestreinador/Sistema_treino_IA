@@ -1,6 +1,5 @@
 import json
 import logging
-import os
 import smtplib
 import ssl
 from datetime import datetime
@@ -10,7 +9,8 @@ from urllib.parse import urlencode
 
 import requests
 
-from core.env import bool_env
+from core.env import get_env_bool, get_env_int, get_env_str
+
 
 LOGGER = logging.getLogger("trilab.email.service")
 RESEND_API_URL = "https://api.resend.com/emails"
@@ -30,39 +30,45 @@ def _mask_email(valor):
 
 
 def resolver_url_base_publica(obrigatorio=False):
-    # Em producao, configure APP_BASE_URL com a URL publica usada nos links transacionais.
     candidatos = [
-        ("APP_BASE_URL", os.getenv("APP_BASE_URL", "")),
-        ("PUBLIC_APP_URL", os.getenv("PUBLIC_APP_URL", "")),
-        ("DEFAULT_PUBLIC_APP_URL", DEFAULT_PUBLIC_APP_URL),
-        ("RENDER_EXTERNAL_URL", os.getenv("RENDER_EXTERNAL_URL", "")),
+        ("APP_BASE_URL", get_env_str("APP_BASE_URL", "", logger=LOGGER, contexto="public_app_url")),
+        ("PUBLIC_APP_URL", get_env_str("PUBLIC_APP_URL", "", logger=LOGGER, contexto="public_app_url")),
+        ("RENDER_EXTERNAL_URL", get_env_str("RENDER_EXTERNAL_URL", "", logger=LOGGER, contexto="public_app_url")),
+        (
+            "RENDER_EXTERNAL_HOSTNAME",
+            get_env_str("RENDER_EXTERNAL_HOSTNAME", "", logger=LOGGER, contexto="public_app_url"),
+        ),
     ]
 
     for nome_env, url in candidatos:
         url_limpa = (url or "").strip().rstrip("/")
-        if url_limpa:
-            if nome_env != "APP_BASE_URL":
-                LOGGER.warning(
-                    "[EMAIL_SERVICE] Usando %s como fallback de URL publica. Configure APP_BASE_URL em producao.",
-                    nome_env,
-                )
-            return url_limpa
-
-    hostname_render = (os.getenv("RENDER_EXTERNAL_HOSTNAME", "") or "").strip().strip("/")
-    if hostname_render:
-        LOGGER.warning(
-            "[EMAIL_SERVICE] Usando RENDER_EXTERNAL_HOSTNAME como fallback de URL publica. Configure APP_BASE_URL em producao."
-        )
-        return f"https://{hostname_render}"
+        if not url_limpa:
+            continue
+        if nome_env == "RENDER_EXTERNAL_HOSTNAME":
+            LOGGER.warning(
+                "[EMAIL_SERVICE] Usando %s como fallback de URL publica. Configure APP_BASE_URL em producao.",
+                nome_env,
+            )
+            return f"https://{url_limpa}"
+        if nome_env != "APP_BASE_URL":
+            LOGGER.warning(
+                "[EMAIL_SERVICE] Usando %s como fallback de URL publica. Configure APP_BASE_URL em producao.",
+                nome_env,
+            )
+        return url_limpa
 
     if obrigatorio:
         raise RuntimeError("APP_BASE_URL e obrigatoria para envio de e-mail transacional.")
-    return ""
+
+    LOGGER.info(
+        "[EMAIL_SERVICE] Nenhuma URL publica configurada. Usando fallback interno=%s",
+        DEFAULT_PUBLIC_APP_URL,
+    )
+    return DEFAULT_PUBLIC_APP_URL.rstrip("/")
 
 
 def montar_link_publico(query_params=None, base_url=None, caminho=""):
-    envio_real = _provider_normalizado() not in {"disabled", "log"}
-    url_base = (base_url or resolver_url_base_publica(obrigatorio=envio_real)).strip().rstrip("/")
+    url_base = (base_url or resolver_url_base_publica(obrigatorio=False)).strip().rstrip("/")
     caminho_limpo = (caminho or "").strip()
     if caminho_limpo and not caminho_limpo.startswith("/"):
         caminho_limpo = f"/{caminho_limpo}"
@@ -74,14 +80,25 @@ def montar_link_publico(query_params=None, base_url=None, caminho=""):
     return f"{destino}{separador}{query}"
 
 
+def montar_link_verificacao_email(token, base_url=None):
+    return montar_link_publico({"token": token}, base_url=base_url, caminho="/verificar-email")
+
+
+def montar_link_reset_senha(token, base_url=None):
+    return montar_link_publico({"token": token}, base_url=base_url, caminho="/redefinir-senha")
+
+
 def _provider_normalizado():
-    provider = (os.getenv("EMAIL_PROVIDER") or "").strip().lower()
-    email_habilitado = bool_env("EMAIL_ENABLED", False, logger=LOGGER, contexto="email_provider")
+    email_habilitado = get_env_bool("EMAIL_ENABLED", False, logger=LOGGER, contexto="email_provider")
+    provider = (get_env_str("EMAIL_PROVIDER", "", logger=LOGGER, contexto="email_provider") or "").strip().lower()
+
     if not email_habilitado:
         return "disabled"
     if provider == "log":
         return "log"
-    return provider or "resend"
+    if not provider:
+        return "resend"
+    return provider
 
 
 def email_envio_habilitado():
@@ -89,15 +106,15 @@ def email_envio_habilitado():
 
 
 def _email_from():
-    return (os.getenv("EMAIL_FROM") or "").strip()
+    return get_env_str("EMAIL_FROM", "", logger=LOGGER, contexto="email_sender")
 
 
 def _email_reply_to():
-    return (os.getenv("EMAIL_REPLY_TO") or "").strip() or None
+    return get_env_str("EMAIL_REPLY_TO", "", logger=LOGGER, contexto="email_sender") or None
 
 
 def _resend_api_key():
-    return (os.getenv("RESEND_API_KEY") or "").strip()
+    return get_env_str("RESEND_API_KEY", "", logger=LOGGER, contexto="email_provider", sensivel=True)
 
 
 def _email_layout_html(titulo, texto, cta_label=None, cta_link=None, rodape=None):
@@ -142,14 +159,14 @@ def _enviar_via_log(destino, assunto, html, texto=None, metadados=None):
 
 
 def _enviar_via_smtp(destino, assunto, html, texto=None):
-    host = (os.getenv("SMTP_HOST") or "").strip()
-    porta = int((os.getenv("SMTP_PORT") or "587").strip() or 587)
-    username = (os.getenv("SMTP_USERNAME") or "").strip()
-    password = os.getenv("SMTP_PASSWORD") or ""
+    host = get_env_str("SMTP_HOST", "", logger=LOGGER, contexto="smtp")
+    porta = get_env_int("SMTP_PORT", 587, logger=LOGGER, contexto="smtp")
+    username = get_env_str("SMTP_USERNAME", "", logger=LOGGER, contexto="smtp")
+    password = get_env_str("SMTP_PASSWORD", "", logger=LOGGER, contexto="smtp", sensivel=True) or ""
     remetente = _email_from()
     reply_to = _email_reply_to()
-    usar_tls = bool_env("SMTP_USE_TLS", True, logger=LOGGER, contexto="smtp")
-    usar_ssl = bool_env("SMTP_USE_SSL", False, logger=LOGGER, contexto="smtp")
+    usar_tls = get_env_bool("SMTP_USE_TLS", True, logger=LOGGER, contexto="smtp")
+    usar_ssl = get_env_bool("SMTP_USE_SSL", False, logger=LOGGER, contexto="smtp")
 
     if not host or not remetente:
         raise RuntimeError("SMTP_HOST e EMAIL_FROM sao obrigatorios para envio SMTP.")
@@ -240,7 +257,7 @@ def enviar_email(destino, assunto, html, texto=None, metadados=None):
     )
     if provider == "disabled":
         LOGGER.warning(
-            "[EMAIL_SERVICE] Envio desabilitado destino=%s assunto=%s provider=%s",
+            "[EMAIL_SERVICE] Envio pulado por EMAIL_ENABLED=false destino=%s assunto=%s provider=%s",
             _mask_email(destino),
             assunto,
             provider,
@@ -280,16 +297,16 @@ def enviar_email_verificacao(nome_destino, email_destino, link_confirmacao, expi
     expira_label = expira_em.strftime("%d/%m/%Y %H:%M") if isinstance(expira_em, datetime) else str(expira_em)
     assunto = "Confirme seu e-mail no TriLab"
     texto = (
-        f"{nome}, confirme seu e-mail para liberar o acesso ao TriLab.\n\n"
+        f"{nome}, confirme seu e-mail no TriLab.\n\n"
         f"Abra este link: {link_confirmacao}\n\n"
         f"Valido ate {expira_label}."
     )
     html = _email_layout_html(
-        "Confirme seu e-mail",
-        f"{nome}, confirme seu e-mail para liberar o acesso ao TriLab. O link abaixo fica valido ate {expira_label}.",
+        "Confirme seu e-mail no TriLab",
+        f"{nome}, use o link abaixo para confirmar seu e-mail. Este link fica valido ate {expira_label}.",
         cta_label="Confirmar e-mail",
         cta_link=link_confirmacao,
-        rodape="Se voce nao criou essa conta, pode ignorar esta mensagem.",
+        rodape="Se voce nao criou essa conta, ignore esta mensagem.",
     )
     return enviar_email(
         email_destino,
@@ -307,10 +324,11 @@ def enviar_email_reset_senha(nome_destino, email_destino, link_reset, expira_em)
     texto = (
         f"{nome}, recebemos um pedido para redefinir sua senha.\n\n"
         f"Abra este link: {link_reset}\n\n"
-        f"Valido ate {expira_label}."
+        f"Valido ate {expira_label}.\n\n"
+        "Se voce nao pediu essa alteracao, ignore este e-mail."
     )
     html = _email_layout_html(
-        "Redefina sua senha",
+        "Redefina sua senha no TriLab",
         f"{nome}, recebemos um pedido para redefinir sua senha. Use o link abaixo ate {expira_label}.",
         cta_label="Redefinir senha",
         cta_link=link_reset,

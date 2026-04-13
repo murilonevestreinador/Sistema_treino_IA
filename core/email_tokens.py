@@ -7,7 +7,8 @@ from core.banco import conectar
 from core.email_service import (
     enviar_email_reset_senha,
     enviar_email_verificacao,
-    montar_link_publico,
+    montar_link_reset_senha,
+    montar_link_verificacao_email,
 )
 from core.sessao_persistente import revogar_sessoes_persistentes_usuario
 from core.usuarios import buscar_usuario_por_id, hash_senha
@@ -177,11 +178,12 @@ def _revogar_tokens_pendentes(cursor, usuario_id, tipo, motivo="substituido"):
             cursor.rowcount,
             motivo,
         )
+    return cursor.rowcount
 
 
-def _inserir_token(cursor, usuario_id, tipo, email_destino, criado_ip=None, criado_user_agent=None, metadados=None):
+def _inserir_token(cursor, usuario_id, tipo, email_destino, criado_ip=None, criado_user_agent=None, metadados=None, ttl=None):
     token = secrets.token_urlsafe(32)
-    expira_em = _agora() + _ttl_por_tipo(tipo)
+    expira_em = _agora() + (ttl or _ttl_por_tipo(tipo))
     cursor.execute(
         """
         INSERT INTO email_auth_tokens (
@@ -218,9 +220,157 @@ def _inserir_token(cursor, usuario_id, tipo, email_destino, criado_ip=None, cria
         registro.get("expira_em"),
     )
     return {
+        "ok": True,
+        "token_id": registro.get("id"),
+        "usuario_id": usuario_id,
+        "tipo": tipo,
         "token": token,
         "expira_em": registro.get("expira_em") or expira_em,
     }
+
+
+def revogar_tokens_anteriores(usuario_id, tipo, motivo="substituido"):
+    conn = conectar()
+    try:
+        cursor = conn.cursor()
+        quantidade = _revogar_tokens_pendentes(cursor, usuario_id, tipo, motivo=motivo)
+        conn.commit()
+    finally:
+        conn.close()
+
+    return {
+        "ok": True,
+        "usuario_id": usuario_id,
+        "tipo": tipo,
+        "quantidade_revogada": quantidade,
+    }
+
+
+def gerar_token_email(
+    usuario_id,
+    tipo,
+    email_destino,
+    criado_ip=None,
+    criado_user_agent=None,
+    metadados=None,
+    ttl=None,
+    revogar_anteriores=True,
+):
+    conn = conectar()
+    try:
+        cursor = conn.cursor()
+        usuario = _buscar_usuario_para_token(cursor, usuario_id, for_update=True)
+        if not usuario:
+            LOGGER.warning("[EMAIL_TOKEN] Nao foi possivel gerar token: usuario ausente usuario_id=%s tipo=%s", usuario_id, tipo)
+            conn.rollback()
+            return {
+                "ok": False,
+                "status": "usuario_nao_encontrado",
+                "mensagem": "Conta nao encontrada.",
+            }
+
+        if revogar_anteriores:
+            _revogar_tokens_pendentes(cursor, usuario_id, tipo, motivo="novo_token")
+        token = _inserir_token(
+            cursor,
+            usuario_id,
+            tipo,
+            email_destino,
+            criado_ip=criado_ip,
+            criado_user_agent=criado_user_agent,
+            metadados=metadados,
+            ttl=ttl,
+        )
+        conn.commit()
+        return token
+    finally:
+        conn.close()
+
+
+def validar_token_email(token, tipo):
+    conn = conectar()
+    try:
+        cursor = conn.cursor()
+        row = _buscar_token(cursor, token, tipo, for_update=False)
+    finally:
+        conn.close()
+
+    status = _status_token(row, tipo)
+    if status == "valid":
+        LOGGER.info(
+            "[EMAIL_TOKEN] Token validado tipo=%s usuario_id=%s token_id=%s",
+            tipo,
+            row.get("usuario_id") if row else None,
+            row.get("id") if row else None,
+        )
+    else:
+        LOGGER.warning(
+            "[EMAIL_TOKEN] Validacao rejeitada tipo=%s usuario_id=%s status=%s token_id=%s",
+            tipo,
+            row.get("usuario_id") if row else None,
+            status,
+            row.get("id") if row else None,
+        )
+    return {
+        "ok": status == "valid",
+        "status": status,
+        "mensagem": _mensagem_status_token(tipo, status),
+        "usuario_id": row.get("usuario_id") if row else None,
+        "email_destino": row.get("email_destino") if row else None,
+        "token_id": row.get("id") if row else None,
+    }
+
+
+def consumir_token_email(token, tipo, motivo="consumido"):
+    conn = conectar()
+    try:
+        cursor = conn.cursor()
+        row = _buscar_token(cursor, token, tipo, for_update=True)
+        status = _status_token(row, tipo)
+        if status != "valid":
+            if row and status == "expired" and not row.get("revogado_em"):
+                cursor.execute(
+                    "UPDATE email_auth_tokens SET revogado_em = CURRENT_TIMESTAMP WHERE id = %s AND revogado_em IS NULL",
+                    (row["id"],),
+                )
+                conn.commit()
+            else:
+                conn.rollback()
+            LOGGER.warning(
+                "[EMAIL_TOKEN] Consumo rejeitado tipo=%s usuario_id=%s status=%s token_id=%s",
+                tipo,
+                row.get("usuario_id") if row else None,
+                status,
+                row.get("id") if row else None,
+            )
+            return {
+                "ok": False,
+                "status": status,
+                "mensagem": _mensagem_status_token(tipo, status),
+                "usuario_id": row.get("usuario_id") if row else None,
+                "token_id": row.get("id") if row else None,
+            }
+
+        cursor.execute("UPDATE email_auth_tokens SET usado_em = CURRENT_TIMESTAMP WHERE id = %s", (row["id"],))
+        _revogar_tokens_pendentes(cursor, row["usuario_id"], tipo, motivo=motivo)
+        conn.commit()
+        LOGGER.info(
+            "[EMAIL_TOKEN] Token consumido tipo=%s usuario_id=%s token_id=%s motivo=%s",
+            tipo,
+            row["usuario_id"],
+            row["id"],
+            motivo,
+        )
+        return {
+            "ok": True,
+            "status": "consumido",
+            "mensagem": "Token consumido com sucesso.",
+            "usuario_id": row["usuario_id"],
+            "email_destino": row.get("email_destino"),
+            "token_id": row["id"],
+        }
+    finally:
+        conn.close()
 
 
 def solicitar_verificacao_email(
@@ -282,13 +432,7 @@ def solicitar_verificacao_email(
         conn.close()
 
     try:
-        link = montar_link_publico(
-            {
-                "token": novo_token["token"],
-            },
-            base_url=base_url,
-            caminho="/verificar-email",
-        )
+        link = montar_link_verificacao_email(novo_token["token"], base_url=base_url)
         envio = enviar_email_verificacao(usuario.get("nome"), usuario.get("email"), link, novo_token["expira_em"])
     except Exception as exc:
         LOGGER.exception(
@@ -388,28 +532,7 @@ def atualizar_email_pendente_verificacao(
 
 
 def inspecionar_token_email(token, tipo):
-    conn = conectar()
-    try:
-        cursor = conn.cursor()
-        row = _buscar_token(cursor, token, tipo, for_update=False)
-    finally:
-        conn.close()
-
-    status = _status_token(row, tipo)
-    if status != "valid":
-        LOGGER.warning(
-            "[EMAIL_TOKEN] Inspecao rejeitada tipo=%s usuario_id=%s status=%s",
-            tipo,
-            row.get("usuario_id") if row else None,
-            status,
-        )
-    return {
-        "ok": status == "valid",
-        "status": status,
-        "mensagem": _mensagem_status_token(tipo, status),
-        "usuario_id": row.get("usuario_id") if row else None,
-        "email_destino": row.get("email_destino") if row else None,
-    }
+    return validar_token_email(token, tipo)
 
 
 def confirmar_email_por_token(token):
@@ -439,6 +562,11 @@ def confirmar_email_por_token(token):
                 "usuario": None,
             }
 
+        LOGGER.info(
+            "[EMAIL_VERIFY] Token de verificacao validado usuario_id=%s token_id=%s",
+            row["usuario_id"],
+            row["id"],
+        )
         cursor.execute(
             """
             UPDATE usuarios
@@ -541,13 +669,7 @@ def solicitar_reset_senha_por_email(
         conn.close()
 
     try:
-        link = montar_link_publico(
-            {
-                "token": novo_token["token"],
-            },
-            base_url=base_url,
-            caminho="/redefinir-senha",
-        )
+        link = montar_link_reset_senha(novo_token["token"], base_url=base_url)
         envio = enviar_email_reset_senha(usuario.get("nome"), usuario.get("email"), link, novo_token["expira_em"])
     except Exception as exc:
         LOGGER.exception(
@@ -609,6 +731,11 @@ def redefinir_senha_por_token(token, nova_senha):
                 "mensagem": _mensagem_status_token(TOKEN_TIPO_RESET_SENHA, status),
             }
 
+        LOGGER.info(
+            "[EMAIL_RESET] Token de reset validado usuario_id=%s token_id=%s",
+            row["usuario_id"],
+            row["id"],
+        )
         cursor.execute(
             """
             UPDATE usuarios

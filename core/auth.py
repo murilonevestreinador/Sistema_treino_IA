@@ -15,7 +15,7 @@ from core.email_tokens import (
     solicitar_verificacao_email,
 )
 from core.email_service import email_envio_habilitado
-from core.env import bool_env, raw_env
+from core.env import get_env_bool, raw_env
 from core.financeiro import criar_trial_assinatura
 from core.lancamento import cadastro_publico_permite_treinador
 from core.permissoes import conta_ativa, email_verificado
@@ -75,24 +75,23 @@ def _usuario_admin_diagnostico(usuario):
 
 
 def email_verificacao_obrigatoria():
-    if raw_env("EMAIL_VERIFICATION_REQUIRED") is not None:
-        obrigatoria = bool_env(
-            "EMAIL_VERIFICATION_REQUIRED",
-            False,
-            logger=LOGGER,
-            contexto="email_verification_required",
-        )
-        origem = "EMAIL_VERIFICATION_REQUIRED"
-    else:
-        obrigatoria = email_envio_habilitado()
-        origem = "EMAIL_PROVIDER/EMAIL_ENABLED"
+    env_configurada = raw_env("EMAIL_VERIFICATION_REQUIRED") is not None
+    obrigatoria_configurada = get_env_bool(
+        "EMAIL_VERIFICATION_REQUIRED",
+        False,
+        logger=LOGGER,
+        contexto="email_verification_required",
+    )
+    envio_habilitado = email_envio_habilitado()
 
     LOGGER.info(
-        "[EMAIL_VERIFY_FLOW] Verificacao de e-mail obrigatoria=%s origem=%s",
-        obrigatoria,
-        origem,
+        "[EMAIL_VERIFY_FLOW] Enforcement ignorado na fase_1 obrigatoria_configurada=%s env_configurada=%s email_enabled=%s enforcement_aplicado=%s",
+        obrigatoria_configurada,
+        env_configurada,
+        envio_habilitado,
+        False,
     )
-    return obrigatoria
+    return False
 
 
 def _token_convite_da_url():
@@ -576,11 +575,11 @@ def _tela_cadastro_tab():
             }
     else:
         LOGGER.info(
-            "[EMAIL_VERIFY_FLOW] Verificacao inicial ignorada usuario_id=%s motivo=email_nao_obrigatorio",
+            "[EMAIL_VERIFY_FLOW] Envio automatico de verificacao apos cadastro desabilitado na fase_1 usuario_id=%s",
             usuario_id,
         )
         resultado_email = {
-            "status": "desabilitado",
+            "status": "fase1_passiva",
             "mensagem": None,
         }
     sessao_registrada = registrar_sessao_persistente(usuario["id"], usuario=usuario, contexto="cadastro")
@@ -659,15 +658,27 @@ def render_pagina_reset_senha():
 
 def render_fluxo_publico_auth():
     action = _auth_action_da_url()
-    if action not in {"verify_email", "reset_password"}:
+    if action not in {"verify_email", "reset_password", "forgot_password"}:
         return False
 
     if action == "verify_email":
         render_pagina_verificacao_email()
         return True
 
+    if action == "forgot_password":
+        render_pagina_esqueci_senha()
+        return True
+
     render_pagina_reset_senha()
     return True
+
+
+def render_pagina_esqueci_senha():
+    _render_auth_shell(
+        "Esqueci a senha",
+        "Informe seu e-mail para receber um link de redefinicao.",
+        _render_solicitacao_reset_publico,
+    )
 
 
 def _render_confirmacao_email_publica():
@@ -762,6 +773,12 @@ def _render_reset_publico():
     if st.button("Ir para entrar", type="primary", use_container_width=True):
         limpar_auth_query_params()
         _abrir_app("Login")
+
+
+def _render_solicitacao_reset_publico():
+    _tela_recuperacao_tab()
+    st.caption("Se existir uma conta com esse e-mail, enviaremos as instrucoes para redefinir a senha.")
+    _botao_continuar_pos_auth()
 
 
 def render_bloqueio_email_pendente(usuario, on_logout):

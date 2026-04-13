@@ -1,14 +1,13 @@
 import bcrypt
 import hashlib
 import logging
-import os
 import secrets
 from datetime import datetime, timedelta
 
 from core.banco import conectar
 from core.calendario import inicio_semana_local
 from core.equipamentos import normalizar_ambiente_treino_forca, normalizar_lista_equipamentos
-from core.env import bool_env
+from core.env import get_env_bool, get_env_str
 from core.permissoes import eh_admin, normalizar_status_conta, normalizar_tipo_usuario
 
 
@@ -758,11 +757,11 @@ def alterar_papel_usuario_por_admin(admin_id, usuario_id, tipo_usuario):
 
 
 def _bootstrap_admin_habilitado():
-    return bool_env("ALLOW_ADMIN_BOOTSTRAP", False, logger=LOGGER, contexto="admin_bootstrap")
+    return get_env_bool("ALLOW_ADMIN_BOOTSTRAP", False, logger=LOGGER, contexto="admin_bootstrap")
 
 
 def _bootstrap_admin_email():
-    return (os.getenv("ADMIN_BOOTSTRAP_EMAIL") or "").strip().lower()
+    return (get_env_str("ADMIN_BOOTSTRAP_EMAIL", "", logger=LOGGER, contexto="admin_bootstrap") or "").strip().lower()
 
 
 def tentar_bootstrap_primeiro_admin(usuario_id, email):
