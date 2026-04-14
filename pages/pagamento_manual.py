@@ -54,11 +54,10 @@ def _redirecionar_para_pagamento_asaas(url, mensagem):
 
 st.set_page_config(page_title="Pagamento Manual", layout="wide")
 inject_app_icons()
-st.title("Checkout")
-st.write("Revise o plano escolhido, aplique um cupom se quiser e siga com a contratacao.")
-
 usuario = garantir_usuario_em_pagina("pagina_pagamento_manual", exigir_email_confirmado=True)
 if usuario:
+    st.title("Checkout")
+    st.write("Revise o plano escolhido, aplique um cupom se quiser e siga com a contratacao.")
     diagnostico_checkout = diagnosticar_dados_checkout(usuario)
     plano_codigo = st.session_state.get("plano_checkout")
     plano = buscar_plano_por_codigo(plano_codigo) if plano_codigo else None

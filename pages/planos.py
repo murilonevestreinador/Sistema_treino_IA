@@ -28,12 +28,11 @@ def _ir_para_pagamento(plano_codigo):
 
 st.set_page_config(page_title="Planos e Precos", layout="wide")
 inject_app_icons()
+usuario = garantir_usuario_em_pagina("pagina_planos", exigir_email_confirmado=True, permitir_publico=True)
 st.title("Planos e Precos")
 st.write(
     "Escolha o plano ideal para usar a TriLab TREINAMENTO com treinos de forca para corredores, periodizacao e adaptacao por feedback."
 )
-
-usuario = garantir_usuario_em_pagina("pagina_planos", exigir_email_confirmado=True, permitir_publico=True)
 exibir_planos_treinador = pode_exibir_planos_treinador_publicamente(usuario)
 atleta_coberto_por_treinador = bool(
     usuario

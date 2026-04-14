@@ -22,10 +22,9 @@ def _ir_para_app():
 
 st.set_page_config(page_title="Minha Assinatura", layout="wide")
 inject_app_icons()
-st.title("Minha Assinatura")
-
 usuario = garantir_usuario_em_pagina("pagina_minha_assinatura", exigir_email_confirmado=True)
 if usuario:
+    st.title("Minha Assinatura")
     assinatura = buscar_assinatura_atual(usuario["id"])
     resumo = resumo_status_assinatura(assinatura)
     atleta_coberto_por_treinador = (

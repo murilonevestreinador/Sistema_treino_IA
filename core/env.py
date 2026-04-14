@@ -1,5 +1,6 @@
 import logging
 import os
+from datetime import datetime, timezone
 
 
 LOGGER = logging.getLogger("trilab.env")
@@ -130,6 +131,71 @@ def get_env_int(nome, padrao=0, logger=None, contexto=None):
     return valor_inteiro
 
 
+def parse_datetime(valor):
+    if valor is None:
+        return None
+    if isinstance(valor, datetime):
+        if valor.tzinfo is not None:
+            return valor.astimezone(timezone.utc).replace(tzinfo=None)
+        return valor
+
+    texto = str(valor).strip()
+    if not texto:
+        return None
+
+    candidato = texto
+    if candidato.endswith("Z"):
+        candidato = f"{candidato[:-1]}+00:00"
+
+    try:
+        dt = datetime.fromisoformat(candidato)
+    except ValueError:
+        return None
+
+    if dt.tzinfo is not None:
+        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
+
+
+def get_env_datetime(nome, padrao=None, logger=None, contexto=None):
+    valor_bruto = os.getenv(nome)
+    destino_log = _logger_destino(logger)
+    valor_padrao = parse_datetime(padrao)
+
+    if valor_bruto is None or str(valor_bruto).strip() == "":
+        destino_log.info(
+            "[AUTH_ENV] Datetime env lida nome=%s bruto=%s interpretado=%s padrao=%s contexto=%s",
+            nome,
+            _valor_para_log(valor_bruto),
+            _valor_para_log(valor_padrao.isoformat() if valor_padrao else None),
+            _valor_para_log(valor_padrao.isoformat() if valor_padrao else None),
+            _contexto_log(contexto),
+        )
+        return valor_padrao
+
+    valor_datetime = parse_datetime(valor_bruto)
+    if valor_datetime is None:
+        destino_log.warning(
+            "[AUTH_ENV] Datetime env com valor invalido nome=%s bruto=%s interpretado=%s padrao=%s contexto=%s",
+            nome,
+            _valor_para_log(valor_bruto),
+            _valor_para_log(valor_padrao.isoformat() if valor_padrao else None),
+            _valor_para_log(valor_padrao.isoformat() if valor_padrao else None),
+            _contexto_log(contexto),
+        )
+        return valor_padrao
+
+    destino_log.info(
+        "[AUTH_ENV] Datetime env lida nome=%s bruto=%s interpretado=%s padrao=%s contexto=%s",
+        nome,
+        _valor_para_log(valor_bruto),
+        _valor_para_log(valor_datetime.isoformat()),
+        _valor_para_log(valor_padrao.isoformat() if valor_padrao else None),
+        _contexto_log(contexto),
+    )
+    return valor_datetime
+
+
 def str_env(nome, padrao=None, logger=None, contexto=None, sensivel=False, strip=True):
     return get_env_str(
         nome,
@@ -147,3 +213,7 @@ def bool_env(nome, padrao=False, logger=None, contexto=None):
 
 def int_env(nome, padrao=0, logger=None, contexto=None):
     return get_env_int(nome, padrao=padrao, logger=logger, contexto=contexto)
+
+
+def datetime_env(nome, padrao=None, logger=None, contexto=None):
+    return get_env_datetime(nome, padrao=padrao, logger=logger, contexto=contexto)

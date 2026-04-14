@@ -217,7 +217,7 @@ def _render_status_email(usuario):
             st.caption(f"Confirmado em: {usuario.get('email_verificado_em')}")
         return
 
-    st.info("Seu e-mail ainda nao foi confirmado. O acesso continua normal nesta fase.")
+    st.info("Seu e-mail ainda nao foi confirmado. Esta conta continua com acesso normal neste momento.")
     if not email_envio_habilitado():
         st.warning("O envio de e-mail esta indisponivel no momento. Voce ainda pode usar a plataforma normalmente.")
         return

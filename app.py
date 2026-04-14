@@ -706,10 +706,10 @@ def main():
             fazer_logout()
         return
 
-    verificacao_email_obrigatoria = email_verificacao_obrigatoria()
-    if verificacao_email_obrigatoria and not email_verificado(usuario):
+    verificacao_email_obrigatoria_usuario = email_verificacao_obrigatoria(usuario, contexto="app_main")
+    if verificacao_email_obrigatoria_usuario:
         LOGGER.warning(
-            "[LOGIN_BLOCK] Acesso ao app bloqueado por e-mail pendente email=%s usuario_id=%s tipo_usuario=%s",
+            "[EMAIL_PENDING] Usuario redirecionado para tela de pendencia email=%s usuario_id=%s tipo_usuario=%s",
             usuario.get("email"),
             usuario.get("id"),
             usuario.get("tipo_usuario"),
@@ -717,9 +717,9 @@ def main():
         render_bloqueio_email_pendente(usuario, fazer_logout)
         renderizar_rodape()
         return
-    if not verificacao_email_obrigatoria and not email_verificado(usuario):
+    if not verificacao_email_obrigatoria_usuario and not email_verificado(usuario):
         LOGGER.warning(
-            "[EMAIL_VERIFY_FLOW] E-mail pendente nao bloqueou login porque verificacao nao esta obrigatoria email=%s usuario_id=%s tipo_usuario=%s",
+            "[EMAIL_VERIFY_ENFORCEMENT] E-mail pendente nao bloqueou acesso email=%s usuario_id=%s tipo_usuario=%s",
             usuario.get("email"),
             usuario.get("id"),
             usuario.get("tipo_usuario"),

@@ -5,6 +5,7 @@ from pathlib import Path
 
 import streamlit as st
 
+from core.email_verificacao import avaliar_email_verificacao_obrigatoria, email_verificacao_obrigatoria
 from core.email_tokens import (
     TOKEN_TIPO_RESET_SENHA,
     atualizar_email_pendente_verificacao,
@@ -15,7 +16,6 @@ from core.email_tokens import (
     solicitar_verificacao_email,
 )
 from core.email_service import email_envio_habilitado
-from core.env import get_env_bool, raw_env
 from core.financeiro import criar_trial_assinatura
 from core.lancamento import cadastro_publico_permite_treinador
 from core.permissoes import conta_ativa, email_verificado
@@ -28,6 +28,7 @@ from core.sessao_persistente import (
     preparar_rotacao_browser_key,
     registrar_sessao_persistente,
     restaurar_usuario_persistente,
+    revogar_sessao_persistente_atual,
     tocar_sessao_persistente_atual,
 )
 from core.treinador import buscar_convite_por_token, definir_vinculo_treinador_atleta
@@ -74,24 +75,18 @@ def _usuario_admin_diagnostico(usuario):
     return bool(usuario and _email_admin_diagnostico(usuario.get("email")))
 
 
-def email_verificacao_obrigatoria():
-    env_configurada = raw_env("EMAIL_VERIFICATION_REQUIRED") is not None
-    obrigatoria_configurada = get_env_bool(
-        "EMAIL_VERIFICATION_REQUIRED",
-        False,
-        logger=LOGGER,
-        contexto="email_verification_required",
-    )
-    envio_habilitado = email_envio_habilitado()
-
-    LOGGER.info(
-        "[EMAIL_VERIFY_FLOW] Enforcement ignorado na fase_2 obrigatoria_configurada=%s env_configurada=%s email_enabled=%s enforcement_aplicado=%s",
-        obrigatoria_configurada,
-        env_configurada,
-        envio_habilitado,
-        False,
-    )
-    return False
+def encerrar_sessao_atual(destino_modo="Login"):
+    usuario = st.session_state.get("usuario")
+    if usuario:
+        revogar_sessao_persistente_atual(usuario.get("id"))
+    preparar_rotacao_browser_key()
+    for chave in list(st.session_state.keys()):
+        if chave == "browser_key_reset_nonce":
+            continue
+        del st.session_state[chave]
+    if destino_modo:
+        st.session_state["auth_modo"] = destino_modo
+    _abrir_app(destino_modo)
 
 
 def _token_convite_da_url():
@@ -182,17 +177,16 @@ def garantir_usuario_em_pagina(chave_contexto, exigir_email_confirmado=False, pe
             _abrir_app()
         st.stop()
 
-    if exigir_email_confirmado and email_verificacao_obrigatoria() and not email_verificado(usuario):
+    avaliacao_email = avaliar_email_verificacao_obrigatoria(usuario, contexto=f"{chave_contexto}:page_gate")
+    if exigir_email_confirmado and avaliacao_email.get("obrigatoria"):
         LOGGER.warning(
-            "[LOGIN_BLOCK] Pagina bloqueada por e-mail pendente email=%s usuario_id=%s contexto=%s",
+            "[EMAIL_PENDING] Pagina redirecionada para pendencia email=%s usuario_id=%s contexto=%s motivo=%s",
             usuario.get("email"),
             usuario.get("id"),
             chave_contexto,
+            avaliacao_email.get("motivo"),
         )
-        st.warning("Confirme seu e-mail no app antes de continuar.")
-        st.caption("Enquanto isso, voce pode reenviar o link, corrigir o e-mail ou sair da conta na tela principal.")
-        if st.button("Ir para confirmar e-mail", type="primary", use_container_width=True, key=f"{chave_contexto}_confirmar_email"):
-            _abrir_app()
+        render_bloqueio_email_pendente(usuario)
         st.stop()
 
     return usuario
@@ -331,7 +325,11 @@ def render_aviso_email_pendente_passivo(usuario):
         st.warning(mensagem)
     else:
         st.info(mensagem)
-    st.caption("O acesso continua normal nesta fase. Se precisar, voce pode reenviar ou corrigir o e-mail em Meu perfil.")
+    avaliacao_email = avaliar_email_verificacao_obrigatoria(usuario, contexto="app_passive_notice")
+    if avaliacao_email.get("obrigatoria"):
+        st.caption("Sua conta ainda precisa confirmar o e-mail antes do acesso completo.")
+    else:
+        st.caption("O acesso continua normal para esta conta. Se precisar, voce pode reenviar ou corrigir o e-mail em Meu perfil.")
 
 
 def tela_login():
@@ -461,7 +459,20 @@ def _tela_login_tab():
         sessao_registrada,
     )
     st.session_state.setdefault("mostrar_overview", False)
-    if (email_verificado(usuario) or not email_verificacao_obrigatoria()) and _ir_para_checkout_se_pendente():
+    avaliacao_email = avaliar_email_verificacao_obrigatoria(usuario, contexto="login_success")
+    if avaliacao_email.get("obrigatoria"):
+        LOGGER.info(
+            "[EMAIL_PENDING] Login autenticado com pendencia usuario_id=%s email=%s tipo_usuario=%s motivo=%s",
+            usuario.get("id"),
+            usuario.get("email"),
+            usuario.get("tipo_usuario"),
+            avaliacao_email.get("motivo"),
+        )
+        st.session_state["email_pending_notice"] = {
+            "status": "pendente",
+            "mensagem": "Seu login foi concluido. Para liberar o acesso completo, confirme o link enviado para o seu e-mail.",
+        }
+    elif _ir_para_checkout_se_pendente():
         return
     st.rerun()
 
@@ -815,40 +826,55 @@ def _render_solicitacao_reset_publico():
     _botao_continuar_pos_auth()
 
 
-def render_bloqueio_email_pendente(usuario, on_logout):
+def render_bloqueio_email_pendente(usuario, on_logout=None):
     usuario_atual = buscar_usuario_por_id(usuario["id"]) or usuario
     st.session_state["usuario"] = usuario_atual
-    if email_verificado(usuario_atual):
+    avaliacao_email = avaliar_email_verificacao_obrigatoria(usuario_atual, contexto="pending_screen")
+    if email_verificado(usuario_atual) or not avaliacao_email.get("obrigatoria"):
+        LOGGER.info(
+            "[EMAIL_PENDING] Bloqueio dispensado usuario_id=%s obrigatoria=%s motivo=%s email_verificado=%s",
+            usuario_atual.get("id"),
+            avaliacao_email.get("obrigatoria"),
+            avaliacao_email.get("motivo"),
+            email_verificado(usuario_atual),
+        )
         st.rerun()
+    if on_logout is None:
+        on_logout = encerrar_sessao_atual
 
     LOGGER.warning(
-        "[EMAIL_VERIFY_FLOW] Acesso limitado por e-mail pendente email=%s usuario_id=%s tipo_usuario=%s",
+        "[EMAIL_PENDING] Acesso limitado por e-mail pendente email=%s usuario_id=%s tipo_usuario=%s motivo=%s",
         usuario_atual.get("email"),
         usuario_atual.get("id"),
         usuario_atual.get("tipo_usuario"),
+        avaliacao_email.get("motivo"),
     )
 
     st.title("Confirme seu e-mail")
     _mensagem_email_pendente()
-    st.info(
-        "Para concluir a confirmacao do seu e-mail, use o link enviado para "
-        f"{usuario_atual.get('email') or 'o e-mail cadastrado'}."
+    st.info("Seu login foi concluido com sucesso, mas essa conta ainda precisa confirmar o e-mail para liberar o acesso completo.")
+    st.write(
+        "Enviamos um link de confirmacao para "
+        f"{usuario_atual.get('email') or 'o e-mail cadastrado'}. "
+        "Voce pode reenviar o e-mail, corrigir o endereco informado ou sair da conta."
     )
-    st.write("Voce pode reenviar o e-mail, corrigir o endereco informado ou sair da conta.")
+    if usuario_atual.get("ultimo_envio_verificacao_em"):
+        st.caption(f"Ultimo envio registrado: {usuario_atual.get('ultimo_envio_verificacao_em')}")
 
     col_reenviar, col_status, col_sair = st.columns(3)
     with col_reenviar:
         if st.button("Reenviar e-mail", type="primary", use_container_width=True):
+            LOGGER.info("[EMAIL_PENDING] Reenvio solicitado usuario_id=%s", usuario_atual["id"])
             try:
                 resultado = solicitar_verificacao_email(
                     usuario_atual["id"],
                     criado_ip=_ip_requisicao(),
                     criado_user_agent=_user_agent_requisicao(),
-                    origem="reenvio_manual",
+                    origem="email_pending_screen",
                 )
             except Exception as exc:
                 LOGGER.exception(
-                    "[EMAIL_VERIFY] Falha ao reenviar verificacao usuario_id=%s erro=%s",
+                    "[EMAIL_PENDING] Falha ao reenviar verificacao usuario_id=%s erro=%s",
                     usuario_atual["id"],
                     exc,
                 )
@@ -863,6 +889,7 @@ def render_bloqueio_email_pendente(usuario, on_logout):
             st.rerun()
     with col_status:
         if st.button("Ja confirmei", use_container_width=True):
+            LOGGER.info("[EMAIL_PENDING] Confirmacao manual consultada usuario_id=%s", usuario_atual["id"])
             usuario_refresh = buscar_usuario_por_id(usuario_atual["id"])
             if usuario_refresh and email_verificado(usuario_refresh):
                 st.session_state["usuario"] = usuario_refresh
@@ -874,15 +901,21 @@ def render_bloqueio_email_pendente(usuario, on_logout):
             st.info("Ainda nao encontramos a confirmacao. Tente novamente em alguns instantes.")
     with col_sair:
         if st.button("Sair", use_container_width=True):
+            LOGGER.info("[EMAIL_PENDING] Logout solicitado na tela de pendencia usuario_id=%s", usuario_atual["id"])
             on_logout()
 
     with st.form(f"form_corrigir_email_{usuario_atual['id']}"):
-        novo_email = st.text_input("Corrigir e-mail", value=usuario_atual.get("email") or "", placeholder="voce@exemplo.com")
+        novo_email = st.text_input(
+            "Corrigir e-mail",
+            value=usuario_atual.get("email") or "",
+            placeholder="voce@exemplo.com",
+        )
         salvar_email = st.form_submit_button("Salvar e reenviar link", use_container_width=True)
 
     if not salvar_email:
         return
 
+    LOGGER.info("[EMAIL_PENDING] Troca de e-mail solicitada usuario_id=%s", usuario_atual["id"])
     try:
         resultado = atualizar_email_pendente_verificacao(
             usuario_atual["id"],
@@ -895,7 +928,7 @@ def render_bloqueio_email_pendente(usuario, on_logout):
         return
     except Exception as exc:
         LOGGER.exception(
-            "[EMAIL_VERIFY] Falha ao atualizar email pendente usuario_id=%s erro=%s",
+            "[EMAIL_PENDING] Falha ao atualizar email pendente usuario_id=%s erro=%s",
             usuario_atual["id"],
             exc,
         )
