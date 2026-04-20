@@ -22,6 +22,11 @@ from core.financeiro import (
     obter_status_interface_atleta,
     resumo_status_assinatura,
 )
+from core.objetivos import (
+    indice_objetivo_exposto_no_front,
+    objetivos_expostos_no_front,
+    rotulo_objetivo_front,
+)
 from core.perfil import tela_meu_perfil
 from core.permissoes import conta_ativa, eh_admin, eh_atleta, eh_treinador, email_verificado
 from core.questionario import tela_questionario
@@ -452,14 +457,13 @@ def renderizar_menu_superior(usuario):
                 st.divider()
                 st.write("Redefinir objetivo")
                 with st.form("form_redefinir_objetivo_menu"):
+                    objetivos_front = objetivos_expostos_no_front()
                     objetivo = st.selectbox(
                         "Objetivo",
-                        ["performance", "saude", "completar prova"],
-                        index=["performance", "saude", "completar prova"].index(
-                            usuario.get("objetivo", "performance")
-                            if usuario.get("objetivo", "performance") in {"performance", "saude", "completar prova"}
-                            else "performance"
-                        ),
+                        objetivos_front,
+                        index=indice_objetivo_exposto_no_front(usuario.get("objetivo")),
+                        format_func=rotulo_objetivo_front,
+                        disabled=len(objetivos_front) == 1,
                     )
                     tem_prova = st.checkbox("Tenho uma prova principal", value=bool(usuario.get("tem_prova")))
                     data_prova = None

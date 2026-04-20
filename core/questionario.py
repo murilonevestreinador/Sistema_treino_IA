@@ -11,6 +11,11 @@ from core.equipamentos import (
     rotulo_ambiente_treino,
     rotulo_equipamento,
 )
+from core.objetivos import (
+    indice_objetivo_exposto_no_front,
+    objetivos_expostos_no_front,
+    rotulo_objetivo_front,
+)
 from core.usuarios import atualizar_usuario_onboarding
 
 
@@ -32,7 +37,14 @@ def tela_questionario(usuario):
             data_prova = st.date_input("Data da prova", min_value=hoje)
             distancia_prova = st.selectbox("Dist\u00e2ncia da prova", ["5km", "10km", "21km", "42km", "outra"])
 
-        objetivo = st.selectbox("Objetivo", ["performance", "saude", "completar prova"])
+        objetivos_front = objetivos_expostos_no_front()
+        objetivo = st.selectbox(
+            "Objetivo",
+            objetivos_front,
+            index=indice_objetivo_exposto_no_front(usuario.get("objetivo")),
+            format_func=rotulo_objetivo_front,
+            disabled=len(objetivos_front) == 1,
+        )
         distancia_principal = st.selectbox("Dist\u00e2ncia principal", ["5km", "10km", "21km", "42km", "outra"])
         tempo_pratica = st.selectbox("Tempo de pr\u00e1tica", ["iniciante", "6 meses", "1 ano", "2+ anos"])
         treinos_corrida_semana = st.number_input("Treinos de corrida por semana", min_value=0, max_value=7, value=3)

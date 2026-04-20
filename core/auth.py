@@ -18,6 +18,11 @@ from core.email_tokens import (
 from core.email_service import email_envio_habilitado
 from core.financeiro import criar_trial_assinatura
 from core.lancamento import cadastro_publico_permite_treinador
+from core.objetivos import (
+    OBJETIVO_PADRAO_FRONT,
+    objetivos_expostos_no_front,
+    rotulo_objetivo_front,
+)
 from core.permissoes import conta_ativa, email_verificado
 from core.sessao_persistente import (
     browser_key_disponivel,
@@ -494,11 +499,14 @@ def _tela_cadastro_tab():
             cref = st.text_input("CREF", key="cad_cref", placeholder="Ex.: 123456-G/SP")
         senha = st.text_input("Senha", type="password", key="cad_senha", placeholder="Crie uma senha")
         sexo = st.selectbox("Sexo", ["masculino", "feminino", "outro"], key="cad_sexo")
-        objetivo = "performance"
+        objetivo = OBJETIVO_PADRAO_FRONT
         if tipo_usuario == "atleta":
+            objetivos_front = objetivos_expostos_no_front()
             objetivo = st.selectbox(
                 "Objetivo inicial",
-                ["performance", "saude", "completar prova"],
+                objetivos_front,
+                format_func=rotulo_objetivo_front,
+                disabled=len(objetivos_front) == 1,
                 key="cad_objetivo",
             )
 
