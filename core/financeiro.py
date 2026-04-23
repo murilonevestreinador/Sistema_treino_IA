@@ -745,6 +745,7 @@ def salvar_checkout_pendente(usuario, plano_codigo, cupom_codigo=None, checkout_
         "cupom_valido": calculo.get("cupom_valido"),
         "calculo_treinador": calculo.get("calculo_treinador"),
     }
+    asaas_customer_id = (usuario.get("asaas_customer_id") or "").strip() or None
     params_base = (
         usuario["id"],
         plano["id"],
@@ -756,6 +757,7 @@ def salvar_checkout_pendente(usuario, plano_codigo, cupom_codigo=None, checkout_
         calculo["valor_final"],
         status or "pendente",
         external_reference,
+        asaas_customer_id,
         calculo.get("mensagem_cupom") or None,
         json.dumps(metadata, ensure_ascii=True, sort_keys=True, default=str),
     )
@@ -774,6 +776,7 @@ def salvar_checkout_pendente(usuario, plano_codigo, cupom_codigo=None, checkout_
                 valor_final = %s,
                 status = %s,
                 external_reference = COALESCE(external_reference, %s),
+                asaas_customer_id = COALESCE(%s, asaas_customer_id),
                 mensagem_cupom = %s,
                 metadata_json = %s,
                 atualizado_em = CURRENT_TIMESTAMP
@@ -788,9 +791,9 @@ def salvar_checkout_pendente(usuario, plano_codigo, cupom_codigo=None, checkout_
             INSERT INTO checkouts_pendentes (
                 usuario_id, plano_id, plano_codigo, cupom_id, cupom_codigo,
                 valor_bruto, valor_desconto, valor_final, status,
-                external_reference, mensagem_cupom, metadata_json,
+                external_reference, asaas_customer_id, mensagem_cupom, metadata_json,
                 criado_em, atualizado_em
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             RETURNING *
             """,
             params_base,
@@ -815,6 +818,7 @@ def salvar_checkout_pendente(usuario, plano_codigo, cupom_codigo=None, checkout_
                 "valor_final": checkout.get("valor_final"),
                 "status": checkout.get("status"),
                 "external_reference": checkout.get("external_reference"),
+                "asaas_customer_id": checkout.get("asaas_customer_id"),
             }
         ),
     )
@@ -1573,6 +1577,7 @@ def _atualizar_checkout_pos_gateway(cursor, checkout_id, assinatura_id, pagament
             pagamento_id = COALESCE(%s, pagamento_id),
             asaas_subscription_id = COALESCE(%s, asaas_subscription_id),
             asaas_payment_id = COALESCE(%s, asaas_payment_id),
+            asaas_customer_id = COALESCE(%s, asaas_customer_id),
             redirect_url = COALESCE(%s, redirect_url),
             desconto_apenas_primeira_cobranca = COALESCE(%s, desconto_apenas_primeira_cobranca),
             primeira_cobranca_valor_bruto = COALESCE(%s, primeira_cobranca_valor_bruto),
@@ -1589,6 +1594,7 @@ def _atualizar_checkout_pos_gateway(cursor, checkout_id, assinatura_id, pagament
             pagamento_id,
             retorno_gateway.get("asaas_subscription_id"),
             retorno_gateway.get("asaas_payment_id"),
+            retorno_gateway.get("asaas_customer_id"),
             retorno_gateway.get("redirect_url") or retorno_gateway.get("invoice_url"),
             retorno_gateway.get("first_payment_discount_applied"),
             retorno_gateway.get("first_payment_valor_bruto"),

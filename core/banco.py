@@ -912,6 +912,7 @@ def _criar_tabela_checkouts_pendentes(cursor):
             pagamento_id INTEGER NULL,
             asaas_subscription_id TEXT NULL,
             asaas_payment_id TEXT NULL,
+            asaas_customer_id TEXT NULL,
             redirect_url TEXT NULL,
             external_reference TEXT UNIQUE,
             desconto_apenas_primeira_cobranca BOOLEAN DEFAULT FALSE,
@@ -946,6 +947,7 @@ def _criar_tabela_checkouts_pendentes(cursor):
         "pagamento_id": "INTEGER NULL",
         "asaas_subscription_id": "TEXT NULL",
         "asaas_payment_id": "TEXT NULL",
+        "asaas_customer_id": "TEXT NULL",
         "redirect_url": "TEXT NULL",
         "external_reference": "TEXT",
         "desconto_apenas_primeira_cobranca": "BOOLEAN DEFAULT FALSE",
@@ -1275,6 +1277,12 @@ def _criar_indices_bi(cursor):
         """
         CREATE INDEX IF NOT EXISTS idx_checkouts_pendentes_asaas
         ON checkouts_pendentes (asaas_subscription_id, asaas_payment_id)
+        """
+    )
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_checkouts_pendentes_asaas_customer
+        ON checkouts_pendentes (asaas_customer_id, status, atualizado_em DESC, id DESC)
         """
     )
     cursor.execute(
