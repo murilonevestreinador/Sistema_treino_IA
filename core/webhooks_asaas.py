@@ -46,13 +46,13 @@ class AsaasWebhookHandler(tornado.web.RequestHandler):
 
         headers = {chave: valor for chave, valor in self.request.headers.get_all()}
         LOGGER.info(
-            "Webhook Asaas recebido: evento=%s, payment_id=%s",
+            "[ASAAS_WEBHOOK] Webhook Asaas recebido: evento=%s, payment_id=%s",
             (payload or {}).get("event"),
             ((payload or {}).get("payment") or {}).get("id"),
         )
         resultado = processar_webhook_asaas(payload, headers)
         LOGGER.info(
-            "Webhook Asaas finalizado: status_code=%s, ok=%s, mensagem=%s",
+            "[ASAAS_WEBHOOK] Webhook Asaas finalizado: status_code=%s, ok=%s, mensagem=%s",
             resultado.get("status_code"),
             resultado.get("ok"),
             resultado.get("mensagem"),

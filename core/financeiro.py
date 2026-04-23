@@ -1762,7 +1762,48 @@ def criar_assinatura_manual(usuario, plano, cupom_codigo=None, checkout=None):
         pagamento_id = None
         if fluxo_asaas:
             pagamento_id = _registrar_pagamento_asaas_checkout(cursor, usuario["id"], assinatura_id, checkout, retorno_gateway, cupom)
-            _atualizar_checkout_pos_gateway(cursor, checkout.get("id"), assinatura_id, pagamento_id, retorno_gateway, "asaas_criado")
+            cursor.execute(
+                """
+                SELECT status
+                FROM pagamentos
+                WHERE id = %s
+                LIMIT 1
+                """,
+                (pagamento_id,),
+            )
+            pagamento_local = cursor.fetchone()
+            status_checkout_gateway = "asaas_criado"
+            if (pagamento_local or {}).get("status") in STATUS_FINANCEIROS_QUITADOS:
+                novo_status_assinatura = _status_pagamento_para_assinatura(pagamento_local.get("status"))
+                cursor.execute(
+                    """
+                    UPDATE assinaturas
+                    SET status = %s,
+                        data_renovacao = COALESCE(%s, data_renovacao)
+                    WHERE id = %s
+                    """,
+                    (
+                        novo_status_assinatura,
+                        (retorno_gateway.get("payment_payload") or {}).get("dueDate"),
+                        assinatura_id,
+                    ),
+                )
+                status_checkout_gateway = "concluido"
+                LOGGER.info(
+                    "[ASAAS_ACCESS_RELEASE] Assinatura local liberada durante a conciliacao do checkout | %s",
+                    _payload_log(
+                        {
+                            "usuario_id": usuario.get("id"),
+                            "assinatura_id": assinatura_id,
+                            "pagamento_id": pagamento_id,
+                            "asaas_payment_id": retorno_gateway.get("asaas_payment_id"),
+                            "asaas_subscription_id": retorno_gateway.get("asaas_subscription_id"),
+                            "status_pagamento": pagamento_local.get("status"),
+                            "status_assinatura": novo_status_assinatura,
+                        }
+                    ),
+                )
+            _atualizar_checkout_pos_gateway(cursor, checkout.get("id"), assinatura_id, pagamento_id, retorno_gateway, status_checkout_gateway)
         conn.commit()
     except Exception:
         conn.rollback()

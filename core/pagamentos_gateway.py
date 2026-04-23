@@ -1338,6 +1338,237 @@ def _buscar_usuario_por_customer(cursor, asaas_customer_id):
     return dict(linha) if linha else None
 
 
+def _buscar_usuario_por_id(cursor, usuario_id):
+    if not usuario_id:
+        return None
+    cursor.execute(
+        """
+        SELECT *
+        FROM usuarios
+        WHERE id = %s
+        LIMIT 1
+        """,
+        (usuario_id,),
+    )
+    linha = cursor.fetchone()
+    return dict(linha) if linha else None
+
+
+def _buscar_assinatura_por_id(cursor, assinatura_id):
+    if not assinatura_id:
+        return None
+    cursor.execute(
+        """
+        SELECT *
+        FROM assinaturas
+        WHERE id = %s
+        LIMIT 1
+        """,
+        (assinatura_id,),
+    )
+    linha = cursor.fetchone()
+    return dict(linha) if linha else None
+
+
+def _buscar_pagamento_local_por_gateway(cursor, asaas_payment_id=None, gateway_reference=None):
+    if not asaas_payment_id and not gateway_reference:
+        return None
+    cursor.execute(
+        """
+        SELECT *
+        FROM pagamentos
+        WHERE (asaas_payment_id = %s AND %s IS NOT NULL)
+           OR (referencia_externa = %s AND %s IS NOT NULL)
+           OR (gateway_reference = %s AND %s IS NOT NULL)
+        ORDER BY COALESCE(created_at, CURRENT_TIMESTAMP) DESC, id DESC
+        LIMIT 1
+        """,
+        (
+            asaas_payment_id,
+            asaas_payment_id,
+            asaas_payment_id,
+            asaas_payment_id,
+            gateway_reference,
+            gateway_reference,
+        ),
+    )
+    linha = cursor.fetchone()
+    return dict(linha) if linha else None
+
+
+def _buscar_checkout_por_webhook(cursor, asaas_payment_id=None, asaas_subscription_id=None, external_reference=None, usuario_id=None):
+    if asaas_payment_id or asaas_subscription_id or external_reference:
+        cursor.execute(
+            """
+            SELECT *
+            FROM checkouts_pendentes
+            WHERE (asaas_payment_id = %s AND %s IS NOT NULL)
+               OR (asaas_subscription_id = %s AND %s IS NOT NULL)
+               OR (external_reference = %s AND %s IS NOT NULL)
+            ORDER BY atualizado_em DESC, id DESC
+            LIMIT 1
+            """,
+            (
+                asaas_payment_id,
+                asaas_payment_id,
+                asaas_subscription_id,
+                asaas_subscription_id,
+                external_reference,
+                external_reference,
+            ),
+        )
+        linha = cursor.fetchone()
+        if linha:
+            return dict(linha)
+
+    if not usuario_id:
+        return None
+    cursor.execute(
+        """
+        SELECT *
+        FROM checkouts_pendentes
+        WHERE usuario_id = %s
+          AND status IN ('pendente', 'asaas_criado')
+        ORDER BY atualizado_em DESC, id DESC
+        LIMIT 1
+        """,
+        (usuario_id,),
+    )
+    linha = cursor.fetchone()
+    return dict(linha) if linha else None
+
+
+def _buscar_assinatura_pendente_usuario(cursor, usuario_id, plano_id=None):
+    if not usuario_id:
+        return None
+    filtros = [
+        "usuario_id = %s",
+        "LOWER(COALESCE(gateway, '')) = 'asaas'",
+        "status = 'pendente'",
+        "NULLIF(COALESCE(asaas_subscription_id, ''), '') IS NULL",
+    ]
+    params = [usuario_id]
+    if plano_id:
+        filtros.append("plano_id = %s")
+        params.append(plano_id)
+    cursor.execute(
+        f"""
+        SELECT *
+        FROM assinaturas
+        WHERE {' AND '.join(filtros)}
+        ORDER BY COALESCE(created_at, CURRENT_TIMESTAMP) DESC, id DESC
+        LIMIT 1
+        """,
+        tuple(params),
+    )
+    linha = cursor.fetchone()
+    return dict(linha) if linha else None
+
+
+def _resolver_contexto_pagamento_webhook(cursor, pagamento_payload):
+    payment_id = (pagamento_payload or {}).get("id")
+    subscription_id = (pagamento_payload or {}).get("subscription")
+    external_reference = (pagamento_payload or {}).get("externalReference")
+    customer_id = (pagamento_payload or {}).get("customer")
+    gateway_reference = (pagamento_payload or {}).get("invoiceUrl") or payment_id
+
+    contexto = {
+        "assinatura": None,
+        "usuario": None,
+        "checkout": None,
+        "pagamento_local": None,
+        "match_steps": [],
+    }
+
+    assinatura = _buscar_assinatura_por_gateway(cursor, subscription_id, subscription_id)
+    if assinatura:
+        contexto["assinatura"] = assinatura
+        contexto["match_steps"].append("assinatura:subscription")
+
+    pagamento_local = _buscar_pagamento_local_por_gateway(cursor, payment_id, gateway_reference)
+    if pagamento_local:
+        contexto["pagamento_local"] = pagamento_local
+        contexto["match_steps"].append("pagamento:payment_id")
+        if not contexto["assinatura"] and pagamento_local.get("assinatura_id"):
+            assinatura = _buscar_assinatura_por_id(cursor, pagamento_local.get("assinatura_id"))
+            if assinatura:
+                contexto["assinatura"] = assinatura
+                contexto["match_steps"].append("assinatura:pagamento_local")
+
+    if contexto["assinatura"] and not contexto["usuario"]:
+        usuario = _buscar_usuario_por_id(cursor, contexto["assinatura"].get("usuario_id"))
+        if usuario:
+            contexto["usuario"] = usuario
+            contexto["match_steps"].append("usuario:assinatura")
+
+    if not contexto["usuario"] and pagamento_local and pagamento_local.get("usuario_id"):
+        usuario = _buscar_usuario_por_id(cursor, pagamento_local.get("usuario_id"))
+        if usuario:
+            contexto["usuario"] = usuario
+            contexto["match_steps"].append("usuario:pagamento_local")
+
+    if not contexto["usuario"] and customer_id:
+        usuario = _buscar_usuario_por_customer(cursor, customer_id)
+        if usuario:
+            contexto["usuario"] = usuario
+            contexto["match_steps"].append("usuario:customer")
+
+    checkout = _buscar_checkout_por_webhook(
+        cursor,
+        asaas_payment_id=payment_id,
+        asaas_subscription_id=subscription_id,
+        external_reference=external_reference,
+        usuario_id=(contexto["usuario"] or {}).get("id"),
+    )
+    if checkout:
+        contexto["checkout"] = checkout
+        if any(checkout.get(chave) for chave in ("asaas_payment_id", "asaas_subscription_id", "external_reference")):
+            contexto["match_steps"].append("checkout:identificadores")
+        else:
+            contexto["match_steps"].append("checkout:usuario_aberto")
+        if not contexto["usuario"] and checkout.get("usuario_id"):
+            usuario = _buscar_usuario_por_id(cursor, checkout.get("usuario_id"))
+            if usuario:
+                contexto["usuario"] = usuario
+                contexto["match_steps"].append("usuario:checkout")
+        if not contexto["assinatura"] and checkout.get("assinatura_id"):
+            assinatura = _buscar_assinatura_por_id(cursor, checkout.get("assinatura_id"))
+            if assinatura:
+                contexto["assinatura"] = assinatura
+                contexto["match_steps"].append("assinatura:checkout")
+
+    if not contexto["assinatura"] and contexto["usuario"]:
+        assinatura = _buscar_assinatura_pendente_usuario(
+            cursor,
+            contexto["usuario"].get("id"),
+            (contexto["checkout"] or {}).get("plano_id"),
+        )
+        if assinatura:
+            contexto["assinatura"] = assinatura
+            contexto["match_steps"].append("assinatura:pendente_usuario")
+
+    LOGGER.info(
+        "[ASAAS_WEBHOOK_MATCH] Contexto resolvido para webhook Asaas | %s",
+        _payload_json(
+            _sanitize_for_log(
+                {
+                    "payment_id": payment_id,
+                    "subscription": subscription_id,
+                    "customer": customer_id,
+                    "external_reference": external_reference,
+                    "billing_type": (pagamento_payload or {}).get("billingType"),
+                    "assinatura_id": (contexto["assinatura"] or {}).get("id"),
+                    "usuario_id": (contexto["usuario"] or {}).get("id"),
+                    "checkout_id": (contexto["checkout"] or {}).get("id"),
+                    "pagamento_local_id": (contexto["pagamento_local"] or {}).get("id"),
+                    "match_steps": contexto["match_steps"],
+                }
+            )
+        ),
+    )
+    return contexto
+
+
 def _valor_desconto_pagamento_asaas(pagamento_payload):
     desconto = (pagamento_payload or {}).get("discount")
     if not isinstance(desconto, dict):
@@ -1348,14 +1579,7 @@ def _valor_desconto_pagamento_asaas(pagamento_payload):
     return max(Decimal("0"), _to_decimal(valor))
 
 
-def _upsert_pagamento_webhook(cursor, pagamento_payload, assinatura):
-    usuario_id = assinatura["usuario_id"] if assinatura else None
-    if not usuario_id:
-        usuario = _buscar_usuario_por_customer(cursor, pagamento_payload.get("customer"))
-        usuario_id = usuario["id"] if usuario else None
-    if not usuario_id:
-        raise ValueError("Usuario interno nao encontrado para o pagamento do Asaas.")
-
+def _upsert_pagamento_webhook(cursor, pagamento_payload, assinatura, usuario=None, checkout=None, pagamento_local=None):
     valor_bruto = _to_decimal(pagamento_payload.get("value") or pagamento_payload.get("netValue") or 0)
     valor_desconto = min(valor_bruto, _valor_desconto_pagamento_asaas(pagamento_payload))
     valor_final = max(Decimal("0"), valor_bruto - valor_desconto).quantize(CENTAVOS, rounding=ROUND_HALF_UP)
@@ -1369,19 +1593,37 @@ def _upsert_pagamento_webhook(cursor, pagamento_payload, assinatura):
     referencia_externa = pagamento_payload.get("id")
     gateway_reference = pagamento_payload.get("invoiceUrl") or referencia_externa
 
-    cursor.execute(
-        """
-        SELECT id, status, assinatura_id, valor_desconto, valor_final
-        FROM pagamentos
-        WHERE asaas_payment_id = %s
-           OR referencia_externa = %s
-           OR gateway_reference = %s
-        ORDER BY COALESCE(created_at, CURRENT_TIMESTAMP) DESC, id DESC
-        LIMIT 1
-        """,
-        (referencia_externa, referencia_externa, gateway_reference),
-    )
-    existente = cursor.fetchone()
+    existente = pagamento_local
+    if not existente:
+        cursor.execute(
+            """
+            SELECT id, usuario_id, status, assinatura_id, valor_desconto, valor_final
+            FROM pagamentos
+            WHERE asaas_payment_id = %s
+               OR referencia_externa = %s
+               OR gateway_reference = %s
+            ORDER BY COALESCE(created_at, CURRENT_TIMESTAMP) DESC, id DESC
+            LIMIT 1
+            """,
+            (referencia_externa, referencia_externa, gateway_reference),
+        )
+        existente = cursor.fetchone()
+
+    if not assinatura and existente and existente.get("assinatura_id"):
+        assinatura = _buscar_assinatura_por_id(cursor, existente.get("assinatura_id"))
+
+    usuario_id = assinatura["usuario_id"] if assinatura else None
+    if not usuario_id and existente:
+        usuario_id = existente.get("usuario_id")
+    if not usuario_id and usuario:
+        usuario_id = usuario.get("id")
+    if not usuario_id and checkout:
+        usuario_id = checkout.get("usuario_id")
+    if not usuario_id:
+        usuario_customer = _buscar_usuario_por_customer(cursor, pagamento_payload.get("customer"))
+        usuario_id = usuario_customer["id"] if usuario_customer else None
+    if not usuario_id:
+        raise ValueError("Usuario interno nao encontrado para o pagamento do Asaas.")
 
     if existente:
         cursor.execute(
@@ -1471,6 +1713,7 @@ def _atualizar_assinatura_por_pagamento(cursor, assinatura, pagamento_payload, s
     if not assinatura:
         return
     data_fim = pagamento_payload.get("nextDueDate") or assinatura.get("data_fim")
+    novo_status = _status_pagamento_para_assinatura(status_pagamento)
     cursor.execute(
         """
         UPDATE assinaturas
@@ -1483,7 +1726,7 @@ def _atualizar_assinatura_por_pagamento(cursor, assinatura, pagamento_payload, s
         WHERE id = %s
         """,
         (
-            _status_pagamento_para_assinatura(status_pagamento),
+            novo_status,
             pagamento_payload.get("dueDate"),
             data_fim,
             DEFAULT_GATEWAY,
@@ -1492,13 +1735,29 @@ def _atualizar_assinatura_por_pagamento(cursor, assinatura, pagamento_payload, s
             assinatura["id"],
         ),
     )
+    if status_pagamento in STATUS_QUITADOS:
+        LOGGER.info(
+            "[ASAAS_ACCESS_RELEASE] Assinatura liberada/atualizada a partir do webhook | %s",
+            _payload_json(
+                {
+                    "assinatura_id": assinatura.get("id"),
+                    "usuario_id": assinatura.get("usuario_id"),
+                    "asaas_subscription_id": pagamento_payload.get("subscription"),
+                    "asaas_payment_id": pagamento_payload.get("id"),
+                    "billing_type": pagamento_payload.get("billingType"),
+                    "status_pagamento": status_pagamento,
+                    "status_assinatura": novo_status,
+                }
+            ),
+        )
 
 
-def _atualizar_checkout_por_webhook(cursor, pagamento_payload, pagamento_id, status_pagamento):
+def _atualizar_checkout_por_webhook(cursor, pagamento_payload, pagamento_id, status_pagamento, checkout=None):
     asaas_payment_id = pagamento_payload.get("id")
     asaas_subscription_id = pagamento_payload.get("subscription")
     external_reference = pagamento_payload.get("externalReference")
-    if not asaas_payment_id and not asaas_subscription_id and not external_reference:
+    checkout_id = (checkout or {}).get("id")
+    if not asaas_payment_id and not asaas_subscription_id and not external_reference and not checkout_id:
         return
 
     if status_pagamento in STATUS_QUITADOS:
@@ -1519,6 +1778,7 @@ def _atualizar_checkout_por_webhook(cursor, pagamento_payload, pagamento_id, sta
         WHERE (asaas_payment_id = %s AND %s IS NOT NULL)
            OR (asaas_subscription_id = %s AND %s IS NOT NULL)
            OR (external_reference = %s AND %s IS NOT NULL)
+           OR (id = %s AND %s IS NOT NULL)
         """,
         (
             status_checkout,
@@ -1531,6 +1791,8 @@ def _atualizar_checkout_por_webhook(cursor, pagamento_payload, pagamento_id, sta
             asaas_subscription_id,
             external_reference,
             external_reference,
+            checkout_id,
+            checkout_id,
         ),
     )
     if cursor.rowcount:
@@ -1543,6 +1805,7 @@ def _atualizar_checkout_por_webhook(cursor, pagamento_payload, pagamento_id, sta
                     "pagamento_id": pagamento_id,
                     "status_pagamento": status_pagamento,
                     "status_checkout": status_checkout,
+                    "checkout_id": checkout_id,
                 }
             ),
         )
@@ -1566,7 +1829,19 @@ def processar_webhook_asaas(payload, headers):
         )
         return {"ok": False, "status_code": 403, "mensagem": "Token do webhook invalido."}
 
-    LOGGER.info("Processando webhook Asaas: evento=%s payment_id=%s", evento, payment.get("id"))
+    LOGGER.info(
+        "[ASAAS_WEBHOOK] Processando webhook Asaas | %s",
+        _payload_json(
+            {
+                "evento": evento,
+                "payment_id": payment.get("id"),
+                "subscription": payment.get("subscription"),
+                "customer": payment.get("customer"),
+                "external_reference": payment.get("externalReference"),
+                "billing_type": payment.get("billingType"),
+            }
+        ),
+    )
     if _eh_payload_teste_manual(payload, payment):
         LOGGER.info("Webhook Asaas identificado como teste manual: evento=%s payment_id=%s", evento, payment.get("id"))
         return {
@@ -1595,10 +1870,14 @@ def processar_webhook_asaas(payload, headers):
                 "dedupe_key": dedupe_key,
             }
 
-        assinatura = _buscar_assinatura_por_gateway(cursor, payment.get("subscription"), payment.get("subscription"))
+        contexto_match = _resolver_contexto_pagamento_webhook(cursor, payment)
+        assinatura = contexto_match.get("assinatura")
+        usuario = contexto_match.get("usuario")
+        checkout = contexto_match.get("checkout")
+        pagamento_local = contexto_match.get("pagamento_local")
         if evento in EVENTOS_PAGAMENTO:
             if not assinatura:
-                usuario_gateway = _buscar_usuario_por_customer(cursor, payment.get("customer"))
+                usuario_gateway = usuario or _buscar_usuario_por_customer(cursor, payment.get("customer"))
                 status_sem_usuario = EVENTOS_PAGAMENTO.get(evento.upper(), "pendente")
                 if not usuario_gateway and status_sem_usuario not in STATUS_QUITADOS:
                     _atualizar_evento_processamento(cursor, evento_id, "ignorado")
@@ -1620,9 +1899,16 @@ def processar_webhook_asaas(payload, headers):
                         "idempotente": False,
                         "dedupe_key": dedupe_key,
                     }
-            pagamento_id, status_pagamento = _upsert_pagamento_webhook(cursor, payment, assinatura)
+            pagamento_id, status_pagamento = _upsert_pagamento_webhook(
+                cursor,
+                payment,
+                assinatura,
+                usuario=usuario,
+                checkout=checkout,
+                pagamento_local=pagamento_local,
+            )
             _atualizar_assinatura_por_pagamento(cursor, assinatura, payment, status_pagamento)
-            _atualizar_checkout_por_webhook(cursor, payment, pagamento_id, status_pagamento)
+            _atualizar_checkout_por_webhook(cursor, payment, pagamento_id, status_pagamento, checkout=checkout)
         else:
             pagamento_id = None
             status_pagamento = None
@@ -1661,7 +1947,13 @@ def processar_webhook_asaas(payload, headers):
             conn.commit()
         except Exception:
             conn.rollback()
-        LOGGER.exception("Erro ao processar webhook Asaas: evento=%s dedupe_key=%s", evento, dedupe_key)
+        LOGGER.exception(
+            "[ASAAS_WEBHOOK_ERROR] Erro ao processar webhook Asaas: evento=%s dedupe_key=%s payment_id=%s subscription=%s",
+            evento,
+            dedupe_key,
+            payment.get("id"),
+            payment.get("subscription"),
+        )
         return {"ok": False, "status_code": 500, "mensagem": str(exc), "evento": evento, "dedupe_key": dedupe_key}
     finally:
         conn.close()
