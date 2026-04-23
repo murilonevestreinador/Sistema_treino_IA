@@ -892,6 +892,74 @@ def _criar_tabela_cupons_desconto(cursor):
     )
 
 
+def _criar_tabela_checkouts_pendentes(cursor):
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS checkouts_pendentes (
+            id SERIAL PRIMARY KEY,
+            usuario_id INTEGER NOT NULL,
+            plano_id INTEGER NULL,
+            plano_codigo TEXT NOT NULL,
+            cupom_id INTEGER NULL,
+            cupom_codigo TEXT NULL,
+            valor_bruto NUMERIC(10,2) NOT NULL DEFAULT 0,
+            valor_desconto NUMERIC(10,2) NOT NULL DEFAULT 0,
+            valor_final NUMERIC(10,2) NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'pendente',
+            criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            atualizado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            assinatura_id INTEGER NULL,
+            pagamento_id INTEGER NULL,
+            asaas_subscription_id TEXT NULL,
+            asaas_payment_id TEXT NULL,
+            redirect_url TEXT NULL,
+            external_reference TEXT UNIQUE,
+            desconto_apenas_primeira_cobranca BOOLEAN DEFAULT FALSE,
+            primeira_cobranca_valor_bruto NUMERIC(10,2) NULL,
+            primeira_cobranca_valor_desconto NUMERIC(10,2) NULL,
+            primeira_cobranca_valor_final NUMERIC(10,2) NULL,
+            renovacao_valor_bruto NUMERIC(10,2) NULL,
+            mensagem_cupom TEXT NULL,
+            metadata_json TEXT NULL,
+            FOREIGN KEY (usuario_id) REFERENCES usuarios(id),
+            FOREIGN KEY (plano_id) REFERENCES planos(id),
+            FOREIGN KEY (cupom_id) REFERENCES cupons_desconto(id),
+            FOREIGN KEY (assinatura_id) REFERENCES assinaturas(id),
+            FOREIGN KEY (pagamento_id) REFERENCES pagamentos(id)
+        )
+        """
+    )
+
+    colunas = {
+        "usuario_id": "INTEGER NOT NULL",
+        "plano_id": "INTEGER NULL",
+        "plano_codigo": "TEXT NOT NULL",
+        "cupom_id": "INTEGER NULL",
+        "cupom_codigo": "TEXT NULL",
+        "valor_bruto": "NUMERIC(10,2) NOT NULL DEFAULT 0",
+        "valor_desconto": "NUMERIC(10,2) NOT NULL DEFAULT 0",
+        "valor_final": "NUMERIC(10,2) NOT NULL DEFAULT 0",
+        "status": "TEXT NOT NULL DEFAULT 'pendente'",
+        "criado_em": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+        "atualizado_em": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+        "assinatura_id": "INTEGER NULL",
+        "pagamento_id": "INTEGER NULL",
+        "asaas_subscription_id": "TEXT NULL",
+        "asaas_payment_id": "TEXT NULL",
+        "redirect_url": "TEXT NULL",
+        "external_reference": "TEXT",
+        "desconto_apenas_primeira_cobranca": "BOOLEAN DEFAULT FALSE",
+        "primeira_cobranca_valor_bruto": "NUMERIC(10,2) NULL",
+        "primeira_cobranca_valor_desconto": "NUMERIC(10,2) NULL",
+        "primeira_cobranca_valor_final": "NUMERIC(10,2) NULL",
+        "renovacao_valor_bruto": "NUMERIC(10,2) NULL",
+        "mensagem_cupom": "TEXT NULL",
+        "metadata_json": "TEXT NULL",
+    }
+    for nome, definicao in colunas.items():
+        _adicionar_coluna_se_necessario(cursor, "checkouts_pendentes", nome, definicao)
+
+
 def _criar_tabela_descontos_aplicados(cursor):
     cursor.execute(
         """
@@ -1199,6 +1267,18 @@ def _criar_indices_bi(cursor):
     )
     cursor.execute(
         """
+        CREATE INDEX IF NOT EXISTS idx_checkouts_pendentes_usuario_status
+        ON checkouts_pendentes (usuario_id, status, atualizado_em DESC, id DESC)
+        """
+    )
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_checkouts_pendentes_asaas
+        ON checkouts_pendentes (asaas_subscription_id, asaas_payment_id)
+        """
+    )
+    cursor.execute(
+        """
         CREATE INDEX IF NOT EXISTS idx_descontos_usuario_assinatura
         ON descontos_aplicados (usuario_id, assinatura_id, pagamento_id, created_at)
         """
@@ -1264,6 +1344,7 @@ def garantir_colunas_e_tabelas():
     _criar_tabela_pagamentos(cursor)
     _criar_tabela_webhook_eventos_asaas(cursor)
     _criar_tabela_cupons_desconto(cursor)
+    _criar_tabela_checkouts_pendentes(cursor)
     _criar_tabela_descontos_aplicados(cursor)
     _criar_tabela_cobrancas_alunos_treinador(cursor)
     _criar_tabela_admin_logs(cursor)

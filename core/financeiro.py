@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import traceback
+import uuid
 from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 
@@ -19,6 +20,7 @@ from core.usuarios import buscar_usuario_por_id, diagnosticar_dados_checkout
 TRIAL_DIAS = 14
 STATUS_COM_ACESSO = {"ativa", "trial"}
 STATUS_FINANCEIROS_QUITADOS = {"pago", "bonificado"}
+STATUS_CHECKOUT_FINALIZADO = {"concluido", "cancelado"}
 CENTAVOS = Decimal("0.01")
 LOGGER = logging.getLogger("trilab.checkout")
 
@@ -128,6 +130,26 @@ def _normalizar_pagamento(pagamento):
     item["valor_desconto"] = _decimal_para_float(item.get("valor_desconto") or 0)
     item["valor_final"] = _decimal_para_float(item.get("valor_final") or item.get("valor") or item["valor_bruto"])
     item["valor"] = item["valor_final"]
+    return item
+
+
+def _normalizar_checkout(checkout):
+    if not checkout:
+        return None
+    item = dict(checkout)
+    item["valor_bruto"] = _decimal_para_float(item.get("valor_bruto") or 0)
+    item["valor_desconto"] = _decimal_para_float(item.get("valor_desconto") or 0)
+    item["valor_final"] = _decimal_para_float(item.get("valor_final") or 0)
+    item["primeira_cobranca_valor_bruto"] = _decimal_para_float(item.get("primeira_cobranca_valor_bruto") or 0)
+    item["primeira_cobranca_valor_desconto"] = _decimal_para_float(item.get("primeira_cobranca_valor_desconto") or 0)
+    item["primeira_cobranca_valor_final"] = _decimal_para_float(item.get("primeira_cobranca_valor_final") or 0)
+    item["renovacao_valor_bruto"] = _decimal_para_float(item.get("renovacao_valor_bruto") or 0)
+    item["desconto_apenas_primeira_cobranca"] = bool(item.get("desconto_apenas_primeira_cobranca", False))
+    for chave in ("id", "usuario_id", "plano_id", "cupom_id", "assinatura_id", "pagamento_id"):
+        if item.get(chave) is not None:
+            item[chave] = int(item[chave])
+    item["cupom_codigo"] = (item.get("cupom_codigo") or "").strip().upper() or None
+    item["status"] = item.get("status") or "pendente"
     return item
 
 
@@ -518,6 +540,285 @@ def validar_cupom_para_plano(cupom, plano, data_referencia=None):
     if limite is not None and usados >= int(limite):
         return False, "Cupom sem usos disponiveis."
     return True, ""
+
+
+def _gerar_external_reference_checkout():
+    return f"trilab-checkout-{uuid.uuid4().hex}"
+
+
+def _consulta_checkout_base():
+    return """
+        SELECT
+            cp.*,
+            p.nome AS plano_nome,
+            COALESCE(p.tipo_plano, p.tipo) AS plano_tipo,
+            COALESCE(p.periodicidade, 'mensal') AS periodicidade,
+            COALESCE(p.valor_base, p.preco_mensal) AS plano_valor_base,
+            COALESCE(p.taxa_por_aluno_ativo, 0) AS taxa_por_aluno_ativo
+        FROM checkouts_pendentes cp
+        LEFT JOIN planos p ON p.id = cp.plano_id
+    """
+
+
+def buscar_checkout_pendente(checkout_id, usuario_id=None):
+    if not checkout_id:
+        return None
+    try:
+        checkout_id = int(checkout_id)
+    except (TypeError, ValueError):
+        LOGGER.warning("[CHECKOUT_STATE] Identificador de checkout invalido | %s", _payload_log({"checkout_id": checkout_id}))
+        return None
+
+    filtros = ["cp.id = %s"]
+    params = [checkout_id]
+    if usuario_id is not None:
+        filtros.append("cp.usuario_id = %s")
+        params.append(usuario_id)
+
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        _consulta_checkout_base() + f" WHERE {' AND '.join(filtros)} LIMIT 1",
+        tuple(params),
+    )
+    checkout = _normalizar_checkout(cursor.fetchone())
+    conn.close()
+    if not checkout:
+        LOGGER.warning(
+            "[CHECKOUT_STATE] Checkout pendente nao encontrado | %s",
+            _payload_log({"checkout_id": checkout_id, "usuario_id": usuario_id}),
+        )
+    return checkout
+
+
+def buscar_checkout_aberto_usuario(usuario_id):
+    if not usuario_id:
+        return None
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        _consulta_checkout_base()
+        + """
+        WHERE cp.usuario_id = %s
+          AND cp.status IN ('pendente', 'asaas_criado')
+        ORDER BY cp.atualizado_em DESC, cp.id DESC
+        LIMIT 1
+        """,
+        (usuario_id,),
+    )
+    checkout = _normalizar_checkout(cursor.fetchone())
+    conn.close()
+    return checkout
+
+
+def _validar_plano_para_checkout(usuario, plano):
+    if not usuario or not usuario.get("id"):
+        raise ValueError("Usuario autenticado obrigatorio para iniciar o checkout.")
+    if not plano or not int(plano.get("ativo", 0)):
+        raise ValueError("Plano indisponivel.")
+    tipo_usuario = (usuario.get("tipo_usuario") or "").strip().lower()
+    tipo_plano = (plano.get("tipo_plano") or plano.get("tipo") or "").strip().lower()
+    if tipo_plano != tipo_usuario:
+        raise ValueError("Este plano nao corresponde ao perfil da sua conta.")
+    if tipo_plano == "atleta" and atleta_tem_treinador_ativo(usuario["id"]):
+        raise ValueError("Seu acesso ja esta coberto por um treinador ativo. Nao ha cobranca individual para este perfil vinculado.")
+
+
+def _calcular_checkout_backend(usuario, plano, cupom_codigo=None):
+    _validar_plano_para_checkout(usuario, plano)
+    usuario_id = usuario["id"]
+    inicio = _hoje()
+    fim = _periodo_para_fim(inicio, plano.get("periodicidade"))
+    calculo_treinador = None
+    if plano.get("tipo_plano") == "treinador":
+        calculo_treinador = calcular_valor_assinatura_treinador(usuario_id, plano["id"], fim)
+        valor_bruto = calculo_treinador["valor_total_cobrado"]
+    else:
+        valor_bruto = plano["valor_base"]
+
+    cupom_digitado = (cupom_codigo or "").strip().upper()
+    cupom = None
+    cupom_valido = False
+    mensagem_cupom = ""
+    desconto_info = aplicar_desconto(valor_bruto, None)
+
+    if cupom_digitado:
+        cupom = buscar_cupom_por_codigo(cupom_digitado)
+        if not cupom:
+            mensagem_cupom = "Cupom nao encontrado."
+        else:
+            cupom_valido, mensagem_cupom = validar_cupom_para_plano(cupom, plano)
+            if cupom_valido:
+                desconto_info = aplicar_desconto(valor_bruto, cupom)
+
+    LOGGER.info(
+        "[CHECKOUT_COUPON] Cupom validado no backend | %s",
+        _payload_log(
+            {
+                "usuario_id": usuario_id,
+                "plano_codigo": plano.get("codigo"),
+                "cupom_digitado": cupom_digitado,
+                "cupom_aplicado": cupom.get("codigo") if cupom and cupom_valido else None,
+                "cupom_valido": cupom_valido,
+                "mensagem_cupom": mensagem_cupom,
+                "valor_bruto": desconto_info["valor_bruto"],
+                "valor_desconto": desconto_info["valor_desconto"],
+                "valor_final": desconto_info["valor_final"],
+            }
+        ),
+    )
+    return {
+        "plano": plano,
+        "cupom": cupom if cupom_valido else None,
+        "cupom_digitado": cupom_digitado,
+        "cupom_valido": cupom_valido,
+        "mensagem_cupom": mensagem_cupom,
+        "calculo_treinador": calculo_treinador,
+        **desconto_info,
+    }
+
+
+def salvar_checkout_pendente(usuario, plano_codigo, cupom_codigo=None, checkout_id=None, status="pendente"):
+    plano = buscar_plano_por_codigo(plano_codigo)
+    calculo = _calcular_checkout_backend(usuario, plano, cupom_codigo)
+    cupom = calculo.get("cupom")
+    checkout_existente = None
+
+    conn = conectar()
+    cursor = conn.cursor()
+    if checkout_id:
+        try:
+            cursor.execute(
+                """
+                SELECT *
+                FROM checkouts_pendentes
+                WHERE id = %s
+                  AND usuario_id = %s
+                LIMIT 1
+                """,
+                (int(checkout_id), usuario["id"]),
+            )
+            checkout_existente = _normalizar_checkout(cursor.fetchone())
+        except (TypeError, ValueError):
+            checkout_existente = None
+
+    if checkout_existente and checkout_existente.get("status") in STATUS_CHECKOUT_FINALIZADO:
+        LOGGER.warning(
+            "[CHECKOUT_STATE] Checkout ja finalizado, novo checkout sera criado | %s",
+            _payload_log(
+                {
+                    "checkout_id": checkout_existente.get("id"),
+                    "usuario_id": usuario.get("id"),
+                    "status": checkout_existente.get("status"),
+                }
+            ),
+        )
+        checkout_existente = None
+
+    if checkout_existente and checkout_existente.get("status") == "asaas_criado":
+        conn.close()
+        checkout_existente["cupom_valido"] = bool(checkout_existente.get("cupom_codigo"))
+        checkout_existente["mensagem_cupom"] = checkout_existente.get("mensagem_cupom") or ""
+        LOGGER.info(
+            "[CHECKOUT_STATE] Checkout com cobranca Asaas preservado sem recalculo | %s",
+            _payload_log(
+                {
+                    "checkout_id": checkout_existente.get("id"),
+                    "usuario_id": usuario.get("id"),
+                    "plano_codigo": checkout_existente.get("plano_codigo"),
+                    "cupom_codigo": checkout_existente.get("cupom_codigo"),
+                    "valor_bruto": checkout_existente.get("valor_bruto"),
+                    "valor_desconto": checkout_existente.get("valor_desconto"),
+                    "valor_final": checkout_existente.get("valor_final"),
+                }
+            ),
+        )
+        return checkout_existente
+
+    external_reference = (
+        checkout_existente.get("external_reference")
+        if checkout_existente
+        else None
+    ) or _gerar_external_reference_checkout()
+    metadata = {
+        "cupom_digitado": calculo.get("cupom_digitado"),
+        "cupom_valido": calculo.get("cupom_valido"),
+        "calculo_treinador": calculo.get("calculo_treinador"),
+    }
+    params_base = (
+        usuario["id"],
+        plano["id"],
+        plano["codigo"],
+        cupom.get("id") if cupom else None,
+        cupom.get("codigo") if cupom else None,
+        calculo["valor_bruto"],
+        calculo["valor_desconto"],
+        calculo["valor_final"],
+        status or "pendente",
+        external_reference,
+        calculo.get("mensagem_cupom") or None,
+        json.dumps(metadata, ensure_ascii=True, sort_keys=True, default=str),
+    )
+
+    if checkout_existente:
+        cursor.execute(
+            """
+            UPDATE checkouts_pendentes
+            SET usuario_id = %s,
+                plano_id = %s,
+                plano_codigo = %s,
+                cupom_id = %s,
+                cupom_codigo = %s,
+                valor_bruto = %s,
+                valor_desconto = %s,
+                valor_final = %s,
+                status = %s,
+                external_reference = COALESCE(external_reference, %s),
+                mensagem_cupom = %s,
+                metadata_json = %s,
+                atualizado_em = CURRENT_TIMESTAMP
+            WHERE id = %s
+            RETURNING *
+            """,
+            params_base + (checkout_existente["id"],),
+        )
+    else:
+        cursor.execute(
+            """
+            INSERT INTO checkouts_pendentes (
+                usuario_id, plano_id, plano_codigo, cupom_id, cupom_codigo,
+                valor_bruto, valor_desconto, valor_final, status,
+                external_reference, mensagem_cupom, metadata_json,
+                criado_em, atualizado_em
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            RETURNING *
+            """,
+            params_base,
+        )
+
+    checkout = _normalizar_checkout(cursor.fetchone())
+    conn.commit()
+    conn.close()
+    checkout["cupom_valido"] = calculo.get("cupom_valido")
+    checkout["mensagem_cupom"] = calculo.get("mensagem_cupom")
+    checkout["plano"] = plano
+    LOGGER.info(
+        "[CHECKOUT] Checkout pendente salvo no backend | %s",
+        _payload_log(
+            {
+                "checkout_id": checkout.get("id"),
+                "usuario_id": usuario.get("id"),
+                "plano_codigo": checkout.get("plano_codigo"),
+                "cupom_codigo": checkout.get("cupom_codigo"),
+                "valor_bruto": checkout.get("valor_bruto"),
+                "valor_desconto": checkout.get("valor_desconto"),
+                "valor_final": checkout.get("valor_final"),
+                "status": checkout.get("status"),
+                "external_reference": checkout.get("external_reference"),
+            }
+        ),
+    )
+    return checkout
 
 
 def _aplicar_e_registrar_desconto(cursor, usuario_id, assinatura_id, pagamento_id, desconto_info, cupom_ou_regra=None, aplicado_por="usuario"):
@@ -1076,27 +1377,329 @@ def gerar_pagamento_assinatura(usuario_id, assinatura_id, cupom_ou_regra=None, s
     return buscar_pagamento_por_id(pagamento_id)
 
 
-def criar_assinatura_manual(usuario, plano, cupom_codigo=None):
+def _desconto_info_do_checkout(checkout):
+    valor_bruto = _decimal_para_float((checkout or {}).get("valor_bruto") or 0)
+    valor_desconto = _decimal_para_float((checkout or {}).get("valor_desconto") or 0)
+    valor_final = _decimal_para_float((checkout or {}).get("valor_final") or 0)
+    bonificado = valor_final == 0 and valor_desconto > 0
+    return {
+        "valor_bruto": valor_bruto,
+        "valor_desconto": valor_desconto,
+        "valor_final": valor_final,
+        "status_pagamento": "bonificado" if bonificado else "pendente",
+        "bonificado": bonificado,
+    }
+
+
+def _desconto_ja_registrado(cursor, usuario_id, assinatura_id, pagamento_id):
+    if not pagamento_id:
+        return False
+    cursor.execute(
+        """
+        SELECT 1
+        FROM descontos_aplicados
+        WHERE usuario_id = %s
+          AND assinatura_id = %s
+          AND pagamento_id = %s
+        LIMIT 1
+        """,
+        (usuario_id, assinatura_id, pagamento_id),
+    )
+    return cursor.fetchone() is not None
+
+
+def _registrar_desconto_checkout(cursor, usuario_id, assinatura_id, pagamento_id, desconto_info, cupom):
+    if float((desconto_info or {}).get("valor_desconto") or 0) <= 0:
+        return
+    if _desconto_ja_registrado(cursor, usuario_id, assinatura_id, pagamento_id):
+        LOGGER.info(
+            "[CHECKOUT_COUPON] Desconto do checkout ja registrado, mantendo idempotencia | %s",
+            _payload_log(
+                {
+                    "usuario_id": usuario_id,
+                    "assinatura_id": assinatura_id,
+                    "pagamento_id": pagamento_id,
+                    "cupom_codigo": (cupom or {}).get("codigo"),
+                }
+            ),
+        )
+        return
+    _aplicar_e_registrar_desconto(cursor, usuario_id, assinatura_id, pagamento_id, desconto_info, cupom, "usuario")
+
+
+def _registrar_pagamento_asaas_checkout(cursor, usuario_id, assinatura_id, checkout, retorno_gateway, cupom):
+    desconto_info = _desconto_info_do_checkout(checkout)
+    payment_payload = retorno_gateway.get("payment_payload") or {}
+    asaas_payment_id = retorno_gateway.get("asaas_payment_id") or payment_payload.get("id")
+    invoice_url = retorno_gateway.get("invoice_url") or payment_payload.get("invoiceUrl")
+    referencia = asaas_payment_id or checkout.get("external_reference")
+    gateway_reference = invoice_url or referencia or retorno_gateway.get("gateway_reference")
+    metodo = (payment_payload.get("billingType") or "asaas").strip().lower()
+    data_vencimento = payment_payload.get("dueDate") or retorno_gateway.get("nextDueDate")
+    status_pagamento = "bonificado" if desconto_info["bonificado"] else "pendente"
+
+    existente = None
+    if asaas_payment_id:
+        cursor.execute(
+            """
+            SELECT id
+            FROM pagamentos
+            WHERE asaas_payment_id = %s
+               OR referencia_externa = %s
+               OR gateway_reference = %s
+            ORDER BY COALESCE(created_at, CURRENT_TIMESTAMP) DESC, id DESC
+            LIMIT 1
+            """,
+            (asaas_payment_id, asaas_payment_id, gateway_reference),
+        )
+        existente = cursor.fetchone()
+    elif referencia:
+        cursor.execute(
+            """
+            SELECT id
+            FROM pagamentos
+            WHERE referencia_externa = %s
+               OR gateway_reference = %s
+            ORDER BY COALESCE(created_at, CURRENT_TIMESTAMP) DESC, id DESC
+            LIMIT 1
+            """,
+            (referencia, gateway_reference),
+        )
+        existente = cursor.fetchone()
+
+    if existente:
+        cursor.execute(
+            """
+            UPDATE pagamentos
+            SET usuario_id = %s,
+                assinatura_id = %s,
+                valor = %s,
+                valor_bruto = %s,
+                valor_desconto = %s,
+                valor_final = %s,
+                status = CASE WHEN status IN ('pago', 'bonificado') THEN status ELSE %s END,
+                metodo_pagamento = COALESCE(%s, metodo_pagamento),
+                data_vencimento = COALESCE(%s, data_vencimento),
+                referencia_externa = COALESCE(%s, referencia_externa),
+                asaas_payment_id = COALESCE(%s, asaas_payment_id),
+                gateway = %s,
+                gateway_reference = COALESCE(%s, gateway_reference)
+            WHERE id = %s
+            RETURNING id
+            """,
+            (
+                usuario_id,
+                assinatura_id,
+                desconto_info["valor_final"],
+                desconto_info["valor_bruto"],
+                desconto_info["valor_desconto"],
+                desconto_info["valor_final"],
+                status_pagamento,
+                metodo,
+                data_vencimento,
+                referencia,
+                asaas_payment_id,
+                "asaas",
+                gateway_reference,
+                existente["id"],
+            ),
+        )
+        pagamento_id = int(cursor.fetchone()["id"])
+    else:
+        cursor.execute(
+            """
+            INSERT INTO pagamentos (
+                usuario_id, assinatura_id, valor, valor_bruto, valor_desconto, valor_final,
+                status, metodo_pagamento, data_pagamento, data_vencimento, referencia_externa,
+                asaas_payment_id, gateway, gateway_reference
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NULL, %s, %s, %s, %s, %s)
+            RETURNING id
+            """,
+            (
+                usuario_id,
+                assinatura_id,
+                desconto_info["valor_final"],
+                desconto_info["valor_bruto"],
+                desconto_info["valor_desconto"],
+                desconto_info["valor_final"],
+                status_pagamento,
+                metodo,
+                data_vencimento,
+                referencia,
+                asaas_payment_id,
+                "asaas",
+                gateway_reference,
+            ),
+        )
+        pagamento_id = int(cursor.fetchone()["id"])
+
+    _registrar_desconto_checkout(cursor, usuario_id, assinatura_id, pagamento_id, desconto_info, cupom)
+    cursor.execute(
+        """
+        UPDATE assinaturas
+        SET valor = %s,
+            valor_total_cobrado = %s
+        WHERE id = %s
+        """,
+        (desconto_info["valor_bruto"], desconto_info["valor_bruto"], assinatura_id),
+    )
     LOGGER.info(
-        "[CHECKOUT_DEBUG] Iniciando criacao de assinatura manual/integrada | %s",
+        "[CHECKOUT_FIRST_PAYMENT] Primeira cobranca local vinculada ao checkout Asaas | %s",
+        _payload_log(
+            {
+                "usuario_id": usuario_id,
+                "assinatura_id": assinatura_id,
+                "pagamento_id": pagamento_id,
+                "asaas_payment_id": asaas_payment_id,
+                "valor_assinatura_bruto": desconto_info["valor_bruto"],
+                "valor_desconto_primeira_cobranca": desconto_info["valor_desconto"],
+                "valor_final_primeira_cobranca": desconto_info["valor_final"],
+                "renovacoes_futuras_valor": desconto_info["valor_bruto"],
+                "desconto_apenas_primeira_cobranca": bool(desconto_info["valor_desconto"] > 0),
+            }
+        ),
+    )
+    return pagamento_id
+
+
+def _atualizar_checkout_pos_gateway(cursor, checkout_id, assinatura_id, pagamento_id, retorno_gateway, status):
+    if not checkout_id:
+        return
+    cursor.execute(
+        """
+        UPDATE checkouts_pendentes
+        SET status = %s,
+            assinatura_id = COALESCE(%s, assinatura_id),
+            pagamento_id = COALESCE(%s, pagamento_id),
+            asaas_subscription_id = COALESCE(%s, asaas_subscription_id),
+            asaas_payment_id = COALESCE(%s, asaas_payment_id),
+            redirect_url = COALESCE(%s, redirect_url),
+            desconto_apenas_primeira_cobranca = COALESCE(%s, desconto_apenas_primeira_cobranca),
+            primeira_cobranca_valor_bruto = COALESCE(%s, primeira_cobranca_valor_bruto),
+            primeira_cobranca_valor_desconto = COALESCE(%s, primeira_cobranca_valor_desconto),
+            primeira_cobranca_valor_final = COALESCE(%s, primeira_cobranca_valor_final),
+            renovacao_valor_bruto = COALESCE(%s, renovacao_valor_bruto),
+            metadata_json = COALESCE(%s, metadata_json),
+            atualizado_em = CURRENT_TIMESTAMP
+        WHERE id = %s
+        """,
+        (
+            status,
+            assinatura_id,
+            pagamento_id,
+            retorno_gateway.get("asaas_subscription_id"),
+            retorno_gateway.get("asaas_payment_id"),
+            retorno_gateway.get("redirect_url") or retorno_gateway.get("invoice_url"),
+            retorno_gateway.get("first_payment_discount_applied"),
+            retorno_gateway.get("first_payment_valor_bruto"),
+            retorno_gateway.get("first_payment_valor_desconto"),
+            retorno_gateway.get("first_payment_valor_final"),
+            retorno_gateway.get("future_payments_value") or retorno_gateway.get("subscription_value"),
+            json.dumps(
+                {
+                    "desconto_apenas_primeira_cobranca": retorno_gateway.get("first_payment_discount_applied"),
+                    "primeira_cobranca_valor_bruto": retorno_gateway.get("first_payment_valor_bruto"),
+                    "primeira_cobranca_valor_desconto": retorno_gateway.get("first_payment_valor_desconto"),
+                    "primeira_cobranca_valor_final": retorno_gateway.get("first_payment_valor_final"),
+                    "renovacoes_futuras_valor": retorno_gateway.get("future_payments_value") or retorno_gateway.get("subscription_value"),
+                },
+                ensure_ascii=True,
+                sort_keys=True,
+                default=str,
+            ) if retorno_gateway.get("first_payment_valor_bruto") is not None else None,
+            checkout_id,
+        ),
+    )
+
+
+def _assinatura_existente_do_checkout(checkout):
+    if not checkout or not checkout.get("assinatura_id"):
+        return None
+    assinatura = buscar_assinatura_por_id(checkout["assinatura_id"]) or {}
+    if not assinatura:
+        return None
+    assinatura["checkout_id"] = checkout.get("id")
+    assinatura["checkout_external_reference"] = checkout.get("external_reference")
+    assinatura["invoice_url"] = checkout.get("redirect_url")
+    assinatura["redirect_url"] = checkout.get("redirect_url")
+    assinatura["asaas_payment_id"] = checkout.get("asaas_payment_id")
+    return assinatura
+
+
+def criar_assinatura_manual(usuario, plano, cupom_codigo=None, checkout=None):
+    if not checkout:
+        checkout = salvar_checkout_pendente(usuario, plano["codigo"], cupom_codigo=cupom_codigo)
+
+    assinatura_existente = _assinatura_existente_do_checkout(checkout)
+    if assinatura_existente and checkout.get("status") == "asaas_criado":
+        LOGGER.info(
+            "[CHECKOUT_STATE] Reutilizando assinatura ja criada para checkout pendente | %s",
+            _payload_log(
+                {
+                    "checkout_id": checkout.get("id"),
+                    "usuario_id": usuario.get("id"),
+                    "assinatura_id": assinatura_existente.get("id"),
+                    "asaas_payment_id": assinatura_existente.get("asaas_payment_id"),
+                }
+            ),
+        )
+        return assinatura_existente
+
+    cupom_codigo_aplicado = checkout.get("cupom_codigo")
+    cupom = buscar_cupom_por_codigo(cupom_codigo_aplicado) if cupom_codigo_aplicado else None
+    if cupom_codigo and not cupom_codigo_aplicado:
+        raise ValueError(checkout.get("mensagem_cupom") or "Cupom invalido para este checkout.")
+
+    desconto_info = _desconto_info_do_checkout(checkout)
+    plano_gateway = dict(plano or {})
+    plano_gateway["valor_assinatura"] = desconto_info["valor_bruto"]
+    plano_gateway["checkout_valor_bruto"] = desconto_info["valor_bruto"]
+    plano_gateway["checkout_valor_desconto"] = desconto_info["valor_desconto"]
+    plano_gateway["checkout_valor_final"] = desconto_info["valor_final"]
+    plano_gateway["externalReference"] = checkout.get("external_reference")
+
+    LOGGER.info(
+        "[CHECKOUT] Iniciando criacao de assinatura a partir do checkout persistido | %s",
         _payload_log(
             {
                 "funcao": "criar_assinatura_manual",
+                "checkout_id": checkout.get("id"),
+                "external_reference": checkout.get("external_reference"),
                 "usuario_id": usuario.get("id"),
                 "tipo_usuario": usuario.get("tipo_usuario"),
                 "plano_codigo": plano.get("codigo"),
                 "plano_tipo": plano.get("tipo_plano"),
-                "cupom_codigo": cupom_codigo,
+                "cupom_codigo": cupom_codigo_aplicado,
+                "valor_assinatura_bruto": desconto_info["valor_bruto"],
+                "valor_desconto_primeira_cobranca": desconto_info["valor_desconto"],
+                "valor_final_primeira_cobranca": desconto_info["valor_final"],
+                "renovacoes_futuras_valor": desconto_info["valor_bruto"],
             }
         ),
     )
-    retorno_gateway = criar_assinatura_gateway(usuario, plano)
+
+    fluxo_asaas_planejado = (
+        (usuario.get("tipo_usuario") or "").strip().lower() == "atleta"
+        and (plano.get("tipo_plano") or "").strip().lower() == "atleta"
+    )
+    if desconto_info["bonificado"] and not fluxo_asaas_planejado:
+        retorno_gateway = {
+            "ok": True,
+            "gateway": "manual",
+            "status": "bonificado",
+            "gateway_reference": checkout.get("external_reference"),
+            "payload": {"motivo": "Checkout bonificado por cupom com valor final zero."},
+        }
+    else:
+        retorno_gateway = criar_assinatura_gateway(usuario, plano_gateway, checkout=checkout)
+
     if not retorno_gateway.get("ok"):
         LOGGER.error(
-            "[ASAAS_ERROR] Falha retornada pelo gateway na criacao da assinatura | %s",
+            "[CHECKOUT_ASAAS] Falha retornada pelo gateway na criacao da assinatura | %s",
             _payload_log(
                 {
                     "funcao": "criar_assinatura_manual",
+                    "checkout_id": checkout.get("id"),
                     "usuario_id": usuario.get("id"),
                     "plano_codigo": plano.get("codigo"),
                     "gateway": retorno_gateway.get("gateway"),
@@ -1116,44 +1719,59 @@ def criar_assinatura_manual(usuario, plano, cupom_codigo=None):
             ),
         )
         raise ValueError(retorno_gateway.get("mensagem") or "Falha ao criar assinatura no gateway.")
+
     inicio = _hoje()
     fim = _periodo_para_fim(inicio, plano.get("periodicidade"))
     calculo = None
     if plano.get("tipo_plano") == "treinador":
         calculo = calcular_valor_assinatura_treinador(usuario["id"], plano["id"], fim)
 
-    cupom = buscar_cupom_por_codigo(cupom_codigo) if cupom_codigo else None
-    if cupom_codigo and not cupom:
-        raise ValueError("Cupom nao encontrado.")
-
+    fluxo_asaas = retorno_gateway.get("gateway") == "asaas" and plano.get("tipo_plano") == "atleta"
     conn = conectar()
     cursor = conn.cursor()
-    _encerrar_assinaturas_abertas(cursor, usuario["id"])
-    assinatura_id = _payload_assinatura_normalizado(
-        cursor,
-        usuario["id"],
-        plano,
-        "pendente" if retorno_gateway.get("gateway") == "asaas" and plano.get("tipo_plano") == "atleta" else "ativa",
-        inicio,
-        fim,
-        fim,
-        calculo=calculo,
-        gateway=retorno_gateway.get("gateway", "manual"),
-        gateway_reference=retorno_gateway.get("gateway_reference"),
-        renovacao_automatica=1,
-    )
-    cursor.execute(
-        """
-        UPDATE assinaturas
-        SET asaas_subscription_id = %s
-        WHERE id = %s
-        """,
-        (retorno_gateway.get("asaas_subscription_id"), assinatura_id),
-    )
-    conn.commit()
-    conn.close()
-    if retorno_gateway.get("gateway") != "asaas" or plano.get("tipo_plano") != "atleta":
-        gerar_pagamento_assinatura(
+    try:
+        _encerrar_assinaturas_abertas(cursor, usuario["id"])
+        assinatura_id = _payload_assinatura_normalizado(
+            cursor,
+            usuario["id"],
+            plano,
+            "pendente" if fluxo_asaas else "ativa",
+            inicio,
+            fim,
+            fim,
+            calculo=calculo,
+            gateway=retorno_gateway.get("gateway", "manual"),
+            gateway_reference=retorno_gateway.get("gateway_reference"),
+            renovacao_automatica=1,
+        )
+        cursor.execute(
+            """
+            UPDATE assinaturas
+            SET asaas_subscription_id = %s,
+                valor = %s,
+                valor_total_cobrado = %s
+            WHERE id = %s
+            """,
+            (
+                retorno_gateway.get("asaas_subscription_id"),
+                desconto_info["valor_bruto"],
+                desconto_info["valor_bruto"],
+                assinatura_id,
+            ),
+        )
+        pagamento_id = None
+        if fluxo_asaas:
+            pagamento_id = _registrar_pagamento_asaas_checkout(cursor, usuario["id"], assinatura_id, checkout, retorno_gateway, cupom)
+            _atualizar_checkout_pos_gateway(cursor, checkout.get("id"), assinatura_id, pagamento_id, retorno_gateway, "asaas_criado")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+    if not fluxo_asaas:
+        pagamento = gerar_pagamento_assinatura(
             usuario["id"],
             assinatura_id,
             cupom_ou_regra=cupom,
@@ -1161,18 +1779,28 @@ def criar_assinatura_manual(usuario, plano, cupom_codigo=None):
             metodo_pagamento=retorno_gateway.get("gateway", "manual"),
             aplicado_por="usuario" if cupom else "manual",
         )
+        conn = conectar()
+        cursor = conn.cursor()
+        _atualizar_checkout_pos_gateway(cursor, checkout.get("id"), assinatura_id, pagamento.get("id"), retorno_gateway, "concluido")
+        conn.commit()
+        conn.close()
+        pagamento_id = pagamento.get("id")
+
     assinatura = buscar_assinatura_por_id(assinatura_id) or {}
+    assinatura["checkout_id"] = checkout.get("id")
+    assinatura["checkout_external_reference"] = checkout.get("external_reference")
     assinatura["invoice_url"] = retorno_gateway.get("invoice_url")
     assinatura["redirect_url"] = retorno_gateway.get("redirect_url") or retorno_gateway.get("invoice_url")
     assinatura["asaas_payment_id"] = retorno_gateway.get("asaas_payment_id")
     assinatura["payment_payload"] = retorno_gateway.get("payment_payload")
     assinatura["mensagem_gateway"] = retorno_gateway.get("mensagem")
+    assinatura["pagamento_id"] = pagamento_id
     return assinatura
 
 
-def assinar_plano_manual(usuario, plano_codigo, cupom_codigo=None):
+def assinar_plano_manual(usuario, plano_codigo, cupom_codigo=None, checkout_id=None):
     LOGGER.info(
-        "[CHECKOUT_DEBUG] Entrada no fluxo assinar_plano_manual | %s",
+        "[CHECKOUT] Entrada no fluxo assinar_plano_manual | %s",
         _payload_log(
             {
                 "funcao": "assinar_plano_manual",
@@ -1180,6 +1808,7 @@ def assinar_plano_manual(usuario, plano_codigo, cupom_codigo=None):
                 "tipo_usuario": (usuario or {}).get("tipo_usuario"),
                 "plano_codigo": plano_codigo,
                 "cupom_codigo": cupom_codigo,
+                "checkout_id": checkout_id,
             }
         ),
     )
@@ -1187,7 +1816,7 @@ def assinar_plano_manual(usuario, plano_codigo, cupom_codigo=None):
     diagnostico_checkout = diagnosticar_dados_checkout(usuario_atual)
     if not diagnostico_checkout["ok"]:
         LOGGER.warning(
-            "[CHECKOUT_DEBUG] Fluxo interrompido por diagnostico de checkout | %s",
+            "[CHECKOUT_STATE] Fluxo interrompido por diagnostico de checkout | %s",
             _payload_log(
                 {
                     "funcao": "assinar_plano_manual",
@@ -1201,13 +1830,13 @@ def assinar_plano_manual(usuario, plano_codigo, cupom_codigo=None):
     plano = buscar_plano_por_codigo(plano_codigo)
     if not plano or not int(plano.get("ativo", 0)):
         LOGGER.warning(
-            "[CHECKOUT_DEBUG] Plano indisponivel no checkout | %s",
-            _payload_log({"funcao": "assinar_plano_manual", "usuario_id": (usuario_atual or {}).get("id"), "plano_codigo": plano_codigo}),
+            "[CHECKOUT_STATE] Plano indisponivel no checkout | %s",
+            _payload_log({"funcao": "assinar_plano_manual", "usuario_id": (usuario_atual or {}).get("id"), "plano_codigo": plano_codigo, "checkout_id": checkout_id}),
         )
         return None, "Plano indisponivel."
     if plano["tipo_plano"] != usuario_atual.get("tipo_usuario"):
         LOGGER.warning(
-            "[CHECKOUT_DEBUG] Plano divergente do perfil do usuario | %s",
+            "[CHECKOUT_STATE] Plano divergente do perfil do usuario | %s",
             _payload_log(
                 {
                     "funcao": "assinar_plano_manual",
@@ -1221,7 +1850,7 @@ def assinar_plano_manual(usuario, plano_codigo, cupom_codigo=None):
         return None, "Este plano nao corresponde ao perfil da sua conta."
     if plano["tipo_plano"] == "atleta" and atleta_tem_treinador_ativo(usuario_atual["id"]):
         LOGGER.warning(
-            "[CHECKOUT_DEBUG] Checkout individual bloqueado por vinculo ativo com treinador | %s",
+            "[CHECKOUT_STATE] Checkout individual bloqueado por vinculo ativo com treinador | %s",
             _payload_log(
                 {
                     "funcao": "assinar_plano_manual",
@@ -1232,27 +1861,73 @@ def assinar_plano_manual(usuario, plano_codigo, cupom_codigo=None):
         )
         return None, "Seu acesso ja esta coberto por um treinador ativo. Nao ha cobranca individual para este perfil vinculado."
     try:
+        checkout = buscar_checkout_pendente(checkout_id, usuario_atual["id"]) if checkout_id else None
+        if checkout and checkout.get("status") == "asaas_criado":
+            assinatura_existente = _assinatura_existente_do_checkout(checkout)
+            if assinatura_existente:
+                LOGGER.info(
+                    "[CHECKOUT_STATE] Checkout ja possui cobranca Asaas criada | %s",
+                    _payload_log(
+                        {
+                            "checkout_id": checkout.get("id"),
+                            "usuario_id": usuario_atual.get("id"),
+                            "assinatura_id": assinatura_existente.get("id"),
+                            "asaas_payment_id": assinatura_existente.get("asaas_payment_id"),
+                        }
+                    ),
+                )
+                return assinatura_existente, "Redirecionando voce para a cobranca do Asaas."
+
+        checkout = salvar_checkout_pendente(
+            usuario_atual,
+            plano["codigo"],
+            cupom_codigo=cupom_codigo,
+            checkout_id=checkout_id,
+        )
+        if cupom_codigo and not checkout.get("cupom_codigo"):
+            mensagem = checkout.get("mensagem_cupom") or "Cupom invalido para este checkout."
+            LOGGER.warning(
+                "[CHECKOUT_COUPON] Checkout bloqueado por cupom invalido | %s",
+                _payload_log(
+                    {
+                        "checkout_id": checkout.get("id"),
+                        "usuario_id": usuario_atual.get("id"),
+                        "plano_codigo": plano.get("codigo"),
+                        "cupom_digitado": cupom_codigo,
+                        "mensagem": mensagem,
+                    }
+                ),
+            )
+            return None, mensagem
+
         LOGGER.info(
-            "[CHECKOUT_DEBUG] Prosseguindo para criacao de assinatura | %s",
+            "[CHECKOUT] Prosseguindo para criacao de assinatura | %s",
             _payload_log(
                 {
                     "funcao": "assinar_plano_manual",
+                    "checkout_id": checkout.get("id"),
+                    "external_reference": checkout.get("external_reference"),
                     "usuario_id": usuario_atual.get("id"),
                     "plano_codigo": plano.get("codigo"),
                     "plano_tipo": plano.get("tipo_plano"),
                     "gateway_esperado": "asaas" if plano.get("tipo_plano") == "atleta" else "manual",
+                    "cupom_codigo": checkout.get("cupom_codigo"),
+                    "valor_bruto": checkout.get("valor_bruto"),
+                    "valor_desconto": checkout.get("valor_desconto"),
+                    "valor_final": checkout.get("valor_final"),
                 }
             ),
         )
-        assinatura = criar_assinatura_manual(usuario_atual, plano, cupom_codigo=cupom_codigo)
+        assinatura = criar_assinatura_manual(usuario_atual, plano, cupom_codigo=cupom_codigo, checkout=checkout)
     except ValueError as exc:
         LOGGER.error(
-            "[CHECKOUT_TRACE] Erro de negocio durante o checkout | %s",
+            "[CHECKOUT_ERROR] Erro de negocio durante o checkout | %s",
             _payload_log(
                 {
                     "funcao": "assinar_plano_manual",
                     "usuario_id": usuario_atual.get("id"),
                     "plano_codigo": plano.get("codigo"),
+                    "checkout_id": checkout_id,
                     "exception_type": type(exc).__name__,
                     "exception": str(exc),
                     "traceback": traceback.format_exc(),
@@ -1262,30 +1937,33 @@ def assinar_plano_manual(usuario, plano_codigo, cupom_codigo=None):
         return None, str(exc)
     except Exception as exc:
         LOGGER.error(
-            "[CHECKOUT_TRACE] Erro inesperado durante o checkout | %s",
+            "[CHECKOUT_ERROR] Erro inesperado durante o checkout | %s",
             _payload_log(
                 {
                     "funcao": "assinar_plano_manual",
                     "usuario_id": usuario_atual.get("id"),
                     "plano_codigo": plano.get("codigo"),
+                    "checkout_id": checkout_id,
                     "exception_type": type(exc).__name__,
                     "exception": str(exc),
                     "traceback": traceback.format_exc(),
                 }
             ),
         )
-        return None, "Erro ao iniciar pagamento. Verifique os logs com o marcador CHECKOUT_DEBUG."
+        return None, "Erro ao iniciar pagamento. Verifique os logs com o marcador CHECKOUT_ERROR."
     LOGGER.info(
-        "[CHECKOUT_DEBUG] Checkout concluiu a etapa local de criacao de assinatura | %s",
+        "[CHECKOUT] Checkout concluiu a etapa local de criacao de assinatura | %s",
         _payload_log(
             {
                 "funcao": "assinar_plano_manual",
+                "checkout_id": assinatura.get("checkout_id"),
                 "usuario_id": usuario_atual.get("id"),
                 "plano_codigo": plano.get("codigo"),
                 "assinatura_id": assinatura.get("id"),
                 "gateway": assinatura.get("gateway"),
                 "status_assinatura": assinatura.get("status"),
                 "gateway_reference": assinatura.get("gateway_reference"),
+                "asaas_payment_id": assinatura.get("asaas_payment_id"),
             }
         ),
     )

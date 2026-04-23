@@ -931,22 +931,154 @@ def _buscar_invoice_url_assinatura_asaas(asaas_subscription_id, tentativas=3, in
     }
 
 
+def _valor_plano_decimal(plano, *chaves):
+    for chave in chaves:
+        valor = plano.get(chave)
+        if valor is not None and valor != "":
+            return _to_decimal(valor)
+    return Decimal("0")
+
+
+def _payload_atualizacao_primeira_cobranca(cobranca, plano, valor_bruto, valor_desconto, external_reference):
+    billing_type = (cobranca.get("billingType") or plano.get("billingType") or "UNDEFINED").strip().upper()
+    due_date = _date_to_iso(cobranca.get("dueDate") or plano.get("nextDueDate") or _proximo_vencimento(plano))
+    description = (
+        cobranca.get("description")
+        or plano.get("description")
+        or plano.get("descricao")
+        or plano.get("nome")
+        or "Assinatura TriLab TREINAMENTO"
+    )
+    payload = {
+        "billingType": billing_type,
+        "value": float(valor_bruto),
+        "dueDate": due_date,
+        "description": str(description).strip(),
+    }
+    if external_reference:
+        payload["externalReference"] = external_reference
+    if valor_desconto > 0:
+        payload["discount"] = {
+            "value": float(valor_desconto),
+            "dueDateLimitDays": 0,
+        }
+    return payload
+
+
+def _aplicar_desconto_primeira_cobranca_asaas(cobranca, plano, valor_bruto, valor_desconto, valor_final, external_reference):
+    asaas_payment_id = (cobranca or {}).get("id")
+    if not asaas_payment_id:
+        return {
+            "ok": False,
+            "erro": "primeira_cobranca_sem_id",
+            "mensagem": "A primeira cobranca da assinatura foi encontrada sem id no Asaas.",
+            "cobranca": cobranca,
+        }
+
+    payload = _payload_atualizacao_primeira_cobranca(cobranca, plano, valor_bruto, valor_desconto, external_reference)
+    _log_checkout_debug(
+        "[CHECKOUT_FIRST_PAYMENT]",
+        "Aplicando cupom somente na primeira cobranca Asaas",
+        funcao="_aplicar_desconto_primeira_cobranca_asaas",
+        asaas_payment_id=asaas_payment_id,
+        asaas_subscription_id=cobranca.get("subscription"),
+        external_reference=external_reference,
+        valor_assinatura_bruto=float(valor_bruto),
+        valor_desconto_primeira_cobranca=float(valor_desconto),
+        valor_final_primeira_cobranca=float(valor_final),
+        renovacoes_futuras_valor=float(valor_bruto),
+        payload=payload,
+    )
+    resultado = _asaas_request("PUT", f"/payments/{asaas_payment_id}", payload=payload)
+    if not resultado.get("ok"):
+        LOGGER.error(
+            "[CHECKOUT_FIRST_PAYMENT] Falha ao aplicar desconto na primeira cobranca Asaas | %s",
+            _payload_json(
+                {
+                    "asaas_payment_id": asaas_payment_id,
+                    "asaas_subscription_id": cobranca.get("subscription"),
+                    "payload": _sanitize_for_log(payload),
+                    "resultado": _sanitize_for_log(resultado),
+                }
+            ),
+        )
+        return {
+            "ok": False,
+            "erro": "desconto_primeira_cobranca_falhou",
+            "mensagem": resultado.get("mensagem") or "Nao foi possivel aplicar o desconto na primeira cobranca do Asaas.",
+            "resultado": resultado,
+            "cobranca": cobranca,
+        }
+
+    cobranca_atualizada = resultado.get("data") or cobranca
+    _log_checkout_debug(
+        "[CHECKOUT_FIRST_PAYMENT]",
+        "Primeira cobranca Asaas atualizada com desconto unico",
+        funcao="_aplicar_desconto_primeira_cobranca_asaas",
+        asaas_payment_id=asaas_payment_id,
+        asaas_subscription_id=cobranca.get("subscription"),
+        valor_assinatura_bruto=float(valor_bruto),
+        valor_desconto_primeira_cobranca=float(valor_desconto),
+        valor_final_primeira_cobranca=float(valor_final),
+        renovacoes_futuras_valor=float(valor_bruto),
+        cobranca=cobranca_atualizada,
+    )
+    return {
+        "ok": True,
+        "erro": None,
+        "mensagem": None,
+        "resultado": resultado,
+        "cobranca": cobranca_atualizada,
+    }
+
+
+def _cancelar_assinatura_por_falha_primeira_cobranca(asaas_subscription_id, motivo, contexto=None):
+    if not asaas_subscription_id:
+        return None
+    LOGGER.error(
+        "[CHECKOUT_FIRST_PAYMENT] Cancelando assinatura criada sem desconto correto na primeira cobranca | %s",
+        _payload_json(
+            {
+                "asaas_subscription_id": asaas_subscription_id,
+                "motivo": motivo,
+                "contexto": _sanitize_for_log(contexto or {}),
+            }
+        ),
+    )
+    return _asaas_request("DELETE", f"/subscriptions/{asaas_subscription_id}")
+
+
 def criar_assinatura_asaas(customer_id, plano):
+    valor_assinatura = _valor_plano_decimal(plano, "valor_assinatura", "checkout_valor_bruto", "valor_base", "valor", "preco_mensal")
+    valor_desconto_primeira = _valor_plano_decimal(plano, "checkout_valor_desconto")
+    valor_final_primeira = _valor_plano_decimal(plano, "checkout_valor_final")
+    if valor_final_primeira <= 0 and valor_desconto_primeira <= 0:
+        valor_final_primeira = valor_assinatura
+    elif valor_final_primeira < 0:
+        valor_final_primeira = Decimal("0")
     payload = {
         "customer": customer_id,
         "billingType": (plano.get("billingType") or "UNDEFINED").strip().upper(),
         "nextDueDate": _proximo_vencimento(plano),
-        "value": float(_to_decimal(plano.get("valor_base") or plano.get("valor") or plano.get("preco_mensal") or 0)),
+        "value": float(valor_assinatura),
         "cycle": _ciclo_asaas(plano),
         "description": (plano.get("description") or plano.get("descricao") or plano.get("nome") or "Assinatura TriLab TREINAMENTO").strip(),
     }
+    external_reference = (plano.get("externalReference") or plano.get("external_reference") or "").strip()
+    if external_reference:
+        payload["externalReference"] = external_reference
     _log_checkout_debug(
-        "[ASAAS_DEBUG]",
-        "Criando assinatura Asaas",
+        "[CHECKOUT_ASAAS]",
+        "Criando assinatura Asaas com valores persistidos do checkout",
         funcao="criar_assinatura_asaas",
         customer_id=customer_id,
         plano_codigo=plano.get("codigo"),
         plano_tipo=plano.get("tipo_plano") or plano.get("tipo"),
+        external_reference=external_reference,
+        valor_assinatura_bruto=float(valor_assinatura),
+        valor_desconto_primeira_cobranca=float(valor_desconto_primeira),
+        valor_final_primeira_cobranca=float(valor_final_primeira),
+        renovacoes_futuras_valor=float(valor_assinatura),
         payload=payload,
     )
     resultado = _asaas_request("POST", "/subscriptions", payload=payload)
@@ -996,6 +1128,54 @@ def criar_assinatura_asaas(customer_id, plano):
             "Voce pode acompanhar o status em Minha Assinatura."
         )
         cobranca_payload = cobranca_inicial.get("cobranca")
+
+    first_payment_discount_applied = False
+    if valor_desconto_primeira > 0:
+        if not cobranca_payload or not (cobranca_payload or {}).get("id"):
+            cancelamento = _cancelar_assinatura_por_falha_primeira_cobranca(
+                asaas_subscription_id,
+                "cobranca_inicial_nao_encontrada_para_desconto",
+                {"cobranca_inicial": cobranca_inicial},
+            )
+            return {
+                "ok": False,
+                "gateway": DEFAULT_GATEWAY,
+                "status": "erro_primeira_cobranca",
+                "mensagem": "Assinatura criada no Asaas, mas a primeira cobranca nao foi encontrada para aplicar o cupom. A assinatura foi cancelada para evitar cobranca cheia.",
+                "asaas_subscription_id": asaas_subscription_id,
+                "cancelamento_payload": cancelamento,
+                "payload": assinatura,
+            }
+        ajuste_primeira = _aplicar_desconto_primeira_cobranca_asaas(
+            cobranca_payload,
+            plano,
+            valor_assinatura,
+            valor_desconto_primeira,
+            valor_final_primeira,
+            external_reference,
+        )
+        if not ajuste_primeira.get("ok"):
+            cancelamento = _cancelar_assinatura_por_falha_primeira_cobranca(
+                asaas_subscription_id,
+                "falha_ao_aplicar_desconto_na_primeira_cobranca",
+                ajuste_primeira,
+            )
+            return {
+                "ok": False,
+                "gateway": DEFAULT_GATEWAY,
+                "status": "erro_primeira_cobranca",
+                "mensagem": "Assinatura criada no Asaas, mas nao foi possivel aplicar o cupom somente na primeira cobranca. A assinatura foi cancelada para evitar desconto recorrente incorreto ou cobranca cheia.",
+                "asaas_subscription_id": asaas_subscription_id,
+                "asaas_payment_id": asaas_payment_id,
+                "cancelamento_payload": cancelamento,
+                "payload": assinatura,
+                "payment_payload": cobranca_payload,
+                "first_payment_discount_result": ajuste_primeira,
+            }
+        cobranca_payload = ajuste_primeira.get("cobranca") or cobranca_payload
+        invoice_url = (cobranca_payload or {}).get("invoiceUrl") or invoice_url
+        asaas_payment_id = (cobranca_payload or {}).get("id") or asaas_payment_id
+        first_payment_discount_applied = True
     return {
         "ok": True,
         "gateway": DEFAULT_GATEWAY,
@@ -1008,6 +1188,12 @@ def criar_assinatura_asaas(customer_id, plano):
         "gateway_reference": asaas_subscription_id,
         "payload": assinatura,
         "payment_payload": cobranca_payload,
+        "subscription_value": float(valor_assinatura),
+        "future_payments_value": float(valor_assinatura),
+        "first_payment_discount_applied": first_payment_discount_applied,
+        "first_payment_valor_bruto": float(valor_assinatura),
+        "first_payment_valor_desconto": float(valor_desconto_primeira),
+        "first_payment_valor_final": float(valor_final_primeira),
     }
 
 
@@ -1152,6 +1338,16 @@ def _buscar_usuario_por_customer(cursor, asaas_customer_id):
     return dict(linha) if linha else None
 
 
+def _valor_desconto_pagamento_asaas(pagamento_payload):
+    desconto = (pagamento_payload or {}).get("discount")
+    if not isinstance(desconto, dict):
+        return Decimal("0")
+    valor = desconto.get("value")
+    if valor in (None, ""):
+        return Decimal("0")
+    return max(Decimal("0"), _to_decimal(valor))
+
+
 def _upsert_pagamento_webhook(cursor, pagamento_payload, assinatura):
     usuario_id = assinatura["usuario_id"] if assinatura else None
     if not usuario_id:
@@ -1160,7 +1356,13 @@ def _upsert_pagamento_webhook(cursor, pagamento_payload, assinatura):
     if not usuario_id:
         raise ValueError("Usuario interno nao encontrado para o pagamento do Asaas.")
 
-    valor = float(_to_decimal(pagamento_payload.get("value") or pagamento_payload.get("netValue") or 0))
+    valor_bruto = _to_decimal(pagamento_payload.get("value") or pagamento_payload.get("netValue") or 0)
+    valor_desconto = min(valor_bruto, _valor_desconto_pagamento_asaas(pagamento_payload))
+    valor_final = max(Decimal("0"), valor_bruto - valor_desconto).quantize(CENTAVOS, rounding=ROUND_HALF_UP)
+    valor = float(valor_final)
+    valor_bruto_float = float(valor_bruto)
+    valor_desconto_float = float(valor_desconto)
+    valor_final_float = float(valor_final)
     status_interno = EVENTOS_PAGAMENTO.get((pagamento_payload.get("_evento") or "").upper(), "pendente")
     data_pagamento = pagamento_payload.get("clientPaymentDate") or pagamento_payload.get("paymentDate")
     data_vencimento = pagamento_payload.get("dueDate")
@@ -1169,7 +1371,7 @@ def _upsert_pagamento_webhook(cursor, pagamento_payload, assinatura):
 
     cursor.execute(
         """
-        SELECT id, status, assinatura_id
+        SELECT id, status, assinatura_id, valor_desconto, valor_final
         FROM pagamentos
         WHERE asaas_payment_id = %s
            OR referencia_externa = %s
@@ -1187,9 +1389,19 @@ def _upsert_pagamento_webhook(cursor, pagamento_payload, assinatura):
             UPDATE pagamentos
             SET usuario_id = COALESCE(usuario_id, %s),
                 assinatura_id = COALESCE(assinatura_id, %s),
-                valor = %s,
-                valor_bruto = COALESCE(%s, valor_bruto),
-                valor_final = %s,
+                valor = CASE
+                    WHEN %s > 0 THEN %s
+                    ELSE COALESCE(valor_final, %s)
+                END,
+                valor_bruto = COALESCE(valor_bruto, %s),
+                valor_desconto = CASE
+                    WHEN %s > 0 THEN %s
+                    ELSE COALESCE(valor_desconto, 0)
+                END,
+                valor_final = CASE
+                    WHEN %s > 0 THEN %s
+                    ELSE COALESCE(valor_final, %s)
+                END,
                 status = %s,
                 metodo_pagamento = COALESCE(%s, metodo_pagamento),
                 data_pagamento = COALESCE(%s, data_pagamento),
@@ -1204,9 +1416,15 @@ def _upsert_pagamento_webhook(cursor, pagamento_payload, assinatura):
             (
                 usuario_id,
                 assinatura["id"] if assinatura else None,
-                valor,
-                valor,
-                valor,
+                valor_desconto_float,
+                valor_final_float,
+                valor_bruto_float,
+                valor_bruto_float,
+                valor_desconto_float,
+                valor_desconto_float,
+                valor_desconto_float,
+                valor_final_float,
+                valor_bruto_float,
                 status_interno,
                 (pagamento_payload.get("billingType") or "").lower() or None,
                 data_pagamento if status_interno in STATUS_QUITADOS else None,
@@ -1226,15 +1444,16 @@ def _upsert_pagamento_webhook(cursor, pagamento_payload, assinatura):
             usuario_id, assinatura_id, valor, valor_bruto, valor_desconto, valor_final,
             status, metodo_pagamento, data_pagamento, data_vencimento, referencia_externa,
             asaas_payment_id, gateway, gateway_reference
-        ) VALUES (%s, %s, %s, %s, 0, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING id
         """,
         (
             usuario_id,
             assinatura["id"] if assinatura else None,
             valor,
-            valor,
-            valor,
+            valor_bruto_float,
+            valor_desconto_float,
+            valor_final_float,
             status_interno,
             (pagamento_payload.get("billingType") or "").lower() or None,
             data_pagamento if status_interno in STATUS_QUITADOS else None,
@@ -1273,6 +1492,60 @@ def _atualizar_assinatura_por_pagamento(cursor, assinatura, pagamento_payload, s
             assinatura["id"],
         ),
     )
+
+
+def _atualizar_checkout_por_webhook(cursor, pagamento_payload, pagamento_id, status_pagamento):
+    asaas_payment_id = pagamento_payload.get("id")
+    asaas_subscription_id = pagamento_payload.get("subscription")
+    external_reference = pagamento_payload.get("externalReference")
+    if not asaas_payment_id and not asaas_subscription_id and not external_reference:
+        return
+
+    if status_pagamento in STATUS_QUITADOS:
+        status_checkout = "concluido"
+    elif status_pagamento in {"cancelado", "estornado"}:
+        status_checkout = "cancelado"
+    else:
+        status_checkout = "asaas_criado"
+
+    cursor.execute(
+        """
+        UPDATE checkouts_pendentes
+        SET status = %s,
+            pagamento_id = COALESCE(%s, pagamento_id),
+            asaas_payment_id = COALESCE(%s, asaas_payment_id),
+            asaas_subscription_id = COALESCE(%s, asaas_subscription_id),
+            atualizado_em = CURRENT_TIMESTAMP
+        WHERE (asaas_payment_id = %s AND %s IS NOT NULL)
+           OR (asaas_subscription_id = %s AND %s IS NOT NULL)
+           OR (external_reference = %s AND %s IS NOT NULL)
+        """,
+        (
+            status_checkout,
+            pagamento_id,
+            asaas_payment_id,
+            asaas_subscription_id,
+            asaas_payment_id,
+            asaas_payment_id,
+            asaas_subscription_id,
+            asaas_subscription_id,
+            external_reference,
+            external_reference,
+        ),
+    )
+    if cursor.rowcount:
+        LOGGER.info(
+            "[CHECKOUT_STATE] Checkout atualizado a partir do webhook Asaas | %s",
+            _payload_json(
+                {
+                    "asaas_payment_id": asaas_payment_id,
+                    "asaas_subscription_id": asaas_subscription_id,
+                    "pagamento_id": pagamento_id,
+                    "status_pagamento": status_pagamento,
+                    "status_checkout": status_checkout,
+                }
+            ),
+        )
 
 
 def processar_webhook_asaas(payload, headers):
@@ -1349,6 +1622,7 @@ def processar_webhook_asaas(payload, headers):
                     }
             pagamento_id, status_pagamento = _upsert_pagamento_webhook(cursor, payment, assinatura)
             _atualizar_assinatura_por_pagamento(cursor, assinatura, payment, status_pagamento)
+            _atualizar_checkout_por_webhook(cursor, payment, pagamento_id, status_pagamento)
         else:
             pagamento_id = None
             status_pagamento = None
@@ -1489,15 +1763,21 @@ def criar_customer_gateway(usuario):
     return criar_customer_asaas(usuario)
 
 
-def criar_assinatura_gateway(usuario, plano):
+def criar_assinatura_gateway(usuario, plano, checkout=None):
     _log_checkout_debug(
-        "[CHECKOUT_DEBUG]",
+        "[CHECKOUT_ASAAS]",
         "Entrando no gateway de assinatura",
         funcao="criar_assinatura_gateway",
+        checkout_id=(checkout or {}).get("id"),
+        external_reference=(checkout or {}).get("external_reference") or plano.get("externalReference"),
         usuario_id=usuario.get("id"),
         tipo_usuario=usuario.get("tipo_usuario"),
         plano_codigo=plano.get("codigo"),
         plano_tipo=plano.get("tipo_plano") or plano.get("tipo"),
+        valor_bruto=(checkout or {}).get("valor_bruto") or plano.get("valor_base"),
+        valor_desconto=(checkout or {}).get("valor_desconto") or 0,
+        valor_final_primeira_cobranca=(checkout or {}).get("valor_final") or plano.get("checkout_valor_final") or plano.get("valor_base"),
+        renovacoes_futuras_valor=(checkout or {}).get("valor_bruto") or plano.get("valor_assinatura") or plano.get("valor_base"),
     )
     if (usuario.get("tipo_usuario") or "").strip().lower() != "atleta" or (plano.get("tipo_plano") or "").strip().lower() != "atleta":
         return {

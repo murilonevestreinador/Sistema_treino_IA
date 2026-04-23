@@ -1,12 +1,15 @@
+import logging
+
 import streamlit as st
 
 from core.auth import garantir_usuario_em_pagina
-from core.financeiro import atleta_tem_treinador_ativo, listar_planos_ativos
+from core.financeiro import atleta_tem_treinador_ativo, listar_planos_ativos, salvar_checkout_pendente
 from core.lancamento import pode_exibir_planos_treinador_publicamente
 from core.ui import inject_app_icons
 
 
 CHECKOUT_PAGE = "pages/pagamento_manual.py"
+LOGGER = logging.getLogger("trilab.checkout.ui")
 
 
 def _ir_para_app(modo=None):
@@ -18,8 +21,27 @@ def _ir_para_app(modo=None):
         st.info("Abra a pagina inicial do app para continuar.")
 
 
-def _ir_para_pagamento(plano_codigo):
+def _ir_para_pagamento(plano_codigo, usuario=None):
     st.session_state["plano_checkout"] = plano_codigo
+    if usuario and usuario.get("id"):
+        try:
+            checkout = salvar_checkout_pendente(usuario, plano_codigo)
+            st.session_state["checkout_id"] = checkout["id"]
+            st.session_state["checkout_external_reference"] = checkout.get("external_reference")
+            LOGGER.info(
+                "[CHECKOUT_STATE] Plano selecionado persistido antes da navegacao | usuario_id=%s checkout_id=%s plano_codigo=%s",
+                usuario.get("id"),
+                checkout.get("id"),
+                plano_codigo,
+            )
+        except Exception as exc:
+            LOGGER.exception(
+                "[CHECKOUT_ERROR] Falha ao persistir checkout ao selecionar plano | usuario_id=%s plano_codigo=%s",
+                usuario.get("id"),
+                plano_codigo,
+            )
+            st.error(f"Nao foi possivel iniciar o checkout: {exc}")
+            return
     try:
         st.switch_page(CHECKOUT_PAGE)
     except Exception:
@@ -90,7 +112,7 @@ else:
                     st.caption("Conta coberta pelo treinador vinculado.")
                 elif st.button("Assinar", key=f"assinar_{plano['codigo']}", use_container_width=True):
                     if usuario.get("tipo_usuario") == plano["tipo_plano"]:
-                        _ir_para_pagamento(plano["codigo"])
+                        _ir_para_pagamento(plano["codigo"], usuario)
                     else:
                         st.error("Este plano nao corresponde ao perfil da sua conta.")
             else:

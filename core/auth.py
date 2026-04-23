@@ -249,7 +249,7 @@ def _logo_auth_html():
 
 
 def _tem_checkout_pendente():
-    return bool((st.session_state.get("plano_checkout") or "").strip())
+    return bool((st.session_state.get("plano_checkout") or "").strip() or st.session_state.get("checkout_id"))
 
 
 def _ir_para_checkout_se_pendente():
