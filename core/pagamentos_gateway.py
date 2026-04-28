@@ -1378,6 +1378,22 @@ def _buscar_assinatura_por_id(cursor, assinatura_id):
     return dict(linha) if linha else None
 
 
+def _buscar_pagamento_local_por_id(cursor, pagamento_id):
+    if not pagamento_id:
+        return None
+    cursor.execute(
+        """
+        SELECT *
+        FROM pagamentos
+        WHERE id = %s
+        LIMIT 1
+        """,
+        (pagamento_id,),
+    )
+    linha = cursor.fetchone()
+    return dict(linha) if linha else None
+
+
 def _buscar_pagamento_local_por_gateway(cursor, asaas_payment_id=None, gateway_reference=None):
     if not asaas_payment_id and not gateway_reference:
         return None
@@ -1404,11 +1420,89 @@ def _buscar_pagamento_local_por_gateway(cursor, asaas_payment_id=None, gateway_r
     return dict(linha) if linha else None
 
 
+def _registrar_match_step(contexto, passo):
+    if not passo:
+        return
+    if passo not in contexto["match_steps"]:
+        contexto["match_steps"].append(passo)
+
+
+def _usuario_id_contexto(contexto):
+    return (contexto.get("usuario") or {}).get("id") or contexto.get("usuario_id")
+
+
+def _anexar_usuario_ao_contexto(cursor, contexto, usuario_id, passo_match):
+    if not usuario_id:
+        return
+    if not contexto.get("usuario_id"):
+        contexto["usuario_id"] = usuario_id
+    if contexto.get("usuario"):
+        return
+    usuario = _buscar_usuario_por_id(cursor, usuario_id)
+    if usuario:
+        contexto["usuario"] = usuario
+        contexto["usuario_id"] = usuario.get("id")
+        _registrar_match_step(contexto, passo_match)
+
+
+def _anexar_assinatura_ao_contexto(cursor, contexto, assinatura, passo_match, passo_usuario="usuario:assinatura"):
+    if not assinatura:
+        return
+    if not contexto.get("assinatura"):
+        contexto["assinatura"] = assinatura
+        _registrar_match_step(contexto, passo_match)
+    _anexar_usuario_ao_contexto(cursor, contexto, (assinatura or {}).get("usuario_id"), passo_usuario)
+
+
+def _anexar_pagamento_local_ao_contexto(cursor, contexto, pagamento_local, passo_match):
+    if not pagamento_local:
+        return
+    if not contexto.get("pagamento_local"):
+        contexto["pagamento_local"] = pagamento_local
+        _registrar_match_step(contexto, passo_match)
+    _anexar_usuario_ao_contexto(cursor, contexto, (pagamento_local or {}).get("usuario_id"), "usuario:pagamento_local")
+    if not contexto.get("assinatura") and pagamento_local.get("assinatura_id"):
+        assinatura = _buscar_assinatura_por_id(cursor, pagamento_local.get("assinatura_id"))
+        if assinatura:
+            _anexar_assinatura_ao_contexto(cursor, contexto, assinatura, "assinatura:pagamento_local")
+
+
+def _anexar_checkout_ao_contexto(cursor, contexto, checkout, payment_id=None, subscription_id=None, external_reference=None, customer_id=None):
+    if not checkout:
+        return
+    if not contexto.get("checkout"):
+        contexto["checkout"] = checkout
+        if payment_id and checkout.get("asaas_payment_id") == payment_id:
+            _registrar_match_step(contexto, "checkout:payment_id")
+        elif subscription_id and checkout.get("asaas_subscription_id") == subscription_id:
+            _registrar_match_step(contexto, "checkout:subscription")
+        elif external_reference and checkout.get("external_reference") == external_reference:
+            _registrar_match_step(contexto, "checkout:external_reference")
+        elif customer_id and checkout.get("asaas_customer_id") == customer_id:
+            _registrar_match_step(contexto, "checkout:customer")
+        elif any(checkout.get(chave) for chave in ("asaas_payment_id", "asaas_subscription_id", "external_reference", "asaas_customer_id")):
+            _registrar_match_step(contexto, "checkout:identificadores")
+        else:
+            _registrar_match_step(contexto, "checkout:usuario_aberto")
+
+    if not contexto.get("pagamento_local") and checkout.get("pagamento_id"):
+        pagamento_local = _buscar_pagamento_local_por_id(cursor, checkout.get("pagamento_id"))
+        if pagamento_local:
+            _anexar_pagamento_local_ao_contexto(cursor, contexto, pagamento_local, "pagamento:checkout")
+
+    if not contexto.get("assinatura") and checkout.get("assinatura_id"):
+        assinatura = _buscar_assinatura_por_id(cursor, checkout.get("assinatura_id"))
+        if assinatura:
+            _anexar_assinatura_ao_contexto(cursor, contexto, assinatura, "assinatura:checkout")
+
+    _anexar_usuario_ao_contexto(cursor, contexto, checkout.get("usuario_id"), "usuario:checkout")
+
+
 def _buscar_checkout_por_webhook(cursor, asaas_payment_id=None, asaas_subscription_id=None, external_reference=None, asaas_customer_id=None, usuario_id=None):
     if asaas_payment_id or asaas_subscription_id or external_reference:
         cursor.execute(
-            """
-            SELECT *
+        """
+        SELECT *
             FROM checkouts_pendentes
             WHERE (asaas_payment_id = %s AND %s IS NOT NULL)
                OR (asaas_subscription_id = %s AND %s IS NOT NULL)
@@ -1499,6 +1593,7 @@ def _resolver_contexto_pagamento_webhook(cursor, pagamento_payload):
     contexto = {
         "assinatura": None,
         "usuario": None,
+        "usuario_id": None,
         "checkout": None,
         "pagamento_local": None,
         "match_steps": [],
@@ -1506,30 +1601,12 @@ def _resolver_contexto_pagamento_webhook(cursor, pagamento_payload):
 
     pagamento_local = _buscar_pagamento_local_por_gateway(cursor, payment_id, gateway_reference)
     if pagamento_local:
-        contexto["pagamento_local"] = pagamento_local
-        contexto["match_steps"].append("pagamento:payment_id")
-        if pagamento_local.get("usuario_id"):
-            usuario = _buscar_usuario_por_id(cursor, pagamento_local.get("usuario_id"))
-            if usuario:
-                contexto["usuario"] = usuario
-                contexto["match_steps"].append("usuario:pagamento_local")
-        if not contexto["assinatura"] and pagamento_local.get("assinatura_id"):
-            assinatura = _buscar_assinatura_por_id(cursor, pagamento_local.get("assinatura_id"))
-            if assinatura:
-                contexto["assinatura"] = assinatura
-                contexto["match_steps"].append("assinatura:pagamento_local")
+        _anexar_pagamento_local_ao_contexto(cursor, contexto, pagamento_local, "pagamento:payment_id")
 
     if not contexto["assinatura"] and subscription_id:
         assinatura = _buscar_assinatura_por_gateway(cursor, subscription_id, subscription_id)
         if assinatura:
-            contexto["assinatura"] = assinatura
-            contexto["match_steps"].append("assinatura:subscription")
-
-    if contexto["assinatura"] and not contexto["usuario"]:
-        usuario = _buscar_usuario_por_id(cursor, contexto["assinatura"].get("usuario_id"))
-        if usuario:
-            contexto["usuario"] = usuario
-            contexto["match_steps"].append("usuario:assinatura")
+            _anexar_assinatura_ao_contexto(cursor, contexto, assinatura, "assinatura:subscription")
 
     checkout = _buscar_checkout_por_webhook(
         cursor,
@@ -1537,58 +1614,63 @@ def _resolver_contexto_pagamento_webhook(cursor, pagamento_payload):
         asaas_subscription_id=subscription_id,
         external_reference=external_reference,
         asaas_customer_id=customer_id,
-        usuario_id=(contexto["usuario"] or {}).get("id"),
+        usuario_id=_usuario_id_contexto(contexto),
     )
     if checkout:
-        contexto["checkout"] = checkout
-        if payment_id and checkout.get("asaas_payment_id") == payment_id:
-            contexto["match_steps"].append("checkout:payment_id")
-        elif subscription_id and checkout.get("asaas_subscription_id") == subscription_id:
-            contexto["match_steps"].append("checkout:subscription")
-        elif external_reference and checkout.get("external_reference") == external_reference:
-            contexto["match_steps"].append("checkout:external_reference")
-        elif customer_id and checkout.get("asaas_customer_id") == customer_id:
-            contexto["match_steps"].append("checkout:customer")
-        elif any(checkout.get(chave) for chave in ("asaas_payment_id", "asaas_subscription_id", "external_reference", "asaas_customer_id")):
-            contexto["match_steps"].append("checkout:identificadores")
-        else:
-            contexto["match_steps"].append("checkout:usuario_aberto")
-        if not contexto["assinatura"] and checkout.get("assinatura_id"):
-            assinatura = _buscar_assinatura_por_id(cursor, checkout.get("assinatura_id"))
-            if assinatura:
-                contexto["assinatura"] = assinatura
-                contexto["match_steps"].append("assinatura:checkout")
-        if not contexto["usuario"] and checkout.get("usuario_id"):
-            usuario = _buscar_usuario_por_id(cursor, checkout.get("usuario_id"))
-            if usuario:
-                contexto["usuario"] = usuario
-                contexto["match_steps"].append("usuario:checkout")
+        _anexar_checkout_ao_contexto(
+            cursor,
+            contexto,
+            checkout,
+            payment_id=payment_id,
+            subscription_id=subscription_id,
+            external_reference=external_reference,
+            customer_id=customer_id,
+        )
 
-    if not contexto["assinatura"] and contexto["usuario"]:
+    if not contexto["assinatura"] and _usuario_id_contexto(contexto):
         assinatura = _buscar_assinatura_pendente_usuario(
             cursor,
-            contexto["usuario"].get("id"),
+            _usuario_id_contexto(contexto),
             (contexto["checkout"] or {}).get("plano_id"),
         )
         if assinatura:
-            contexto["assinatura"] = assinatura
-            contexto["match_steps"].append("assinatura:pendente_usuario")
+            _anexar_assinatura_ao_contexto(cursor, contexto, assinatura, "assinatura:pendente_usuario")
 
     if not contexto["usuario"] and customer_id:
         usuario = _buscar_usuario_por_customer(cursor, customer_id)
         if usuario:
             contexto["usuario"] = usuario
-            contexto["match_steps"].append("usuario:customer")
+            contexto["usuario_id"] = usuario.get("id")
+            _registrar_match_step(contexto, "usuario:customer")
 
-    if not contexto["assinatura"] and contexto["usuario"]:
+    if not contexto["checkout"] and _usuario_id_contexto(contexto):
+        checkout = _buscar_checkout_por_webhook(
+            cursor,
+            asaas_payment_id=payment_id,
+            asaas_subscription_id=subscription_id,
+            external_reference=external_reference,
+            asaas_customer_id=customer_id,
+            usuario_id=_usuario_id_contexto(contexto),
+        )
+        if checkout:
+            _anexar_checkout_ao_contexto(
+                cursor,
+                contexto,
+                checkout,
+                payment_id=payment_id,
+                subscription_id=subscription_id,
+                external_reference=external_reference,
+                customer_id=customer_id,
+            )
+
+    if not contexto["assinatura"] and _usuario_id_contexto(contexto):
         assinatura = _buscar_assinatura_pendente_usuario(
             cursor,
-            contexto["usuario"].get("id"),
+            _usuario_id_contexto(contexto),
             (contexto["checkout"] or {}).get("plano_id"),
         )
         if assinatura:
-            contexto["assinatura"] = assinatura
-            contexto["match_steps"].append("assinatura:pendente_usuario_customer")
+            _anexar_assinatura_ao_contexto(cursor, contexto, assinatura, "assinatura:pendente_usuario_customer")
 
     usuario_match_path = next((passo for passo in reversed(contexto["match_steps"]) if passo.startswith("usuario:")), None)
     LOGGER.info(
@@ -1605,8 +1687,9 @@ def _resolver_contexto_pagamento_webhook(cursor, pagamento_payload):
                     "checkout_encontrado": bool(contexto["checkout"]),
                     "assinatura_encontrada": bool(contexto["assinatura"]),
                     "usuario_encontrado": bool(contexto["usuario"]),
+                    "usuario_id_encontrado": bool(_usuario_id_contexto(contexto)),
                     "assinatura_id": (contexto["assinatura"] or {}).get("id"),
-                    "usuario_id": (contexto["usuario"] or {}).get("id"),
+                    "usuario_id": _usuario_id_contexto(contexto),
                     "checkout_id": (contexto["checkout"] or {}).get("id"),
                     "pagamento_local_id": (contexto["pagamento_local"] or {}).get("id"),
                     "usuario_match_path": usuario_match_path,
@@ -1660,10 +1743,16 @@ def _upsert_pagamento_webhook(cursor, pagamento_payload, assinatura, usuario=Non
 
     if not assinatura and existente and existente.get("assinatura_id"):
         assinatura = _buscar_assinatura_por_id(cursor, existente.get("assinatura_id"))
+    if not assinatura and checkout and checkout.get("assinatura_id"):
+        assinatura = _buscar_assinatura_por_id(cursor, checkout.get("assinatura_id"))
+    if not assinatura and pagamento_payload.get("subscription"):
+        assinatura = _buscar_assinatura_por_gateway(cursor, pagamento_payload.get("subscription"), pagamento_payload.get("subscription"))
 
     usuario_id = assinatura["usuario_id"] if assinatura else None
     if not usuario_id and existente:
         usuario_id = existente.get("usuario_id")
+    if not usuario_id and pagamento_local:
+        usuario_id = pagamento_local.get("usuario_id")
     if not usuario_id and usuario:
         usuario_id = usuario.get("id")
     if not usuario_id and checkout:
@@ -1671,6 +1760,10 @@ def _upsert_pagamento_webhook(cursor, pagamento_payload, assinatura, usuario=Non
     if not usuario_id:
         usuario_customer = _buscar_usuario_por_customer(cursor, pagamento_payload.get("customer"))
         usuario_id = usuario_customer["id"] if usuario_customer else None
+    if not assinatura and usuario_id:
+        assinatura = _buscar_assinatura_pendente_usuario(cursor, usuario_id, (checkout or {}).get("plano_id"))
+    if assinatura and not usuario_id:
+        usuario_id = assinatura.get("usuario_id")
     if not usuario_id:
         raise WebhookConciliacaoPendenteError(
             "Usuario interno nao encontrado para o pagamento do Asaas.",
@@ -1739,7 +1832,7 @@ def _upsert_pagamento_webhook(cursor, pagamento_payload, assinatura, usuario=Non
                 existente["id"],
             ),
         )
-        return int(cursor.fetchone()["id"]), status_interno
+        return int(cursor.fetchone()["id"]), status_interno, assinatura
 
     cursor.execute(
         """
@@ -1767,7 +1860,7 @@ def _upsert_pagamento_webhook(cursor, pagamento_payload, assinatura, usuario=Non
             gateway_reference,
         ),
     )
-    return int(cursor.fetchone()["id"]), status_interno
+    return int(cursor.fetchone()["id"]), status_interno, assinatura
 
 
 def _atualizar_assinatura_por_pagamento(cursor, assinatura, pagamento_payload, status_pagamento):
@@ -1937,7 +2030,7 @@ def processar_webhook_asaas(payload, headers):
         checkout = contexto_match.get("checkout")
         pagamento_local = contexto_match.get("pagamento_local")
         if evento in EVENTOS_PAGAMENTO:
-            pagamento_id, status_pagamento = _upsert_pagamento_webhook(
+            pagamento_id, status_pagamento, assinatura = _upsert_pagamento_webhook(
                 cursor,
                 payment,
                 assinatura,
@@ -1947,6 +2040,28 @@ def processar_webhook_asaas(payload, headers):
             )
             _atualizar_assinatura_por_pagamento(cursor, assinatura, payment, status_pagamento)
             _atualizar_checkout_por_webhook(cursor, payment, pagamento_id, status_pagamento, checkout=checkout)
+            if status_pagamento in STATUS_QUITADOS:
+                LOGGER.info(
+                    "[ASAAS_ACCESS_RELEASE] Pagamento quitado conciliado no webhook | %s",
+                    _payload_json(
+                        _sanitize_for_log(
+                            {
+                                "evento": evento,
+                                "payment_id": payment.get("id"),
+                                "subscription": payment.get("subscription"),
+                                "external_reference": payment.get("externalReference"),
+                                "customer": payment.get("customer"),
+                                "billing_type": payment.get("billingType"),
+                                "pagamento_id": pagamento_id,
+                                "checkout_id": (checkout or {}).get("id"),
+                                "assinatura_id": (assinatura or {}).get("id"),
+                                "usuario_id": ((usuario or {}).get("id") or (assinatura or {}).get("usuario_id") or (checkout or {}).get("usuario_id")),
+                                "status_pagamento": status_pagamento,
+                                "match_steps": (contexto_match or {}).get("match_steps") or [],
+                            }
+                        )
+                    ),
+                )
         else:
             pagamento_id = None
             status_pagamento = None
@@ -1981,10 +2096,11 @@ def processar_webhook_asaas(payload, headers):
             "assinatura_encontrada": bool((locals().get("assinatura"))),
             "pagamento_local_encontrado": bool((locals().get("pagamento_local"))),
             "usuario_encontrado": bool((locals().get("usuario"))),
+            "usuario_id_encontrado": bool(((locals().get("usuario") or {}).get("id") or (locals().get("assinatura") or {}).get("usuario_id") or (locals().get("checkout") or {}).get("usuario_id") or (locals().get("pagamento_local") or {}).get("usuario_id") or (locals().get("contexto_match") or {}).get("usuario_id"))),
             "checkout_id": (locals().get("checkout") or {}).get("id"),
             "assinatura_id": (locals().get("assinatura") or {}).get("id"),
             "pagamento_local_id": (locals().get("pagamento_local") or {}).get("id"),
-            "usuario_id": (locals().get("usuario") or {}).get("id"),
+            "usuario_id": ((locals().get("usuario") or {}).get("id") or (locals().get("assinatura") or {}).get("usuario_id") or (locals().get("checkout") or {}).get("usuario_id") or (locals().get("pagamento_local") or {}).get("usuario_id") or (locals().get("contexto_match") or {}).get("usuario_id")),
             "match_steps": (locals().get("contexto_match") or {}).get("match_steps") or [],
         }
         detalhes.update(exc.detalhes or {})

@@ -1128,6 +1128,104 @@ def _dias_restantes_trial(assinatura):
     return max((data_fim - _hoje()).days, 0)
 
 
+def _dias_restantes_plano(assinatura):
+    if not assinatura:
+        return None
+    data_limite = _parse_date(assinatura.get("data_renovacao") or assinatura.get("data_fim"))
+    if not data_limite:
+        return None
+    return max((data_limite - _hoje()).days, 0)
+
+
+def _flag_ativa(valor):
+    if isinstance(valor, bool):
+        return valor
+    if valor is None:
+        return False
+    if isinstance(valor, (int, float)):
+        return bool(valor)
+    return str(valor).strip().lower() in {"1", "true", "t", "sim", "yes", "y", "ativa", "ativo"}
+
+
+def _detalhe_trial_restante(dias):
+    if dias is None:
+        return None
+    if dias <= 0:
+        return "Seu teste termina hoje."
+    unidade = "dia" if dias == 1 else "dias"
+    return f"Faltam {dias} {unidade} para o fim do seu teste."
+
+
+def _detalhe_plano_restante(dias):
+    if dias is None:
+        return None
+    if dias <= 0:
+        return "Seu plano vence hoje."
+    unidade = "dia" if dias == 1 else "dias"
+    return f"Faltam {dias} {unidade} para o fim do seu plano."
+
+
+def _assinatura_tem_pagamento_quitado(assinatura_id):
+    if not assinatura_id:
+        return False
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT 1
+        FROM pagamentos
+        WHERE assinatura_id = %s
+          AND status IN ('pago', 'bonificado')
+        LIMIT 1
+        """,
+        (assinatura_id,),
+    )
+    tem_pagamento_quitado = cursor.fetchone() is not None
+    conn.close()
+    return tem_pagamento_quitado
+
+
+def _diagnosticar_exibicao_assinatura(assinatura):
+    status_assinatura = ((assinatura or {}).get("status") or "").strip().lower()
+    gateway_reference = str((assinatura or {}).get("gateway_reference") or "").strip().lower()
+    renovacao_automatica = _flag_ativa((assinatura or {}).get("renovacao_automatica"))
+    tem_pagamento_quitado = _assinatura_tem_pagamento_quitado((assinatura or {}).get("id"))
+    dias_trial = _dias_restantes_trial(assinatura)
+    dias_plano = _dias_restantes_plano(assinatura)
+
+    eh_trial_real = (
+        status_assinatura == "trial"
+        and not tem_pagamento_quitado
+        and gateway_reference.startswith("trial-")
+    )
+    assinatura_paga_ativa = (
+        status_assinatura == "ativa"
+        or (tem_pagamento_quitado and status_assinatura in {"trial", "pendente"})
+    )
+    plano_perto_vencimento = (
+        assinatura_paga_ativa
+        and dias_plano is not None
+        and dias_plano <= 3
+        and not renovacao_automatica
+    )
+    plano_expirado = (
+        status_assinatura in {"inadimplente", "cancelada", "expirada"}
+        and (tem_pagamento_quitado or not gateway_reference.startswith("trial-"))
+    )
+
+    return {
+        "status_assinatura": status_assinatura,
+        "dias_trial": dias_trial,
+        "dias_plano": dias_plano,
+        "eh_trial_real": eh_trial_real,
+        "assinatura_paga_ativa": assinatura_paga_ativa,
+        "plano_perto_vencimento": plano_perto_vencimento,
+        "plano_expirado": plano_expirado,
+        "tem_pagamento_quitado": tem_pagamento_quitado,
+        "renovacao_automatica": renovacao_automatica,
+    }
+
+
 def obter_status_interface_atleta(usuario_id):
     avaliacao = avaliar_acesso_atleta(usuario_id)
     assinatura = avaliacao.get("assinatura")
@@ -1137,8 +1235,9 @@ def obter_status_interface_atleta(usuario_id):
     nome_treinador_ativo = _nome_treinador_contexto(vinculo_ativo)
     nome_treinador_pendente = _nome_treinador_contexto(vinculo_pendente)
     nome_treinador_encerrado = _nome_treinador_contexto(vinculo_encerrado)
-    dias_trial = _dias_restantes_trial(assinatura)
-    status_assinatura = (assinatura or {}).get("status")
+    diagnostico_assinatura = _diagnosticar_exibicao_assinatura(assinatura)
+    dias_trial = diagnostico_assinatura["dias_trial"]
+    dias_plano = diagnostico_assinatura["dias_plano"]
 
     contexto = {
         "status": "assinatura_ativa_propria",
@@ -1153,7 +1252,10 @@ def obter_status_interface_atleta(usuario_id):
         "tem_acesso": bool(avaliacao.get("tem_acesso")),
         "assinatura": assinatura,
         "dias_trial_restantes": dias_trial,
+        "dias_plano_restantes": dias_plano,
         "treinador_nome": nome_treinador_ativo or nome_treinador_pendente or nome_treinador_encerrado,
+        "tem_pagamento_quitado": diagnostico_assinatura["tem_pagamento_quitado"],
+        "renovacao_automatica": diagnostico_assinatura["renovacao_automatica"],
     }
 
     if avaliacao.get("tem_treinador_ativo") and vinculo_ativo:
@@ -1191,25 +1293,51 @@ def obter_status_interface_atleta(usuario_id):
                 "mostrar_no_bloqueio": not avaliacao.get("tem_acesso"),
             }
         )
-        if status_assinatura == "trial" and dias_trial is not None:
-            contexto["texto"] += f" Enquanto isso, seu acesso segue pelo teste gratis. Faltam {dias_trial} dias para o fim do seu teste."
+        if diagnostico_assinatura["eh_trial_real"] and dias_trial is not None:
+            contexto["texto"] += f" Enquanto isso, seu acesso segue pelo teste gratis. {_detalhe_trial_restante(dias_trial)}"
         elif not avaliacao.get("tem_acesso"):
             contexto["texto"] += " Se preferir, voce tambem pode contratar um plano proprio para continuar."
         return contexto
 
-    if status_assinatura == "trial":
+    if diagnostico_assinatura["eh_trial_real"]:
         contexto.update(
             {
                 "status": "trial_ativo",
                 "variant": "info",
                 "titulo": "Seu teste gratis esta ativo",
                 "texto": "Voce esta no periodo de teste do TriLab. Aproveite para explorar seus treinos e, quando quiser, escolha um plano para continuar.",
-                "detalhe": f"Faltam {dias_trial} dias para o fim do seu teste." if dias_trial is not None else None,
+                "detalhe": _detalhe_trial_restante(dias_trial),
                 "cta_label": "Ver planos",
                 "cta_destino": "pages/planos.py",
                 "mostrar_no_dashboard": True,
             }
         )
+        return contexto
+
+    if diagnostico_assinatura["assinatura_paga_ativa"]:
+        contexto.update(
+            {
+                "status": "assinatura_ativa_propria",
+                "variant": "success",
+                "titulo": "Seu plano individual esta ativo",
+                "texto": "Seu acesso esta liberado normalmente para acompanhar treinos, progresso e evolucoes na plataforma.",
+                "detalhe": None,
+                "mostrar_no_dashboard": False,
+            }
+        )
+        if diagnostico_assinatura["plano_perto_vencimento"]:
+            contexto.update(
+                {
+                    "status": "plano_perto_vencimento",
+                    "variant": "warning",
+                    "titulo": "Seu plano esta perto de vencer",
+                    "texto": "Acompanhe a renovacao para evitar interrupcao no acesso aos seus treinos e evolucoes.",
+                    "detalhe": _detalhe_plano_restante(dias_plano),
+                    "cta_label": "Minha assinatura",
+                    "cta_destino": "pages/minha_assinatura.py",
+                    "mostrar_no_dashboard": True,
+                }
+            )
         return contexto
 
     if vinculo_encerrado and not avaliacao.get("tem_acesso"):
@@ -1220,6 +1348,21 @@ def obter_status_interface_atleta(usuario_id):
                 "titulo": "Seu vinculo com o treinador foi encerrado",
                 "texto": "Para continuar usando o TriLab, escolha um plano ou vincule-se novamente a um treinador.",
                 "detalhe": f"Ultimo treinador vinculado: {nome_treinador_encerrado}" if nome_treinador_encerrado else None,
+                "cta_label": "Ver planos",
+                "cta_destino": "pages/planos.py",
+                "mostrar_no_dashboard": False,
+                "mostrar_no_bloqueio": True,
+            }
+        )
+        return contexto
+
+    if diagnostico_assinatura["plano_expirado"] and not avaliacao.get("tem_acesso"):
+        contexto.update(
+            {
+                "status": "plano_expirado",
+                "variant": "danger",
+                "titulo": "Seu plano expirou",
+                "texto": "Renove sua assinatura para voltar a acessar seus treinos, progresso e evolucoes na plataforma.",
                 "cta_label": "Ver planos",
                 "cta_destino": "pages/planos.py",
                 "mostrar_no_dashboard": False,
@@ -1242,17 +1385,6 @@ def obter_status_interface_atleta(usuario_id):
             }
         )
         return contexto
-
-    if status_assinatura == "ativa":
-        contexto.update(
-            {
-                "status": "assinatura_ativa_propria",
-                "variant": "success",
-                "titulo": "Seu plano individual esta ativo",
-                "texto": "Seu acesso esta liberado normalmente para acompanhar treinos, progresso e evolucoes na plataforma.",
-                "mostrar_no_dashboard": False,
-            }
-        )
     return contexto
 
 

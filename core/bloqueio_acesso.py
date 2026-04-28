@@ -239,10 +239,28 @@ def _conteudo_bloqueio_atleta(contexto, usuario):
             "cta_secundaria": {"label": "Ver minha assinatura", "destino": "pages/minha_assinatura.py"},
         }
 
+    if status == "plano_expirado":
+        return {
+            "badge": "Atleta | plano expirado",
+            "titulo": contexto.get("titulo") or "Seu plano expirou",
+            "texto": contexto.get("texto") or "Renove sua assinatura para voltar a acessar seus treinos e evolucoes.",
+            "painel_titulo": "Como retomar o acesso",
+            "beneficios": [],
+            "painel_textos": [
+                "Assim que voce concluir um novo pagamento, seu acesso volta ao normal na plataforma.",
+            ],
+            "acao_titulo": "Proximo passo recomendado",
+            "acao_textos": [
+                f"{primeiro_nome}, escolha um plano para reativar seus treinos e continuar sua evolucao sem perder o historico da conta.",
+            ],
+            "cta_primaria": {"label": "Escolher plano", "destino": "pages/planos.py"},
+            "cta_secundaria": {"label": "Ver minha assinatura", "destino": "pages/minha_assinatura.py"},
+        }
+
     return {
         "badge": "Atleta | assinatura necessaria",
         "titulo": contexto.get("titulo") or "Seu periodo de teste terminou",
-        "texto": "Continue usando o TriLab escolhendo um plano para liberar seu acesso novamente.",
+        "texto": contexto.get("texto") or "Continue usando o TriLab escolhendo um plano para liberar seu acesso novamente.",
         "painel_titulo": "O que voce libera ao continuar",
         "beneficios": [
             {
