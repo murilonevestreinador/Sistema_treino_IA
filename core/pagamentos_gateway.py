@@ -1906,15 +1906,38 @@ def _atualizar_assinatura_por_pagamento(cursor, assinatura, pagamento_payload, s
         )
 
 
-def _atualizar_checkout_por_webhook(cursor, pagamento_payload, pagamento_id, status_pagamento, checkout=None):
-    asaas_payment_id = pagamento_payload.get("id")
-    asaas_subscription_id = pagamento_payload.get("subscription")
-    external_reference = pagamento_payload.get("externalReference")
+def _assinatura_ativa_para_checkout(cursor, assinatura_id=None, asaas_subscription_id=None):
+    asaas_subscription_id = (asaas_subscription_id or "").strip() or None
+    if not assinatura_id and not asaas_subscription_id:
+        return False
+    cursor.execute(
+        """
+        SELECT status
+        FROM assinaturas
+        WHERE (id = %s AND %s IS NOT NULL)
+           OR (asaas_subscription_id = %s AND %s IS NOT NULL)
+        ORDER BY CASE WHEN status = 'ativa' THEN 0 ELSE 1 END,
+                 COALESCE(created_at, CURRENT_TIMESTAMP) DESC,
+                 id DESC
+        LIMIT 1
+        """,
+        (assinatura_id, assinatura_id, asaas_subscription_id, asaas_subscription_id),
+    )
+    assinatura = cursor.fetchone()
+    return (assinatura or {}).get("status") == "ativa"
+
+
+def _atualizar_checkout_por_webhook(cursor, pagamento_payload, pagamento_id, status_pagamento, checkout=None, assinatura=None):
+    asaas_payment_id = (pagamento_payload.get("id") or "").strip() or None
+    asaas_subscription_id = (pagamento_payload.get("subscription") or "").strip() or None
+    external_reference = (pagamento_payload.get("externalReference") or "").strip() or None
     checkout_id = (checkout or {}).get("id")
+    assinatura_id = (assinatura or {}).get("id") or (checkout or {}).get("assinatura_id")
     if not asaas_payment_id and not asaas_subscription_id and not external_reference and not checkout_id:
         return
 
-    if status_pagamento in STATUS_QUITADOS:
+    assinatura_ativa = _assinatura_ativa_para_checkout(cursor, assinatura_id, asaas_subscription_id)
+    if status_pagamento in STATUS_QUITADOS and assinatura_ativa:
         status_checkout = "concluido"
     elif status_pagamento in {"cancelado", "estornado"}:
         status_checkout = "cancelado"
@@ -1925,6 +1948,7 @@ def _atualizar_checkout_por_webhook(cursor, pagamento_payload, pagamento_id, sta
         """
         UPDATE checkouts_pendentes
         SET status = %s,
+            assinatura_id = COALESCE(%s, assinatura_id),
             pagamento_id = COALESCE(%s, pagamento_id),
             asaas_payment_id = COALESCE(%s, asaas_payment_id),
             asaas_subscription_id = COALESCE(%s, asaas_subscription_id),
@@ -1936,6 +1960,7 @@ def _atualizar_checkout_por_webhook(cursor, pagamento_payload, pagamento_id, sta
         """,
         (
             status_checkout,
+            assinatura_id,
             pagamento_id,
             asaas_payment_id,
             asaas_subscription_id,
@@ -1957,7 +1982,9 @@ def _atualizar_checkout_por_webhook(cursor, pagamento_payload, pagamento_id, sta
                     "asaas_payment_id": asaas_payment_id,
                     "asaas_subscription_id": asaas_subscription_id,
                     "pagamento_id": pagamento_id,
+                    "assinatura_id": assinatura_id,
                     "status_pagamento": status_pagamento,
+                    "assinatura_ativa": assinatura_ativa,
                     "status_checkout": status_checkout,
                     "checkout_id": checkout_id,
                 }
@@ -2039,7 +2066,14 @@ def processar_webhook_asaas(payload, headers):
                 pagamento_local=pagamento_local,
             )
             _atualizar_assinatura_por_pagamento(cursor, assinatura, payment, status_pagamento)
-            _atualizar_checkout_por_webhook(cursor, payment, pagamento_id, status_pagamento, checkout=checkout)
+            _atualizar_checkout_por_webhook(
+                cursor,
+                payment,
+                pagamento_id,
+                status_pagamento,
+                checkout=checkout,
+                assinatura=assinatura,
+            )
             if status_pagamento in STATUS_QUITADOS:
                 LOGGER.info(
                     "[ASAAS_ACCESS_RELEASE] Pagamento quitado conciliado no webhook | %s",

@@ -588,6 +588,13 @@ def buscar_checkout_pendente(checkout_id, usuario_id=None):
             "[CHECKOUT_STATE] Checkout pendente nao encontrado | %s",
             _payload_log({"checkout_id": checkout_id, "usuario_id": usuario_id}),
         )
+    elif checkout.get("status") in {"pendente", "asaas_criado"}:
+        ids_promovidos = _sincronizar_checkouts_concluidos_pagantes(
+            usuario_id=checkout.get("usuario_id"),
+            checkout_id=checkout.get("id"),
+        )
+        if ids_promovidos:
+            return buscar_checkout_pendente(checkout_id, usuario_id)
     return checkout
 
 
@@ -608,6 +615,13 @@ def buscar_checkout_aberto_usuario(usuario_id):
     )
     checkout = _normalizar_checkout(cursor.fetchone())
     conn.close()
+    if checkout and checkout.get("status") in {"pendente", "asaas_criado"}:
+        ids_promovidos = _sincronizar_checkouts_concluidos_pagantes(
+            usuario_id=checkout.get("usuario_id"),
+            checkout_id=checkout.get("id"),
+        )
+        if ids_promovidos:
+            return buscar_checkout_aberto_usuario(usuario_id)
     return checkout
 
 
@@ -716,6 +730,15 @@ def salvar_checkout_pendente(usuario, plano_codigo, cupom_codigo=None, checkout_
         checkout_existente = None
 
     if checkout_existente and checkout_existente.get("status") == "asaas_criado":
+        ids_promovidos = _promover_checkouts_concluidos_por_pagamento_assinatura(
+            cursor,
+            usuario_id=usuario.get("id"),
+            checkout_id=checkout_existente.get("id"),
+        )
+        if ids_promovidos:
+            conn.commit()
+            conn.close()
+            return buscar_checkout_pendente(checkout_existente["id"], usuario["id"])
         conn.close()
         checkout_existente["cupom_valido"] = bool(checkout_existente.get("cupom_codigo"))
         checkout_existente["mensagem_cupom"] = checkout_existente.get("mensagem_cupom") or ""
@@ -1173,16 +1196,148 @@ def _assinatura_tem_pagamento_quitado(assinatura_id):
     cursor.execute(
         """
         SELECT 1
-        FROM pagamentos
-        WHERE assinatura_id = %s
-          AND status IN ('pago', 'bonificado')
+        FROM pagamentos pg
+        LEFT JOIN checkouts_pendentes cp ON cp.pagamento_id = pg.id
+        WHERE (pg.assinatura_id = %s OR cp.assinatura_id = %s)
+          AND pg.status IN ('pago', 'bonificado')
         LIMIT 1
         """,
-        (assinatura_id,),
+        (assinatura_id, assinatura_id),
     )
     tem_pagamento_quitado = cursor.fetchone() is not None
     conn.close()
     return tem_pagamento_quitado
+
+
+def _buscar_assinatura_paga_ativa_usuario(usuario_id, assinatura_referencia=None):
+    if not usuario_id:
+        return None
+    assinatura_referencia_id = (assinatura_referencia or {}).get("id")
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        _consulta_assinaturas_base()
+        + """
+        WHERE a.usuario_id = %s
+          AND a.status = 'ativa'
+          AND EXISTS (
+              SELECT 1
+              FROM pagamentos pg
+              LEFT JOIN checkouts_pendentes cp ON cp.pagamento_id = pg.id
+              WHERE (pg.assinatura_id = a.id OR cp.assinatura_id = a.id)
+                AND pg.status IN ('pago', 'bonificado')
+          )
+        ORDER BY CASE WHEN a.id = %s THEN 0 ELSE 1 END,
+                 COALESCE(a.created_at, CURRENT_TIMESTAMP) DESC,
+                 a.id DESC
+        LIMIT 1
+        """,
+        (usuario_id, assinatura_referencia_id),
+    )
+    assinatura = _normalizar_assinatura(cursor.fetchone())
+    conn.close()
+    return assinatura
+
+
+def _promover_checkouts_concluidos_por_pagamento_assinatura(
+    cursor,
+    usuario_id=None,
+    assinatura_id=None,
+    pagamento_id=None,
+    checkout_id=None,
+):
+    filtros = [
+        "cp.status IN ('pendente', 'asaas_criado')",
+        "(pg.assinatura_id = a.id OR (cp.assinatura_id = a.id AND cp.pagamento_id = pg.id))",
+        "pg.status IN ('pago', 'bonificado')",
+        "a.status = 'ativa'",
+        """
+        (
+            cp.assinatura_id = a.id
+            OR cp.pagamento_id = pg.id
+            OR (
+                COALESCE(cp.asaas_payment_id, '') <> ''
+                AND cp.asaas_payment_id = pg.asaas_payment_id
+            )
+            OR (
+                COALESCE(cp.asaas_subscription_id, '') <> ''
+                AND cp.asaas_subscription_id = a.asaas_subscription_id
+            )
+        )
+        """,
+    ]
+    params = []
+    if usuario_id:
+        filtros.append("cp.usuario_id = %s")
+        params.append(usuario_id)
+    if assinatura_id:
+        filtros.append("a.id = %s")
+        params.append(assinatura_id)
+    if pagamento_id:
+        filtros.append("pg.id = %s")
+        params.append(pagamento_id)
+    if checkout_id:
+        filtros.append("cp.id = %s")
+        params.append(checkout_id)
+
+    cursor.execute(
+        f"""
+        UPDATE checkouts_pendentes cp
+        SET status = 'concluido',
+            assinatura_id = COALESCE(cp.assinatura_id, a.id),
+            pagamento_id = COALESCE(cp.pagamento_id, pg.id),
+            atualizado_em = CURRENT_TIMESTAMP
+        FROM pagamentos pg, assinaturas a
+        WHERE {' AND '.join(filtros)}
+        RETURNING cp.id
+        """,
+        tuple(params),
+    )
+    ids_promovidos = [int(linha["id"]) for linha in cursor.fetchall()]
+    if ids_promovidos:
+        LOGGER.info(
+            "[CHECKOUT_STATE] Checkouts promovidos para concluido por pagamento quitado e assinatura ativa | %s",
+            _payload_log(
+                {
+                    "checkout_ids": ids_promovidos,
+                    "usuario_id": usuario_id,
+                    "assinatura_id": assinatura_id,
+                    "pagamento_id": pagamento_id,
+                }
+            ),
+        )
+    return ids_promovidos
+
+
+def _sincronizar_checkouts_concluidos_pagantes(usuario_id=None, assinatura_id=None, pagamento_id=None, checkout_id=None):
+    conn = conectar()
+    cursor = conn.cursor()
+    try:
+        ids_promovidos = _promover_checkouts_concluidos_por_pagamento_assinatura(
+            cursor,
+            usuario_id=usuario_id,
+            assinatura_id=assinatura_id,
+            pagamento_id=pagamento_id,
+            checkout_id=checkout_id,
+        )
+        conn.commit()
+        return ids_promovidos
+    except Exception:
+        conn.rollback()
+        LOGGER.exception(
+            "[CHECKOUT_STATE] Falha ao sincronizar checkout concluido por pagamento quitado e assinatura ativa | %s",
+            _payload_log(
+                {
+                    "usuario_id": usuario_id,
+                    "assinatura_id": assinatura_id,
+                    "pagamento_id": pagamento_id,
+                    "checkout_id": checkout_id,
+                }
+            ),
+        )
+        return []
+    finally:
+        conn.close()
 
 
 def _diagnosticar_exibicao_assinatura(assinatura):
@@ -1190,23 +1345,22 @@ def _diagnosticar_exibicao_assinatura(assinatura):
     gateway_reference = str((assinatura or {}).get("gateway_reference") or "").strip().lower()
     renovacao_automatica = _flag_ativa((assinatura or {}).get("renovacao_automatica"))
     tem_pagamento_quitado = _assinatura_tem_pagamento_quitado((assinatura or {}).get("id"))
-    dias_trial = _dias_restantes_trial(assinatura)
-    dias_plano = _dias_restantes_plano(assinatura)
-
-    eh_trial_real = (
-        status_assinatura == "trial"
-        and not tem_pagamento_quitado
-        and gateway_reference.startswith("trial-")
-    )
     assinatura_paga_ativa = (
         status_assinatura == "ativa"
         or (tem_pagamento_quitado and status_assinatura in {"trial", "pendente"})
+    )
+    dias_trial = None if assinatura_paga_ativa else _dias_restantes_trial(assinatura)
+    dias_plano = _dias_restantes_plano(assinatura)
+    eh_trial_real = (
+        not assinatura_paga_ativa
+        and status_assinatura == "trial"
+        and not tem_pagamento_quitado
+        and gateway_reference.startswith("trial-")
     )
     plano_perto_vencimento = (
         assinatura_paga_ativa
         and dias_plano is not None
         and dias_plano <= 3
-        and not renovacao_automatica
     )
     plano_expirado = (
         status_assinatura in {"inadimplente", "cancelada", "expirada"}
@@ -1227,8 +1381,15 @@ def _diagnosticar_exibicao_assinatura(assinatura):
 
 
 def obter_status_interface_atleta(usuario_id):
+    _sincronizar_checkouts_concluidos_pagantes(usuario_id=usuario_id)
     avaliacao = avaliar_acesso_atleta(usuario_id)
     assinatura = avaliacao.get("assinatura")
+    assinatura_paga_ativa = _buscar_assinatura_paga_ativa_usuario(usuario_id, assinatura)
+    if assinatura_paga_ativa:
+        assinatura = assinatura_paga_ativa
+        avaliacao["assinatura"] = assinatura
+        avaliacao["tem_acesso"] = True
+        avaliacao["tem_assinatura_ativa"] = True
     vinculo_ativo = avaliacao.get("vinculo_ativo")
     vinculo_pendente = _buscar_vinculo_atleta_por_status(usuario_id, ["pendente"])
     vinculo_encerrado = _buscar_vinculo_atleta_por_status(usuario_id, ["removido", "cancelado", "encerrado"])
@@ -1299,21 +1460,6 @@ def obter_status_interface_atleta(usuario_id):
             contexto["texto"] += " Se preferir, voce tambem pode contratar um plano proprio para continuar."
         return contexto
 
-    if diagnostico_assinatura["eh_trial_real"]:
-        contexto.update(
-            {
-                "status": "trial_ativo",
-                "variant": "info",
-                "titulo": "Seu teste gratis esta ativo",
-                "texto": "Voce esta no periodo de teste do TriLab. Aproveite para explorar seus treinos e, quando quiser, escolha um plano para continuar.",
-                "detalhe": _detalhe_trial_restante(dias_trial),
-                "cta_label": "Ver planos",
-                "cta_destino": "pages/planos.py",
-                "mostrar_no_dashboard": True,
-            }
-        )
-        return contexto
-
     if diagnostico_assinatura["assinatura_paga_ativa"]:
         contexto.update(
             {
@@ -1338,6 +1484,21 @@ def obter_status_interface_atleta(usuario_id):
                     "mostrar_no_dashboard": True,
                 }
             )
+        return contexto
+
+    if diagnostico_assinatura["eh_trial_real"]:
+        contexto.update(
+            {
+                "status": "trial_ativo",
+                "variant": "info",
+                "titulo": "Seu teste gratis esta ativo",
+                "texto": "Voce esta no periodo de teste do TriLab. Aproveite para explorar seus treinos e, quando quiser, escolha um plano para continuar.",
+                "detalhe": _detalhe_trial_restante(dias_trial),
+                "cta_label": "Ver planos",
+                "cta_destino": "pages/planos.py",
+                "mostrar_no_dashboard": True,
+            }
+        )
         return contexto
 
     if vinculo_encerrado and not avaliacao.get("tem_acesso"):
@@ -2441,6 +2602,11 @@ def atualizar_status_pagamento(pagamento_id, novo_status):
     linha = cursor.fetchone()
     if linha and linha.get("assinatura_id"):
         cursor.execute("UPDATE assinaturas SET status = %s WHERE id = %s", (_status_pagamento_para_assinatura(novo_status), linha["assinatura_id"]))
+        _promover_checkouts_concluidos_por_pagamento_assinatura(
+            cursor,
+            assinatura_id=linha["assinatura_id"],
+            pagamento_id=pagamento_id,
+        )
     conn.commit()
     conn.close()
     return buscar_pagamento_por_id(pagamento_id)
