@@ -18,6 +18,7 @@ from core.usuarios import buscar_usuario_por_id, diagnosticar_dados_checkout
 
 
 TRIAL_DIAS = 14
+DIAS_AVISO_VENCIMENTO_PLANO = 3
 STATUS_COM_ACESSO = {"ativa", "trial"}
 STATUS_FINANCEIROS_QUITADOS = {"pago", "bonificado"}
 STATUS_CHECKOUT_FINALIZADO = {"concluido", "cancelado"}
@@ -1188,7 +1189,7 @@ def _detalhe_plano_restante(dias):
     return f"Faltam {dias} {unidade} para o fim do seu plano."
 
 
-def _assinatura_tem_pagamento_quitado(assinatura_id):
+def _assinatura_tem_pagamento_quitado(assinatura_id, usuario_id=None):
     if not assinatura_id:
         return False
     conn = conectar()
@@ -1205,6 +1206,21 @@ def _assinatura_tem_pagamento_quitado(assinatura_id):
         (assinatura_id, assinatura_id),
     )
     tem_pagamento_quitado = cursor.fetchone() is not None
+    if not tem_pagamento_quitado and usuario_id:
+        cursor.execute(
+            """
+            SELECT 1
+            FROM assinaturas a
+            JOIN pagamentos pg ON pg.usuario_id = a.usuario_id
+            WHERE a.id = %s
+              AND a.usuario_id = %s
+              AND a.status = 'ativa'
+              AND pg.status IN ('pago', 'bonificado')
+            LIMIT 1
+            """,
+            (assinatura_id, usuario_id),
+        )
+        tem_pagamento_quitado = cursor.fetchone() is not None
     conn.close()
     return tem_pagamento_quitado
 
@@ -1220,12 +1236,20 @@ def _buscar_assinatura_paga_ativa_usuario(usuario_id, assinatura_referencia=None
         + """
         WHERE a.usuario_id = %s
           AND a.status = 'ativa'
-          AND EXISTS (
+          AND (
+            EXISTS (
               SELECT 1
               FROM pagamentos pg
               LEFT JOIN checkouts_pendentes cp ON cp.pagamento_id = pg.id
               WHERE (pg.assinatura_id = a.id OR cp.assinatura_id = a.id)
                 AND pg.status IN ('pago', 'bonificado')
+            )
+            OR EXISTS (
+              SELECT 1
+              FROM pagamentos pg
+              WHERE pg.usuario_id = a.usuario_id
+                AND pg.status IN ('pago', 'bonificado')
+            )
           )
         ORDER BY CASE WHEN a.id = %s THEN 0 ELSE 1 END,
                  COALESCE(a.created_at, CURRENT_TIMESTAMP) DESC,
@@ -1246,26 +1270,7 @@ def _promover_checkouts_concluidos_por_pagamento_assinatura(
     pagamento_id=None,
     checkout_id=None,
 ):
-    filtros = [
-        "cp.status IN ('pendente', 'asaas_criado')",
-        "(pg.assinatura_id = a.id OR (cp.assinatura_id = a.id AND cp.pagamento_id = pg.id))",
-        "pg.status IN ('pago', 'bonificado')",
-        "a.status = 'ativa'",
-        """
-        (
-            cp.assinatura_id = a.id
-            OR cp.pagamento_id = pg.id
-            OR (
-                COALESCE(cp.asaas_payment_id, '') <> ''
-                AND cp.asaas_payment_id = pg.asaas_payment_id
-            )
-            OR (
-                COALESCE(cp.asaas_subscription_id, '') <> ''
-                AND cp.asaas_subscription_id = a.asaas_subscription_id
-            )
-        )
-        """,
-    ]
+    filtros = ["cp.status IN ('pendente', 'asaas_criado')"]
     params = []
     if usuario_id:
         filtros.append("cp.usuario_id = %s")
@@ -1282,13 +1287,58 @@ def _promover_checkouts_concluidos_por_pagamento_assinatura(
 
     cursor.execute(
         f"""
+        WITH candidatos AS (
+            SELECT DISTINCT ON (cp.id)
+                cp.id AS checkout_id,
+                a.id AS assinatura_id,
+                pg.id AS pagamento_id
+            FROM checkouts_pendentes cp
+            JOIN assinaturas a ON a.usuario_id = cp.usuario_id
+            JOIN pagamentos pg ON pg.usuario_id = cp.usuario_id
+            WHERE {' AND '.join(filtros)}
+              AND pg.status IN ('pago', 'bonificado')
+              AND a.status = 'ativa'
+              AND (
+                  pg.assinatura_id = a.id
+                  OR cp.assinatura_id = a.id
+                  OR cp.pagamento_id = pg.id
+                  OR (
+                      COALESCE(cp.asaas_payment_id, '') <> ''
+                      AND cp.asaas_payment_id = pg.asaas_payment_id
+                  )
+                  OR (
+                      COALESCE(cp.asaas_subscription_id, '') <> ''
+                      AND cp.asaas_subscription_id = a.asaas_subscription_id
+                  )
+                  OR (
+                      cp.status = 'asaas_criado'
+                      AND cp.assinatura_id IS NULL
+                      AND cp.pagamento_id IS NULL
+                      AND (cp.plano_id IS NULL OR cp.plano_id = a.plano_id)
+                  )
+              )
+            ORDER BY cp.id,
+                CASE
+                    WHEN cp.assinatura_id = a.id AND cp.pagamento_id = pg.id THEN 0
+                    WHEN cp.assinatura_id = a.id THEN 1
+                    WHEN cp.pagamento_id = pg.id THEN 2
+                    WHEN COALESCE(cp.asaas_payment_id, '') <> '' AND cp.asaas_payment_id = pg.asaas_payment_id THEN 3
+                    WHEN COALESCE(cp.asaas_subscription_id, '') <> '' AND cp.asaas_subscription_id = a.asaas_subscription_id THEN 4
+                    WHEN pg.assinatura_id = a.id THEN 5
+                    ELSE 6
+                END,
+                COALESCE(pg.data_pagamento, pg.data_vencimento, pg.created_at::text, '') DESC,
+                COALESCE(a.created_at, CURRENT_TIMESTAMP) DESC,
+                a.id DESC,
+                pg.id DESC
+        )
         UPDATE checkouts_pendentes cp
         SET status = 'concluido',
-            assinatura_id = COALESCE(cp.assinatura_id, a.id),
-            pagamento_id = COALESCE(cp.pagamento_id, pg.id),
+            assinatura_id = COALESCE(cp.assinatura_id, candidatos.assinatura_id),
+            pagamento_id = COALESCE(cp.pagamento_id, candidatos.pagamento_id),
             atualizado_em = CURRENT_TIMESTAMP
-        FROM pagamentos pg, assinaturas a
-        WHERE {' AND '.join(filtros)}
+        FROM candidatos
+        WHERE cp.id = candidatos.checkout_id
         RETURNING cp.id
         """,
         tuple(params),
@@ -1344,23 +1394,27 @@ def _diagnosticar_exibicao_assinatura(assinatura):
     status_assinatura = ((assinatura or {}).get("status") or "").strip().lower()
     gateway_reference = str((assinatura or {}).get("gateway_reference") or "").strip().lower()
     renovacao_automatica = _flag_ativa((assinatura or {}).get("renovacao_automatica"))
-    tem_pagamento_quitado = _assinatura_tem_pagamento_quitado((assinatura or {}).get("id"))
+    tem_pagamento_quitado = _assinatura_tem_pagamento_quitado(
+        (assinatura or {}).get("id"),
+        usuario_id=(assinatura or {}).get("usuario_id"),
+    )
     assinatura_paga_ativa = (
         status_assinatura == "ativa"
         or (tem_pagamento_quitado and status_assinatura in {"trial", "pendente"})
     )
     dias_trial = None if assinatura_paga_ativa else _dias_restantes_trial(assinatura)
     dias_plano = _dias_restantes_plano(assinatura)
-    eh_trial_real = (
-        not assinatura_paga_ativa
-        and status_assinatura == "trial"
-        and not tem_pagamento_quitado
-        and gateway_reference.startswith("trial-")
-    )
+    eh_trial_real = False
+    if not assinatura_paga_ativa:
+        eh_trial_real = (
+            status_assinatura == "trial"
+            and not tem_pagamento_quitado
+            and gateway_reference.startswith("trial-")
+        )
     plano_perto_vencimento = (
         assinatura_paga_ativa
         and dias_plano is not None
-        and dias_plano <= 3
+        and dias_plano <= DIAS_AVISO_VENCIMENTO_PLANO
     )
     plano_expirado = (
         status_assinatura in {"inadimplente", "cancelada", "expirada"}
@@ -1419,6 +1473,32 @@ def obter_status_interface_atleta(usuario_id):
         "renovacao_automatica": diagnostico_assinatura["renovacao_automatica"],
     }
 
+    if diagnostico_assinatura["assinatura_paga_ativa"]:
+        contexto.update(
+            {
+                "status": "assinatura_ativa_propria",
+                "variant": "success",
+                "titulo": "Seu plano individual esta ativo",
+                "texto": "Seu acesso esta liberado normalmente para acompanhar treinos, progresso e evolucoes na plataforma.",
+                "detalhe": None,
+                "mostrar_no_dashboard": False,
+            }
+        )
+        if diagnostico_assinatura["plano_perto_vencimento"]:
+            contexto.update(
+                {
+                    "status": "plano_perto_vencimento",
+                    "variant": "warning",
+                    "titulo": "Seu plano esta perto de vencer",
+                    "texto": "Acompanhe a renovacao para evitar interrupcao no acesso aos seus treinos e evolucoes.",
+                    "detalhe": _detalhe_plano_restante(dias_plano),
+                    "cta_label": "Minha assinatura",
+                    "cta_destino": "pages/minha_assinatura.py",
+                    "mostrar_no_dashboard": True,
+                }
+            )
+        return contexto
+
     if avaliacao.get("tem_treinador_ativo") and vinculo_ativo:
         contexto.update(
             {
@@ -1458,32 +1538,6 @@ def obter_status_interface_atleta(usuario_id):
             contexto["texto"] += f" Enquanto isso, seu acesso segue pelo teste gratis. {_detalhe_trial_restante(dias_trial)}"
         elif not avaliacao.get("tem_acesso"):
             contexto["texto"] += " Se preferir, voce tambem pode contratar um plano proprio para continuar."
-        return contexto
-
-    if diagnostico_assinatura["assinatura_paga_ativa"]:
-        contexto.update(
-            {
-                "status": "assinatura_ativa_propria",
-                "variant": "success",
-                "titulo": "Seu plano individual esta ativo",
-                "texto": "Seu acesso esta liberado normalmente para acompanhar treinos, progresso e evolucoes na plataforma.",
-                "detalhe": None,
-                "mostrar_no_dashboard": False,
-            }
-        )
-        if diagnostico_assinatura["plano_perto_vencimento"]:
-            contexto.update(
-                {
-                    "status": "plano_perto_vencimento",
-                    "variant": "warning",
-                    "titulo": "Seu plano esta perto de vencer",
-                    "texto": "Acompanhe a renovacao para evitar interrupcao no acesso aos seus treinos e evolucoes.",
-                    "detalhe": _detalhe_plano_restante(dias_plano),
-                    "cta_label": "Minha assinatura",
-                    "cta_destino": "pages/minha_assinatura.py",
-                    "mostrar_no_dashboard": True,
-                }
-            )
         return contexto
 
     if diagnostico_assinatura["eh_trial_real"]:
@@ -1669,6 +1723,13 @@ def gerar_pagamento_assinatura(usuario_id, assinatura_id, cupom_ou_regra=None, s
             assinatura_id,
         ),
     )
+    if status_pagamento in STATUS_FINANCEIROS_QUITADOS:
+        _promover_checkouts_concluidos_por_pagamento_assinatura(
+            cursor,
+            usuario_id=usuario_id,
+            assinatura_id=assinatura_id,
+            pagamento_id=pagamento_id,
+        )
     conn.commit()
     conn.close()
     return buscar_pagamento_por_id(pagamento_id)
